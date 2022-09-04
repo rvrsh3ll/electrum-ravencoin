@@ -139,7 +139,8 @@ class Invoice(StoredObject):
     def get_outputs(self):
         if self.is_lightning():
             address = self.get_address()
-            outputs = [PartialTxOutput.from_address_and_value(address, int(self.get_amount_sat()))] if address else []
+            amount = self.get_amount_sat()
+            outputs = [PartialTxOutput.from_address_and_value(address, int(amount))] if address and amount else []
         else:
             outputs = self.outputs
         return outputs
@@ -147,6 +148,10 @@ class Invoice(StoredObject):
     def get_expiration_date(self):
         # 0 means never
         return self.exp + self.time if self.exp else 0
+
+    def has_expired(self) -> bool:
+        exp = self.get_expiration_date()
+        return bool(exp) and exp < time.time()
 
     def get_amount_msat(self) -> Union[RavenValue, None]:
         return self.amount_msat
@@ -167,7 +172,7 @@ class Invoice(StoredObject):
             return amount_msat
         return amount_msat // 1000
 
-    def get_bip21_URI(self, lightning=None):
+    def get_bip21_URI(self, *, include_lightning: bool = False) -> Optional[str]:
         from electrum.util import create_bip21_uri
         addr = self.get_address()
         amount = self.get_amount_sat()
@@ -177,15 +182,17 @@ class Invoice(StoredObject):
         message = self.message
         extra = {}
         if self.time and self.exp:
-            extra['time'] = str(self.time)
-            extra['exp'] = str(self.exp)
+            extra['time'] = str(int(self.time))
+            extra['exp'] = str(int(self.exp))
         if amount is not None and asset:
             extra['asset'] = asset
-        # only if we can receive
+        lightning = self.lightning_invoice if include_lightning else None
         if lightning:
             extra['lightning'] = lightning
         if not addr and lightning:
             return "raven:?lightning="+lightning
+        if not addr and not lightning:
+            return None
         uri = create_bip21_uri(addr, amount, message, extra_query_params=extra)
         return str(uri)
 

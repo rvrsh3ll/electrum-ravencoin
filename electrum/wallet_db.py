@@ -52,7 +52,11 @@ if TYPE_CHECKING:
 
 OLD_SEED_VERSION = 4        # electrum versions < 2.0
 NEW_SEED_VERSION = 11       # electrum versions >= 2.0
+<<<<<<< HEAD
 FINAL_SEED_VERSION = 49     # electrum >= 2.7 will set this to prevent
+=======
+FINAL_SEED_VERSION = 50     # electrum >= 2.7 will set this to prevent
+>>>>>>> 92b21df843def7ded18094b73b60e791bb0c9b28
                             # old versions from overwriting new format
                             # Rewrites wallet to support assets
 
@@ -198,6 +202,10 @@ class WalletDB(JsonDB):
         self._convert_version_47()
         self._convert_version_48()
         self._convert_version_49()
+<<<<<<< HEAD
+=======
+        self._convert_version_50()
+>>>>>>> 92b21df843def7ded18094b73b60e791bb0c9b28
         self.put('seed_version', FINAL_SEED_VERSION)  # just to be sure
 
         self._after_upgrade_tasks()
@@ -974,14 +982,19 @@ class WalletDB(JsonDB):
                     'bip70':bip70,
                     'lightning_invoice':lightning_invoice,
                 }
+<<<<<<< HEAD
         
+=======
+        self.data['seed_version'] = 45
+
+    def _convert_invoices_keys(self, invoices):
+>>>>>>> 92b21df843def7ded18094b73b60e791bb0c9b28
         # recalc keys of outgoing on-chain invoices
+        from .crypto import sha256d
         def get_id_from_onchain_outputs(raw_outputs, timestamp):
             outputs = [PartialTxOutput.from_legacy_tuple(*output) for output in raw_outputs]
             outputs_str = "\n".join(f"{txout.scriptpubkey.hex()}, {txout.value}" for txout in outputs)
             return sha256d(outputs_str + "%d" % timestamp).hex()[0:10]
-
-        invoices = self.data.get('invoices', {})
         for key, item in list(invoices.items()):
             is_lightning = item['lightning_invoice'] is not None
             if is_lightning:
@@ -993,7 +1006,17 @@ class WalletDB(JsonDB):
             if newkey != key:
                 invoices[newkey] = item
                 del invoices[key]
+<<<<<<< HEAD
         self.data['seed_version'] = 47
+=======
+
+    def _convert_version_46(self):
+        if not self._is_upgrade_method_needed(45, 45):
+            return
+        invoices = self.data.get('invoices', {})
+        self._convert_invoices_keys(invoices)
+        self.data['seed_version'] = 46
+>>>>>>> 92b21df843def7ded18094b73b60e791bb0c9b28
 
     def _convert_version_48(self):
         from .lnaddr import lndecode
@@ -1020,6 +1043,29 @@ class WalletDB(JsonDB):
             if item['amount_msat'] == 1000 * "!":
                 item['amount_msat'] = "!"
         self.data['seed_version'] = 49
+
+    def _convert_version_49(self):
+        if not self._is_upgrade_method_needed(48, 48):
+            return
+        channels = self.data.get('channels', {})
+        legacy_chans = [chan_dict for chan_dict in channels.values()
+                        if chan_dict['channel_type'] == ChannelType.OPTION_LEGACY_CHANNEL]
+        if legacy_chans:
+            raise WalletFileException(
+                f"This wallet contains {len(legacy_chans)} lightning channels of type 'LEGACY'. "
+                f"These channels were created using unreleased development versions of Electrum "
+                f"before the first lightning-capable release of 4.0, and are not supported anymore. "
+                f"Please use Electrum 4.3.0 to open this wallet, close the channels, "
+                f"and delete them from the wallet."
+            )
+        self.data['seed_version'] = 49
+
+    def _convert_version_50(self):
+        if not self._is_upgrade_method_needed(49, 49):
+            return
+        requests = self.data.get('payment_requests', {})
+        self._convert_invoices_keys(requests)
+        self.data['seed_version'] = 50
 
     def _convert_imported(self):
         if not self._is_upgrade_method_needed(0, 13):

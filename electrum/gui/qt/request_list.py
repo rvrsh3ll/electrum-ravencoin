@@ -116,7 +116,7 @@ class RequestList(MyTreeView):
         if request is None:
             return
         status_item = model.item(row, self.Columns.STATUS)
-        status = self.wallet.get_request_status(key)
+        status = self.wallet.get_invoice_status(request)
         status_str = request.get_status_str(status)
         status_item.setText(status_str)
         status_item.setIcon(read_QIcon(pr_icons.get(status)))
@@ -128,8 +128,8 @@ class RequestList(MyTreeView):
         self.std_model.clear()
         self.update_headers(self.__class__.headers)
         for req in self.wallet.get_unpaid_requests():
-            key = self.wallet.get_key_for_receive_request(req)
-            status = self.wallet.get_request_status(key)
+            key = req.get_id()
+            status = self.wallet.get_invoice_status(req)
             status_str = req.get_status_str(status)
             timestamp = req.get_time()
             amount = req.get_amount_sat()
@@ -183,7 +183,7 @@ class RequestList(MyTreeView):
         menu = QMenu(self)
         if req.get_address():
             menu.addAction(_("Copy Address"), lambda: self.parent.do_copy(req.get_address(), title='Ravencoin Address'))
-            URI = self.wallet.get_request_URI(req)
+        if URI := self.wallet.get_request_URI(req):
             menu.addAction(_("Copy URI"), lambda: self.parent.do_copy(URI, title='Ravencoin URI'))
         if req.is_lightning():
             menu.addAction(_("Copy Lightning Request"), lambda: self.parent.do_copy(req.lightning_invoice, title='Lightning Request'))
@@ -196,6 +196,7 @@ class RequestList(MyTreeView):
 
     def delete_requests(self, keys):
         for key in keys:
-            self.wallet.delete_request(key)
+            self.wallet.delete_request(key, write_to_disk=False)
             self.delete_item(key)
+        self.wallet.save_db()
         self.receive_tab.do_clear()

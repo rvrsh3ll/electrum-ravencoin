@@ -204,16 +204,18 @@ def create_sweeptxs_for_our_ctx(
     to_local_witness_script = bh2u(make_commitment_output_to_local_witness_script(
         their_revocation_pubkey, to_self_delay, our_localdelayed_pubkey))
     to_local_address = redeem_script_to_address('p2wsh', to_local_witness_script)
-    # to remote address
-    bpk = their_conf.payment_basepoint.pubkey
-    their_payment_pubkey = bpk if chan.is_static_remotekey_enabled() else derive_pubkey(their_conf.payment_basepoint.pubkey, our_pcp)
-    to_remote_address = make_commitment_output_to_remote_address(their_payment_pubkey)
-    # test ctx
-    _logger.debug(f'testing our ctx: {to_local_address} {to_remote_address}')
-    if not ctx.get_output_idxs_from_address(to_local_address) \
-       and not ctx.get_output_idxs_from_address(to_remote_address):
+    # test if this is our_ctx
+    found_to_local = bool(ctx.get_output_idxs_from_address(to_local_address))
+    if not chan.is_backup():
+        assert chan.is_static_remotekey_enabled()
+        their_payment_pubkey = their_conf.payment_basepoint.pubkey
+        to_remote_address = make_commitment_output_to_remote_address(their_payment_pubkey)
+        found_to_remote = bool(ctx.get_output_idxs_from_address(to_remote_address))
+    else:
+        found_to_remote = False
+    if not found_to_local and not found_to_remote:
         return
-    # we have to_local, to_remote.
+    _logger.debug(f'found our ctx: {to_local_address} {to_remote_address}')
     # other outputs are htlcs
     # if they are spent, we need to generate the script
     # so, second-stage htlc sweep should not be returned here
@@ -355,15 +357,18 @@ def create_sweeptxs_for_their_ctx(
     witness_script = bh2u(make_commitment_output_to_local_witness_script(
         our_revocation_pubkey, our_conf.to_self_delay, their_delayed_pubkey))
     to_local_address = redeem_script_to_address('p2wsh', witness_script)
-    # to remote address
-    bpk = our_conf.payment_basepoint.pubkey
-    our_payment_pubkey = bpk if chan.is_static_remotekey_enabled() else derive_pubkey(bpk, their_pcp)
-    to_remote_address = make_commitment_output_to_remote_address(our_payment_pubkey)
     # test if this is their ctx
-    _logger.debug(f'testing their ctx: {to_local_address} {to_remote_address}')
-    if not ctx.get_output_idxs_from_address(to_local_address) \
-       and not ctx.get_output_idxs_from_address(to_remote_address):
+    found_to_local = bool(ctx.get_output_idxs_from_address(to_local_address))
+    if not chan.is_backup():
+        assert chan.is_static_remotekey_enabled()
+        our_payment_pubkey = our_conf.payment_basepoint.pubkey
+        to_remote_address = make_commitment_output_to_remote_address(our_payment_pubkey)
+        found_to_remote = bool(ctx.get_output_idxs_from_address(to_remote_address))
+    else:
+        found_to_remote = False
+    if not found_to_local and not found_to_remote:
         return
+    _logger.debug(f'found their ctx: {to_local_address} {to_remote_address}')
     if is_revocation:
         our_revocation_privkey = derive_blinded_privkey(our_conf.revocation_basepoint.privkey, per_commitment_secret)
         gen_tx = create_sweeptx_for_their_revoked_ctx(chan, ctx, per_commitment_secret, chan.sweep_address)
@@ -379,27 +384,6 @@ def create_sweeptxs_for_their_ctx(
     our_htlc_privkey = ecc.ECPrivkey.from_secret_scalar(our_htlc_privkey)
     their_htlc_pubkey = derive_pubkey(their_conf.htlc_basepoint.pubkey, their_pcp)
     # to_local is handled by lnwatcher
-    # to_remote
-    if not chan.is_static_remotekey_enabled():
-        our_payment_bp_privkey = ecc.ECPrivkey(our_conf.payment_basepoint.privkey)
-        our_payment_privkey = derive_privkey(our_payment_bp_privkey.secret_scalar, their_pcp)
-        our_payment_privkey = ecc.ECPrivkey.from_secret_scalar(our_payment_privkey)
-        assert our_payment_pubkey == our_payment_privkey.get_public_key_bytes(compressed=True)
-        output_idxs = ctx.get_output_idxs_from_address(to_remote_address)
-        if output_idxs:
-            output_idx = output_idxs.pop()
-            prevout = ctx.txid() + ':%d'%output_idx
-            sweep_tx = lambda: create_sweeptx_their_ctx_to_remote(
-                sweep_address=sweep_address,
-                ctx=ctx,
-                output_idx=output_idx,
-                our_payment_privkey=our_payment_privkey,
-                config=chan.lnworker.config)
-            txs[prevout] = SweepInfo(
-                name='their_ctx_to_remote',
-                csv_delay=0,
-                cltv_expiry=0,
-                gen_tx=sweep_tx)
     # HTLCs
     def create_sweeptx_for_htlc(
             *, htlc: 'UpdateAddHtlc',
