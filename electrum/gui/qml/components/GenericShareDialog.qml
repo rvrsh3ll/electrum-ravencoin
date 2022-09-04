@@ -9,11 +9,14 @@ ElDialog {
     id: dialog
 
     property string text
+    property string text_qr
+    // if text_qr is undefined text will be used
+    property string text_help
 
     title: ''
     parent: Overlay.overlay
     modal: true
-    standardButtons: Dialog.Ok
+    standardButtons: Dialog.Close
 
     width: parent.width
     height: parent.height
@@ -55,6 +58,8 @@ ElDialog {
 
             QRImage {
                 id: qr
+                render: dialog.enter ? false : true
+                qrdata: dialog.text_qr ? dialog.text_qr : dialog.text
                 Layout.alignment: Qt.AlignHCenter
                 Layout.topMargin: constants.paddingSmall
                 Layout.bottomMargin: constants.paddingSmall
@@ -74,7 +79,16 @@ ElDialog {
                     wrapMode: Text.Wrap
                     font.pixelSize: constants.fontSizeLarge
                     font.family: FixedFont
+                    maximumLineCount: 4
+                    elide: Text.ElideRight
                 }
+            }
+
+            Label {
+                visible: dialog.text_help
+                text: dialog.text_help
+                wrapMode: Text.Wrap
+                Layout.fillWidth: true
             }
 
             RowLayout {
@@ -86,7 +100,6 @@ ElDialog {
                     onClicked: AppController.textToClipboard(dialog.text)
                 }
                 Button {
-                    //enabled: false
                     text: qsTr('Share')
                     icon.source: '../../icons/share.png'
                     onClicked: {
@@ -97,7 +110,12 @@ ElDialog {
         }
     }
 
-    Component.onCompleted: {
-        qr.qrdata = dialog.text
+    Connections {
+        target: dialog.enter
+        function onRunningChanged() {
+            if (!dialog.enter.running) {
+                qr.render = true
+            }
+        }
     }
 }

@@ -104,7 +104,7 @@ class InvoiceList(MyTreeView):
         self.std_model.clear()
         self.update_headers(self.__class__.headers)
         for idx, item in enumerate(self.wallet.get_unpaid_invoices()):
-            key = self.wallet.get_key_for_outgoing_invoice(item)
+            key = item.get_id()
             if item.is_lightning():
                 icon_name = 'lightning.png'
             else:
@@ -203,5 +203,6 @@ class InvoiceList(MyTreeView):
 
     def delete_invoices(self, keys):
         for key in keys:
-            self.wallet.delete_invoice(key)
+            self.wallet.delete_invoice(key, write_to_disk=False)
             self.delete_item(key)
+        self.wallet.save_db()

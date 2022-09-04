@@ -18,7 +18,7 @@ from electrum import lnutil
 from electrum.plugin import run_hook
 from electrum.i18n import _
 from electrum.ravencoin import COIN, make_op_return
-from electrum.util import (AssetAmountModified, UserFacingException, get_asyncio_loop, bh2u,
+from electrum.util import (AssetAmountModified, UserFacingException, get_asyncio_loop, bh2u, FailedToParsePaymentIdentifier,
                            InvalidBitcoinURI, maybe_extract_lightning_payment_identifier, NotEnoughFunds,
                            NoDynamicFeeEstimates, InvoiceError, parse_max_spend, RavenValue)
 from electrum.invoices import PR_PAID, Invoice
@@ -29,7 +29,7 @@ from electrum.lnaddr import lndecode, LnInvoiceException
 from electrum.lnurl import decode_lnurl, request_lnurl, callback_lnurl, LNURLError, LNURL6Data
 
 from .amountedit import AmountEdit, PayToAmountEdit, SizedFreezableLineEdit
-from .util import WaitingDialog, HelpLabel, MessageBoxMixin, EnterButton
+from .util import WaitingDialog, HelpLabel, MessageBoxMixin, EnterButton, char_width_in_lineedit
 from .confirm_tx_dialog import ConfirmTxDialog
 from .transaction_dialog import PreviewTxDialog
 
@@ -198,7 +198,8 @@ class SendTab(QWidget, MessageBoxMixin, Logger):
         self.window.connect_fields(self.amount_e, self.fiat_send_e)
 
         self.max_button = EnterButton(_("Max"), self.spend_max)
-        self.max_button.setFixedWidth(100)
+        btn_width = 10 * char_width_in_lineedit()
+        self.max_button.setFixedWidth(btn_width)
         self.max_button.setCheckable(True)
         grid.addWidget(self.max_button, 4, 4)
 
@@ -625,7 +626,8 @@ class SendTab(QWidget, MessageBoxMixin, Logger):
         elif text.lower().startswith(util.BITCOIN_BIP21_URI_SCHEME + ':'):
             self.set_bip21(text, can_use_network=can_use_network)
         else:
-            raise ValueError("Could not handle payment identifier.")
+            truncated_text = f"{text[:100]}..." if len(text) > 100 else text
+            raise FailedToParsePaymentIdentifier(f"Could not handle payment identifier:\n{truncated_text}")
         # update fiat amount
         self.amount_e.textEdited.emit("")
         self.window.show_send_tab()
@@ -819,7 +821,7 @@ class SendTab(QWidget, MessageBoxMixin, Logger):
 
     def pay_lightning_invoice(self, invoice: Invoice):
         amount_sat = invoice.get_amount_sat()
-        key = self.wallet.get_key_for_outgoing_invoice(invoice)
+        key = invoice.get_id()
         if amount_sat is None:
             raise Exception("missing amount for LN invoice")
         if not self.wallet.lnworker.can_pay_invoice(invoice):
@@ -857,11 +859,12 @@ class SendTab(QWidget, MessageBoxMixin, Logger):
                     _('Funds will be sent to the invoice fallback address.')
                 ])
                 choices[3] = msg
-            if not choices:
-                raise NotEnoughFunds()
             msg = _('You cannot pay that invoice using Lightning.')
             if self.wallet.lnworker.channels:
-                msg += '\n' + _('Your channels can send {}.').format(self.format_amount(num_sats_can_send) + self.base_unit())
+                msg += '\n' + _('Your channels can send {}.').format(self.format_amount(num_sats_can_send) + ' ' + self.base_unit())
+            if not choices:
+                self.window.show_error(msg)
+                return
             r = self.window.query_choice(msg, choices)
             if r is not None:
                 self.save_pending_invoice()

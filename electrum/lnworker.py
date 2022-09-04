@@ -630,7 +630,6 @@ class LNWallet(LNWorker):
         self.payment_info = self.db.get_dict('lightning_payments')     # RHASH -> amount, direction, is_paid
         self.preimages = self.db.get_dict('lightning_preimages')   # RHASH -> preimage
         # note: this sweep_address is only used as fallback; as it might result in address-reuse
-        self.sweep_address = wallet.get_new_sweep_address_for_channel()
         self.logs = defaultdict(list)  # type: Dict[str, List[HtlcLog]]  # key is RHASH  # (not persisted)
         # used in tests
         self.enable_htlc_settle = True
@@ -640,14 +639,14 @@ class LNWallet(LNWorker):
         self._channels = {}  # type: Dict[bytes, Channel]
         channels = self.db.get_dict("channels")
         for channel_id, c in random_shuffled_copy(channels.items()):
-            self._channels[bfh(channel_id)] = Channel(c, sweep_address=self.sweep_address, lnworker=self)
+            self._channels[bfh(channel_id)] = Channel(c, lnworker=self)
 
         self._channel_backups = {}  # type: Dict[bytes, ChannelBackup]
         # order is important: imported should overwrite onchain
         for name in ["onchain_channel_backups", "imported_channel_backups"]:
             channel_backups = self.db.get_dict(name)
             for channel_id, storage in channel_backups.items():
-                self._channel_backups[bfh(channel_id)] = ChannelBackup(storage, sweep_address=self.sweep_address, lnworker=self)
+                self._channel_backups[bfh(channel_id)] = ChannelBackup(storage, lnworker=self)
 
         self.sent_htlcs = defaultdict(asyncio.Queue)  # type: Dict[bytes, asyncio.Queue[HtlcLog]]
         self.sent_htlcs_info = dict()                 # (RHASH, scid, htlc_id) -> route, payment_secret, amount_msat, bucket_msat, trampoline_fee_level
@@ -758,9 +757,11 @@ class LNWallet(LNWorker):
         self.lnrater = LNRater(self, network)
 
         for chan in self.channels.values():
-            self.lnwatcher.add_channel(chan.funding_outpoint.to_str(), chan.get_funding_address())
+            if not chan.is_redeemed():
+                self.lnwatcher.add_channel(chan.funding_outpoint.to_str(), chan.get_funding_address())
         for cb in self.channel_backups.values():
-            self.lnwatcher.add_channel(cb.funding_outpoint.to_str(), cb.get_funding_address())
+            if not cb.is_redeemed():
+                self.lnwatcher.add_channel(cb.funding_outpoint.to_str(), cb.get_funding_address())
 
         for coro in [
                 self.maybe_listen(),
@@ -1096,15 +1097,16 @@ class LNWallet(LNWorker):
         min_funding_sat = max(min_funding_sat, 100_000) # at least 1mBTC
         if min_funding_sat > LN_MAX_FUNDING_SAT:
             return
+        fee_est = partial(self.config.estimate_fee, allow_fallback_to_static_rates=True)  # to avoid NoDynamicFeeEstimates
         try:
-            self.mktx_for_open_channel(coins=coins, funding_sat=min_funding_sat, node_id=bytes(32), fee_est=None)
+            self.mktx_for_open_channel(coins=coins, funding_sat=min_funding_sat, node_id=bytes(32), fee_est=fee_est)
             funding_sat = min_funding_sat
         except NotEnoughFunds:
             return
         # if available, suggest twice that amount:
         if 2 * min_funding_sat <= LN_MAX_FUNDING_SAT:
             try:
-                self.mktx_for_open_channel(coins=coins, funding_sat=2*min_funding_sat, node_id=bytes(32), fee_est=None)
+                self.mktx_for_open_channel(coins=coins, funding_sat=2*min_funding_sat, node_id=bytes(32), fee_est=fee_est)
                 funding_sat = 2 * min_funding_sat
             except NotEnoughFunds:
                 pass
@@ -1222,8 +1224,7 @@ class LNWallet(LNWorker):
         # sometimes need to fall back to a single trampoline forwarder, at the expense
         # of privacy
         use_two_trampolines = True
-
-        trampoline_fee_level = self.INITIAL_TRAMPOLINE_FEE_LEVEL
+        self.trampoline_fee_level = self.INITIAL_TRAMPOLINE_FEE_LEVEL
         start_time = time.time()
         amount_inflight = 0  # what we sent in htlcs (that receiver gets, without fees)
         while True:
@@ -1242,7 +1243,7 @@ class LNWallet(LNWorker):
                     full_path=full_path,
                     payment_hash=payment_hash,
                     payment_secret=payment_secret,
-                    trampoline_fee_level=trampoline_fee_level,
+                    trampoline_fee_level=self.trampoline_fee_level,
                     use_two_trampolines=use_two_trampolines,
                     fwd_trampoline_onion=fwd_trampoline_onion,
                     channels=channels,
@@ -1261,7 +1262,7 @@ class LNWallet(LNWorker):
                         payment_secret=bucket_payment_secret,
                         min_cltv_expiry=cltv_delta,
                         trampoline_onion=trampoline_onion,
-                        trampoline_fee_level=trampoline_fee_level)
+                        trampoline_fee_level=self.trampoline_fee_level)
                 util.trigger_callback('invoice_status', self.wallet, payment_hash.hex())
             # 3. await a queue
             self.logger.info(f"amount inflight {amount_inflight}")
@@ -1298,12 +1299,11 @@ class LNWallet(LNWorker):
             # trampoline
             if not self.channel_db:
                 def maybe_raise_trampoline_fee(htlc_log):
-                    global trampoline_fee_level
-                if htlc_log.trampoline_fee_level == trampoline_fee_level:
-                    trampoline_fee_level += 1
-                    self.logger.info(f'raising trampoline fee level {trampoline_fee_level}')
-                else:
-                    self.logger.info(f'NOT raising trampoline fee level, already at {trampoline_fee_level}')
+                    if htlc_log.trampoline_fee_level == self.trampoline_fee_level:
+                        self.trampoline_fee_level += 1
+                        self.logger.info(f'raising trampoline fee level {self.trampoline_fee_level}')
+                    else:
+                        self.logger.info(f'NOT raising trampoline fee level, already at {self.trampoline_fee_level}')
                 # FIXME The trampoline nodes in the path are chosen randomly.
                 #       Some of the errors might depend on how we have chosen them.
                 #       Having more attempts is currently useful in part because of the randomness,
@@ -1575,7 +1575,7 @@ class LNWallet(LNWorker):
                         amount_with_fees = amount_msat
                         cltv_delta = min_cltv_expiry
                     else:
-                        trampoline_onion, amount_with_fees, cltv_delta = create_trampoline_route_and_onion(
+                        trampoline_route, trampoline_onion, amount_with_fees, cltv_delta = create_trampoline_route_and_onion(
                             amount_msat=amount_msat,
                             total_msat=final_total_msat,
                             min_cltv_expiry=min_cltv_expiry,
@@ -1592,6 +1592,8 @@ class LNWallet(LNWorker):
                         trampoline_total_msat = amount_with_fees
                     if chan.available_to_spend(LOCAL, strict=True) < amount_with_fees:
                         continue
+                    self.logger.info(f'created route with trampoline fee level={trampoline_fee_level}')
+                    self.logger.info(f'trampoline hops: {[hop.end_node.hex() for hop in trampoline_route]}')
                     route = [
                         RouteEdge(
                             start_node=self.node_keypair.pubkey,
@@ -1656,7 +1658,7 @@ class LNWallet(LNWorker):
                         routes = []
                         for trampoline_node_id, trampoline_parts in per_trampoline_channel_amounts.items():
                             per_trampoline_amount = sum([x[1] for x in trampoline_parts])
-                            trampoline_onion, per_trampoline_amount_with_fees, per_trampoline_cltv_delta = create_trampoline_route_and_onion(
+                            trampoline_route, trampoline_onion, per_trampoline_amount_with_fees, per_trampoline_cltv_delta = create_trampoline_route_and_onion(
                                 amount_msat=per_trampoline_amount,
                                 total_msat=final_total_msat,
                                 min_cltv_expiry=min_cltv_expiry,
@@ -1673,6 +1675,8 @@ class LNWallet(LNWorker):
                             # node_features is only used to determine is_tlv
                             per_trampoline_secret = os.urandom(32)
                             per_trampoline_fees = per_trampoline_amount_with_fees - per_trampoline_amount
+                            self.logger.info(f'created route with trampoline fee level={trampoline_fee_level}')
+                            self.logger.info(f'trampoline hops: {[hop.end_node.hex() for hop in trampoline_route]}')
                             self.logger.info(f'per trampoline fees: {per_trampoline_fees}')
                             for chan_id, part_amount_msat in trampoline_parts:
                                 chan = self.channels[chan_id]
@@ -1931,13 +1935,12 @@ class LNWallet(LNWorker):
         return info.status if info else PR_UNPAID
 
     def get_invoice_status(self, invoice: Invoice) -> int:
-        key = invoice.rhash
-        log = self.logs[key]
-        if key in self.inflight_payments:
+        invoice_id = invoice.rhash
+        if invoice_id in self.inflight_payments:
             return PR_INFLIGHT
         # status may be PR_FAILED
-        status = self.get_payment_status(bfh(key))
-        if status == PR_UNPAID and log:
+        status = self.get_payment_status(bytes.fromhex(invoice_id))
+        if status == PR_UNPAID and invoice_id in self.logs:
             status = PR_FAILED
         return status
 
@@ -1954,11 +1957,11 @@ class LNWallet(LNWorker):
         if self.get_payment_status(payment_hash) == status:
             return
         self.set_payment_status(payment_hash, status)
-        key = payment_hash.hex()
-        req = self.wallet.get_request(key)
+        request_id = payment_hash.hex()
+        req = self.wallet.get_request(request_id)
         if req is None:
             return
-        util.trigger_callback('request_status', self.wallet, key, status)
+        util.trigger_callback('request_status', self.wallet, request_id, status)
 
     def set_payment_status(self, payment_hash: bytes, status: int) -> None:
         info = self.get_payment_info(payment_hash)
@@ -2499,7 +2502,7 @@ class LNWallet(LNWorker):
         d = self.db.get_dict("imported_channel_backups")
         d[channel_id.hex()] = cb_storage
         with self.lock:
-            cb = ChannelBackup(cb_storage, sweep_address=self.sweep_address, lnworker=self)
+            cb = ChannelBackup(cb_storage, lnworker=self)
             self._channel_backups[channel_id] = cb
         self.wallet.save_db()
         util.trigger_callback('channels_updated', self.wallet)
@@ -2613,7 +2616,7 @@ class LNWallet(LNWorker):
         self.logger.info(f"adding backup from tx")
         d = self.db.get_dict("onchain_channel_backups")
         d[channel_id] = cb_storage
-        cb = ChannelBackup(cb_storage, sweep_address=self.sweep_address, lnworker=self)
+        cb = ChannelBackup(cb_storage, lnworker=self)
         self.wallet.save_db()
         with self.lock:
             self._channel_backups[bfh(channel_id)] = cb
