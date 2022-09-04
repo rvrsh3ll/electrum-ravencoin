@@ -682,7 +682,7 @@ class SimpleConfig(Logger):
         if isinstance(x, RavenValue):
             if x.assets:
                 suffix = f' ({len(x.assets)} asset' + ('s' if len(x.assets) > 1 else '') + ')'
-            x = x.rvn_value.value
+            x = x.rvn_value if isinstance(x.rvn_value, str) else x.rvn_value.value
         
         return format_satoshis(
             x,
