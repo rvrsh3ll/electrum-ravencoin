@@ -166,7 +166,7 @@ class Mnemonic(Logger):
         Logger.__init__(self)
         lang = lang or 'en'
         self.logger.info(f'language {lang}')
-        filename = filenames.get(lang[0:2], 'english.txt')
+        filename = filenames.get(lang[0:4], 'english.txt')
         self.wordlist = Wordlist.from_file(filename)
         if lang == 'ja' or lang == 'ko':
             self.wordlist.space = u"\u3000"

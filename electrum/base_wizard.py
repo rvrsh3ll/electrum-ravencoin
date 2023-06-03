@@ -552,8 +552,16 @@ class BaseWizard(Logger):
             get_account_xpub = None
         self.derivation_and_script_type_dialog(f, get_account_xpub=get_account_xpub)
 
-    def create_keystore(self, seed, passphrase):
-        k = keystore.from_seed(seed, passphrase, self.wallet_type == 'multisig')
+    def create_keystore(self, seed, passphrase, is_bip39):
+        if is_bip39:
+            root_seed = bip39_to_seed(seed, passphrase if passphrase else '')
+            if self.wallet_type == 'multisig':
+                derivation = normalize_bip32_derivation(bip44_derivation(0, bip43_purpose=45))
+            else:
+                derivation = normalize_bip32_derivation(bip44_derivation(0))
+            k = keystore.from_bip43_rootseed(root_seed, derivation, xtype='standard', seed=seed, passphrase=passphrase)
+        else:
+            k = keystore.from_seed(seed, passphrase, self.wallet_type == 'multisig')
         if k.can_have_deterministic_lightning_xprv():
             self.data['lightning_xprv'] = k.get_lightning_xprv(None)
         self.on_keystore(k)
@@ -703,30 +711,29 @@ class BaseWizard(Logger):
     def create_seed(self, seed_type):
         from . import mnemonic
         self.seed_type = seed_type
-        seed = mnemonic.Mnemonic('en').make_bip39_seed()
+        seed = mnemonic.Mnemonic('en').make_bip39_seed(num_bits=128)
         self.opt_bip39 = True
         self.opt_ext = False
         self.opt_slip39 = False
-        f = lambda x: self.request_passphrase(seed, x)
-        self.show_seed_dialog(run_next=f, seed_text=seed)
+        self.show_seed_dialog(run_next=self.request_passphrase, seed_text=seed)
 
-    def request_passphrase(self, seed, opt_passphrase):
+    def request_passphrase(self, seed, opt_passphrase, is_bip39):
         if opt_passphrase:
-            f = lambda x: self.confirm_seed(seed, x)
+            f = lambda x: self.confirm_seed(seed, x, is_bip39)
             self.passphrase_dialog(run_next=f)
         else:
-            self.run('confirm_seed', seed, '')
+            self.run('confirm_seed', seed, '', is_bip39)
 
-    def confirm_seed(self, seed, passphrase):
-        f = lambda x: self.confirm_passphrase(seed, passphrase)
+    def confirm_seed(self, seed, passphrase, is_bip39):
+        f = lambda x: self.confirm_passphrase(seed, passphrase, is_bip39)
         self.confirm_seed_dialog(
             run_next=f,
             seed=seed if self.config.get('debug_seed') else '',
             test=lambda x: mnemonic.is_matching_seed(seed=seed, seed_again=x),
         )
 
-    def confirm_passphrase(self, seed, passphrase):
-        f = lambda x: self.run('create_keystore', seed, x)
+    def confirm_passphrase(self, seed, passphrase, is_bip39):
+        f = lambda x: self.run('create_keystore', seed, x, is_bip39)
         if passphrase:
             title = _('Confirm Seed Extension')
             message = '\n'.join([

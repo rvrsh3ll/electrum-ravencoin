@@ -29,16 +29,16 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (QVBoxLayout, QCheckBox, QHBoxLayout, QLineEdit,
                              QLabel, QCompleter, QDialog, QStyledItemDelegate,
-                             QScrollArea, QWidget, QPushButton)
+                             QScrollArea, QWidget, QPushButton, QComboBox)
 
 from electrum.i18n import _
-from electrum.mnemonic import Mnemonic, seed_type
+from electrum.mnemonic import Mnemonic, seed_type, filenames
 from electrum import old_mnemonic
 from electrum import slip39
 
 from .util import (Buttons, OkButton, WWLabel, ButtonsTextEdit, icon_path,
                    EnterButton, CloseButton, WindowModalDialog, ColorScheme,
-                   ChoicesLayout, font_height)
+                   ChoicesLayout, HelpButton, font_height)
 from .qrtextedit import ShowQRTextEdit, ScanQRTextEdit
 from .completion_text_edit import CompletionTextEdit
 
@@ -64,6 +64,22 @@ def seed_warning_msg(seed):
 
 class SeedLayout(QVBoxLayout):
 
+    def update_mnemonic(self, use_bip32: bool):
+        if use_bip32:
+            li = self.lang_cb.currentIndex()
+            l = self.languages[li][0]
+            bi = self.bits_cb.currentIndex()
+            b = self.bits[bi]
+            seed = Mnemonic(l).make_bip39_seed(num_bits=b)
+            self.lang = l
+            self.bit = b
+            self.wordlist = Mnemonic(self.lang).wordlist
+        else:
+            self.wordlist = Mnemonic('en').wordlist
+            seed = Mnemonic('en').make_seed(seed_type=self.electrum_seed_type)
+        self.seed_warning.setText(seed_warning_msg(seed))
+        self.seed_e.setText(seed)
+
     def seed_options(self):
         dialog = QDialog()
         dialog.setWindowTitle(_("Seed Options"))
@@ -78,42 +94,86 @@ class SeedLayout(QVBoxLayout):
             if value in self.options or value == 'electrum'
         ]
         seed_type_values = [t[0] for t in seed_types]
-
+        
         if 'ext' in self.options:
             cb_ext = QCheckBox(_('Extend this seed with custom words'))
             cb_ext.setChecked(self.is_ext)
             vbox.addWidget(cb_ext)
         if len(seed_types) >= 2:
+            self.lang_cb = QComboBox()
+            self.lang_cb.addItems([' '.join([s.capitalize() for s in x[1][:-4].split('_')]) for x in self.languages])
+            self.lang_cb.setCurrentIndex(0)
+            no_resize = self.lang_cb.sizePolicy()
+            no_resize.setRetainSizeWhenHidden(True)
+            self.lang_cb.setSizePolicy(no_resize)
+
+            bits_label = QLabel(_('Entropy') + ':')
+            no_resize = bits_label.sizePolicy()
+            no_resize.setRetainSizeWhenHidden(True)
+            bits_label.setSizePolicy(no_resize)
+
+            lang_label = QLabel(_('Language') + ':')
+            no_resize = lang_label.sizePolicy()
+            no_resize.setRetainSizeWhenHidden(True)
+            lang_label.setSizePolicy(no_resize)
+
+            self.bits_cb = QComboBox()
+            self.bits_cb.addItems([str(b) for b in self.bits])
+            self.bits_cb.setCurrentIndex(0)        
+            no_resize = self.bits_cb.sizePolicy()
+            no_resize.setRetainSizeWhenHidden(True)
+            self.bits_cb.setSizePolicy(no_resize)
+
+            self.lang_cb.currentIndexChanged.connect(lambda: self.update_mnemonic(True))
+            self.bits_cb.currentIndexChanged.connect(lambda: self.update_mnemonic(True))
+
             def f(choices_layout):
                 self.seed_type = seed_type_values[choices_layout.selected_index()]
-                self.is_seed = (lambda x: bool(x)) if self.seed_type != 'electrum' else self.saved_is_seed
+                #self.is_seed = (lambda x: bool(x)) if self.seed_e.isReadOnly() or self.seed_type != 'electrum' else self.saved_is_seed
                 self.slip39_current_mnemonic_invalid = None
                 self.seed_status.setText('')
-                self.on_edit()
-                if self.seed_type == 'bip39':
-                    msg = ' '.join([
-                        '<b>' + _('Warning') + ':</b>  ',
-                        _('BIP39 seeds can be imported in Electrum, so that users can access funds locked in other wallets.'),
-                        _('However, we do not generate BIP39 seeds, because they do not meet our safety standard.'),
-                        _('BIP39 seeds do not include a version number, which compromises compatibility with future software.'),
-                        _('We do not guarantee that BIP39 imports will always be supported in Electrum.'),
-                    ])
+
+                if not self.seed_e.isReadOnly():
+                    self.on_edit()
+                
+                is_bip39 = self.seed_type == 'bip39'
+                self.lang_cb.setVisible(is_bip39)
+                self.bits_cb.setVisible(is_bip39)
+                bits_label.setVisible(is_bip39)
+                lang_label.setVisible(is_bip39)
+                if is_bip39:
+                    self.update_mnemonic(True)
+                elif self.seed_type == 'electrum':
+                    self.update_mnemonic(False)
                 elif self.seed_type == 'slip39':
                     msg = ' '.join([
                         '<b>' + _('Warning') + ':</b>  ',
                         _('SLIP39 seeds can be imported in Electrum, so that users can access funds locked in other wallets.'),
                         _('However, we do not generate SLIP39 seeds.'),
                     ])
-                else:
-                    msg = ''
+                    self.seed_warning.setText(msg)
                 self.update_share_buttons()
-                self.initialize_completer()
-                self.seed_warning.setText(msg)
+                if not self.seed_e.isReadOnly():
+                    self.initialize_completer()
 
             checked_index = seed_type_values.index(self.seed_type)
             titles = [t[1] for t in seed_types]
             clayout = ChoicesLayout(_('Seed type'), titles, on_clicked=f, checked_index=checked_index)
-            vbox.addLayout(clayout.layout())
+            electrum_help = HelpButton(_('The standard electrum seed phrase is not ' +
+                    'BIP39 compliant and will not work with other wallets. ' +
+                    'It does however, have some advantages over BIP39 as explained ' +
+                    'here:') +
+                    '\n\nhttps://electrum.readthedocs.io/en/latest/seedphrase.html\n\n' +
+                    _('If you wish to use your seed phrase with other wallets, choose BIP39.'))
+
+            type_layout = QHBoxLayout()
+            type_layout.addLayout(clayout.layout())
+            type_layout.addWidget(electrum_help)
+            vbox.addLayout(type_layout)
+            vbox.addWidget(lang_label)
+            vbox.addWidget(self.lang_cb)
+            vbox.addWidget(bits_label)
+            vbox.addWidget(self.bits_cb)
 
         vbox.addLayout(Buttons(OkButton(dialog)))
         if not dialog.exec_():
@@ -123,6 +183,7 @@ class SeedLayout(QVBoxLayout):
 
     def __init__(
             self,
+            seed_type,
             seed=None,
             title=None,
             icon=True,
@@ -139,7 +200,14 @@ class SeedLayout(QVBoxLayout):
         self.parent = parent
         self.options = options
         self.config = config
-        self.seed_type = 'electrum'
+        self.seed_type = 'bip39'
+        self.bit = 128
+        self.lang = 'en'
+        self.wordlist = Mnemonic('en').wordlist
+        self.languages = list(filenames.items())
+        self.bits = (128, 160, 192, 224, 256)
+        self.electrum_seed_type = seed_type
+        
         if title:
             self.addWidget(WWLabel(title))
         if seed:  # "read only", we already have the text
@@ -383,6 +451,7 @@ class SeedDialog(WindowModalDialog):
         vbox = QVBoxLayout(self)
         title =  _("Your wallet generation seed is:")
         slayout = SeedLayout(
+            seed_type=None,
             title=title,
             seed=seed,
             msg=True,

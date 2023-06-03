@@ -60,6 +60,9 @@ class MissingHeader(Exception):
 class InvalidHeader(Exception):
     pass
 
+class NotEnoughHeaders(Exception):
+    pass
+
 def serialize_header(header_dict: dict) -> str:
     ts = header_dict['timestamp']
     if ts >= constants.net.KawpowActivationTS:
@@ -707,7 +710,8 @@ class Blockchain(Logger):
                 pass
             if last is None:
                 last = self.read_header(height)
-                assert last is not None
+            if last is None:
+                raise NotEnoughHeaders()
             return last
 
         # params

@@ -459,6 +459,7 @@ class InstallWizard(QDialog, MessageBoxMixin, BaseWizard):
 
     def seed_input(self, title, message, is_seed, options):
         slayout = SeedLayout(
+            seed_type=self.seed_type,
             title=message,
             is_seed=is_seed,
             options=options,
@@ -489,7 +490,7 @@ class InstallWizard(QDialog, MessageBoxMixin, BaseWizard):
 
     @wizard_dialog
     def restore_seed_dialog(self, run_next, test):
-        options = []
+        options = ['auto']
         if self.opt_ext:
             options.append('ext')
         if self.opt_bip39:
@@ -516,14 +517,15 @@ class InstallWizard(QDialog, MessageBoxMixin, BaseWizard):
     def show_seed_dialog(self, run_next, seed_text):
         title = _("Your wallet generation seed is:")
         slayout = SeedLayout(
+            seed_type=self.seed_type,
             seed=seed_text,
             title=title,
             msg=True,
-            options=['ext'],
+            options=['ext', 'bip39'],
             config=self.config,
         )
         self.exec_layout(slayout)
-        return slayout.is_ext
+        return ' '.join(slayout.get_seed_words()), slayout.is_ext, slayout.seed_type == 'bip39'
 
     def pw_layout(self, msg, kind, force_disable_encrypt_cb):
         pw_layout = PasswordLayout(

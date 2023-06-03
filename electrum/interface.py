@@ -52,7 +52,7 @@ from . import x509
 from . import pem
 from . import version
 from . import blockchain
-from .blockchain import Blockchain, HEADER_SIZE, LEGACY_HEADER_SIZE
+from .blockchain import Blockchain, HEADER_SIZE, LEGACY_HEADER_SIZE, NotEnoughHeaders
 from . import bitcoin
 from . import constants
 from .i18n import _
@@ -882,7 +882,15 @@ class Interface(Logger):
                 break
 
         mock = 'mock' in bad_header and bad_header['mock']['connect'](height)
-        real = not mock and self.blockchain.can_connect(bad_header, check_height=False)
+        real = False
+        try:
+            real = not mock and self.blockchain.can_connect(bad_header, check_height=False)
+        except NotEnoughHeaders:
+            self.logger.info('not enough headers; requesting chunk')
+            if height <= constants.net.max_checkpoint():
+                real, count = await self.request_chunk(height)
+                assert count == constants.net.DGW_CHECKPOINTS_SPACING, 'Bad initial header request'
+            
         if not real and not mock:
             raise Exception('unexpected bad header during binary: {}'.format(bad_header))
         _assert_header_does_not_check_against_any_chain(bad_header)
@@ -922,7 +930,14 @@ class Interface(Logger):
                 checkp = True
             header = await self.get_block_header(height, 'backward')
             chain = blockchain.check_header(header) if 'mock' not in header else header['mock']['check'](header)
-            can_connect = blockchain.can_connect(header) if 'mock' not in header else header['mock']['connect'](height)
+            can_connect = False
+            try:
+                can_connect = blockchain.can_connect(header) if 'mock' not in header else header['mock']['connect'](height)
+            except NotEnoughHeaders:
+                self.logger.info('not enough headers; requesting chunk')
+                if height <= constants.net.max_checkpoint():
+                    can_connect, count = await self.request_chunk(height)
+                    assert count == constants.net.DGW_CHECKPOINTS_SPACING, 'Bad initial header request'
             if chain or can_connect:
                 return False
             if checkp:
