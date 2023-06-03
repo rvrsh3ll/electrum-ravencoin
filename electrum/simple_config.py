@@ -200,15 +200,15 @@ class SimpleConfig(Logger):
         if self.get('testnet'):
             path = os.path.join(path, 'testnet')
             make_dir(path, allow_symlink=False)
-        elif self.get('regtest'):
-            path = os.path.join(path, 'regtest')
-            make_dir(path, allow_symlink=False)
-        elif self.get('simnet'):
-            path = os.path.join(path, 'simnet')
-            make_dir(path, allow_symlink=False)
-        elif self.get('signet'):
-            path = os.path.join(path, 'signet')
-            make_dir(path, allow_symlink=False)
+        #elif self.get('regtest'):
+        #    path = os.path.join(path, 'regtest')
+        #    make_dir(path, allow_symlink=False)
+        #elif self.get('simnet'):
+        #    path = os.path.join(path, 'simnet')
+        #    make_dir(path, allow_symlink=False)
+        #elif self.get('signet'):
+        #    path = os.path.join(path, 'signet')
+        #    make_dir(path, allow_symlink=False)
 
         self.logger.info(f"electrum directory {path}")
         return path
@@ -943,7 +943,7 @@ class SimpleConfig(Logger):
     WALLET_BACKUP_DIRECTORY = ConfigVar('backup_dir', default=None, type_=str)
     CONFIG_PIN_CODE = ConfigVar('pin_code', default=None, type_=str)
     QR_READER_FLIP_X = ConfigVar('qrreader_flip_x', default=True, type_=bool)
-    WIZARD_DONT_CREATE_SEGWIT = ConfigVar('nosegwit', default=False, type_=bool)
+    WIZARD_DONT_CREATE_SEGWIT = ConfigVar('nosegwit', default=True, type_=bool) # no segwit for RVN
     CONFIG_FORGET_CHANGES = ConfigVar('forget_config', default=False, type_=bool)
 
     SSL_CERTFILE_PATH = ConfigVar('ssl_certfile', default='', type_=str)

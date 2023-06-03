@@ -323,6 +323,7 @@ def main():
 
     # config is an object passed to the various constructors (wallet, interface, gui)
     if is_android:
+        raise NotImplementedError()
         import importlib.util
         android_gui = 'kivy' if importlib.util.find_spec('kivy') else 'qml'
         config_options = {
@@ -350,7 +351,7 @@ def main():
     if config_options.get('portable'):
         if is_local:
             # running from git clone or local source: put datadir next to main script
-            datadir = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'electrum_data')
+            datadir = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'electrum_ravencoin_data')
         else:
             # Running a binary or installed source. The most generic but still reasonable thing
             # is to use the current working directory. (see #7732)
@@ -358,7 +359,7 @@ def main():
             #       and we don't want to put the datadir inside a temp dir.
             # note: Re the portable .exe on Windows, when the user double-clicks it, CWD gets set
             #       to the parent dir, i.e. we will put the datadir next to the exe.
-            datadir = os.path.join(os.path.realpath(cwd), 'electrum_data')
+            datadir = os.path.join(os.path.realpath(cwd), 'electrum_ravencoin_data')
         config_options['electrum_path'] = datadir
 
     if not config_options.get('verbosity'):
@@ -390,12 +391,12 @@ def main():
 
     if config.get('testnet'):
         constants.set_testnet()
-    elif config.get('regtest'):
-        constants.set_regtest()
-    elif config.get('simnet'):
-        constants.set_simnet()
-    elif config.get('signet'):
-        constants.set_signet()
+    #elif config.get('regtest'):
+    #    constants.set_regtest()
+    #elif config.get('simnet'):
+    #    constants.set_simnet()
+    #elif config.get('signet'):
+    #    constants.set_signet()
 
     if cmdname == 'daemon' and config.get("detach"):
         # detect lockfile.
@@ -459,7 +460,7 @@ def handle_cmd(*, cmdname: str, config: 'SimpleConfig', config_options: dict):
             result = daemon.request(config, 'gui', (config_options,))
 
     elif cmdname == 'daemon':
-
+        raise NotImplementedError()
         configure_logging(config)
         fd = daemon.get_file_descriptor(config)
         if fd is not None:
@@ -473,6 +474,7 @@ def handle_cmd(*, cmdname: str, config: 'SimpleConfig', config_options: dict):
             print_msg("Daemon already running")
             sys_exit(1)
     else:
+        raise NotImplementedError()
         # command line
         configure_logging(config, log_to_file=False)  # don't spam logfiles for each client-side RPC, but support "-v"
         cmd = known_commands[cmdname]
