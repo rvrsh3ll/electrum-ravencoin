@@ -457,7 +457,7 @@ class InstallWizard(QDialog, MessageBoxMixin, BaseWizard):
         self.exec_layout(slayout, title, next_enabled=False)
         return slayout.get_text()
 
-    def seed_input(self, title, message, is_seed, options):
+    def seed_input(self, title, message, is_seed, options, seed_type):
         slayout = SeedLayout(
             seed_type=self.seed_type,
             title=message,
@@ -465,6 +465,7 @@ class InstallWizard(QDialog, MessageBoxMixin, BaseWizard):
             options=options,
             parent=self,
             config=self.config,
+            base_seed_type=seed_type,
         )
         self.exec_layout(slayout, title, next_enabled=False)
         return slayout.get_seed(), slayout.seed_type, slayout.is_ext
@@ -499,10 +500,10 @@ class InstallWizard(QDialog, MessageBoxMixin, BaseWizard):
             options.append('slip39')
         title = _('Enter Seed')
         message = _('Please enter your seed phrase in order to restore your wallet.')
-        return self.seed_input(title, message, test, options)
+        return self.seed_input(title, message, test, options, None)
 
     @wizard_dialog
-    def confirm_seed_dialog(self, run_next, seed, test):
+    def confirm_seed_dialog(self, run_next, seed, test, seed_type):
         self.app.clipboard().clear()
         title = _('Confirm Seed')
         message = ' '.join([
@@ -510,7 +511,7 @@ class InstallWizard(QDialog, MessageBoxMixin, BaseWizard):
             _('If you lose your seed, your money will be permanently lost.'),
             _('To make sure that you have properly saved your seed, please retype it here.')
         ])
-        seed, seed_type, is_ext = self.seed_input(title, message, test, None)
+        seed, seed_type, is_ext = self.seed_input(title, message, test, None, seed_type)
         return seed
 
     @wizard_dialog
@@ -525,7 +526,7 @@ class InstallWizard(QDialog, MessageBoxMixin, BaseWizard):
             config=self.config,
         )
         self.exec_layout(slayout)
-        return ' '.join(slayout.get_seed_words()), slayout.is_ext, slayout.seed_type == 'bip39'
+        return ' '.join(slayout.get_seed_words()), slayout.is_ext, slayout.seed_type
 
     def pw_layout(self, msg, kind, force_disable_encrypt_cb):
         pw_layout = PasswordLayout(
@@ -721,7 +722,8 @@ class InstallWizard(QDialog, MessageBoxMixin, BaseWizard):
         ])
         vbox = QVBoxLayout()
         layout = SeedLayout(
-            xpub,
+            seed_type=None,
+            seed=xpub,
             title=msg,
             icon=False,
             for_seed_words=False,

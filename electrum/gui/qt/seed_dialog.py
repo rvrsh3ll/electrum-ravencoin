@@ -87,6 +87,7 @@ class SeedLayout(QVBoxLayout):
 
         seed_types = [
             (value, title) for value, title in (
+                ('auto', _('Auto Select')),
                 ('electrum', _('Electrum')),
                 ('bip39', _('BIP39 seed')),
                 ('slip39', _('SLIP39 seed')),
@@ -124,27 +125,49 @@ class SeedLayout(QVBoxLayout):
             no_resize.setRetainSizeWhenHidden(True)
             self.bits_cb.setSizePolicy(no_resize)
 
-            self.lang_cb.currentIndexChanged.connect(lambda: self.update_mnemonic(True))
-            self.bits_cb.currentIndexChanged.connect(lambda: self.update_mnemonic(True))
+            if self.seed_e.isReadOnly():
+                self.lang_cb.currentIndexChanged.connect(lambda: self.update_mnemonic(True))
+                self.bits_cb.currentIndexChanged.connect(lambda: self.update_mnemonic(True))
+
+            is_bip39 = self.seed_type == 'bip39' and self.seed_e.isReadOnly()
+            self.lang_cb.setVisible(is_bip39)
+            self.bits_cb.setVisible(is_bip39)
+            bits_label.setVisible(is_bip39)
+            lang_label.setVisible(is_bip39)
 
             def f(choices_layout):
                 self.seed_type = seed_type_values[choices_layout.selected_index()]
-                #self.is_seed = (lambda x: bool(x)) if self.seed_e.isReadOnly() or self.seed_type != 'electrum' else self.saved_is_seed
+                self.is_seed = (lambda x: bool(x)) if self.seed_e.isReadOnly() or self.seed_type != 'electrum' else self.saved_is_seed
                 self.slip39_current_mnemonic_invalid = None
                 self.seed_status.setText('')
+
+                if self.seed_type == 'auto':
+                    self.auto_select_type = True
+                else:
+                    self.auto_select_type = False
 
                 if not self.seed_e.isReadOnly():
                     self.on_edit()
                 
+                if self.auto_select_type and self.seed_type != 'auto':
+                    self.auto_select_type = False
+                    checked_index = seed_type_values.index(self.seed_type)
+                    choices_layout.group.buttons()[checked_index].setChecked(True)
+
                 is_bip39 = self.seed_type == 'bip39'
-                self.lang_cb.setVisible(is_bip39)
-                self.bits_cb.setVisible(is_bip39)
-                bits_label.setVisible(is_bip39)
-                lang_label.setVisible(is_bip39)
+                
+                if self.seed_e.isReadOnly():
+                    self.lang_cb.setVisible(is_bip39)
+                    self.bits_cb.setVisible(is_bip39)
+                    bits_label.setVisible(is_bip39)
+                    lang_label.setVisible(is_bip39)
+
                 if is_bip39:
-                    self.update_mnemonic(True)
+                    if self.seed_e.isReadOnly():
+                        self.update_mnemonic(True)
                 elif self.seed_type == 'electrum':
-                    self.update_mnemonic(False)
+                    if self.seed_e.isReadOnly():
+                        self.update_mnemonic(False)
                 elif self.seed_type == 'slip39':
                     msg = ' '.join([
                         '<b>' + _('Warning') + ':</b>  ',
@@ -193,6 +216,7 @@ class SeedLayout(QVBoxLayout):
             passphrase=None,
             parent=None,
             for_seed_words=True,
+            base_seed_type=None,
             *,
             config: 'SimpleConfig',
     ):
@@ -200,13 +224,14 @@ class SeedLayout(QVBoxLayout):
         self.parent = parent
         self.options = options
         self.config = config
-        self.seed_type = 'bip39'
+        self.seed_type = 'auto' if self.options and 'auto' in self.options else (base_seed_type or 'bip39')
         self.bit = 128
         self.lang = 'en'
         self.wordlist = Mnemonic('en').wordlist
         self.languages = list(filenames.items())
         self.bits = (128, 160, 192, 224, 256)
         self.electrum_seed_type = seed_type
+        self.auto_select_type = self.options and 'auto' in self.options
         
         if title:
             self.addWidget(WWLabel(title))
@@ -321,11 +346,48 @@ class SeedLayout(QVBoxLayout):
     def on_edit(self):
         s = ' '.join(self.get_seed_words())
         b = self.is_seed(s)
+
+        if self.auto_select_type:
+            # Assume bip39
+            self.seed_type = 'bip39'
+            try:
+                slip39.decode_mnemonic(s)
+                self.seed_type = 'slip39'
+            except slip39.Slip39Error as e:
+                pass
+            if seed_type(s):
+                self.seed_type = 'electrum'
+
         if self.seed_type == 'bip39':
             from electrum.keystore import bip39_is_checksum_valid
-            is_checksum, is_wordlist = bip39_is_checksum_valid(s)
+
+            lang = None
+            for lang_name, file in filenames.items():
+                wordlist = Mnemonic(lang_name).wordlist
+                is_checksum, is_wordlist = bip39_is_checksum_valid(s, wordlist=wordlist)
+                if not is_wordlist and len(s.split()) > 1:
+                    is_checksum, is_wordlist = bip39_is_checksum_valid(' '.join(s.split()[:-1]), wordlist=wordlist)
+                if is_wordlist:
+                    lang = lang_name
+                    break
+
+            if lang and lang != self.lang:
+                if lang == 'en':
+                    bip39_english_list = Mnemonic('en').wordlist
+                    old_list = old_mnemonic.wordlist
+                    only_old_list = set(old_list) - set(bip39_english_list)
+                    self.wordlist = list(bip39_english_list) + list(only_old_list)  # concat both lists
+                else:
+                    self.wordlist = list(Mnemonic(lang).wordlist)
+
+                self.wordlist.sort()
+                self.completer.model().setStringList(self.wordlist)
+                self.lang = lang
+
             status = ('checksum: ' + ('ok' if is_checksum else 'failed')) if is_wordlist else 'unknown wordlist'
-            label = 'BIP39' + ' (%s)'%status
+            label = 'BIP39 - ' + (lang or 'unknown') + ' (%s)'%status
+
+            b = is_checksum
         elif self.seed_type == 'slip39':
             self.slip39_mnemonics[self.slip39_mnemonic_index] = s
             try:
@@ -361,7 +423,7 @@ class SeedLayout(QVBoxLayout):
                 self.seed_warning.setText("")
 
         self.seed_type_label.setText(label)
-        self.parent.next_button.setEnabled(b)
+        self.parent.next_button.setEnabled(b and self.seed_type != 'auto')
 
         # disable suggestions if user already typed an unknown word
         for word in self.get_seed_words()[:-1]:

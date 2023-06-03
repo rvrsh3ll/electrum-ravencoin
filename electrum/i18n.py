@@ -44,6 +44,17 @@ except Exception as e:
 else:
     _logger.info(f"gettext setting initial language to {_lang!r}")
 
+def ravencoinifier(func):
+    def converter(*args, **kwargs):
+        result = func(*args, **kwargs)
+        result = result.replace('bitcoin', 'ravencoin')
+        result = result.replace('Bitcoin', 'Ravencoin')
+        result = result.replace('btc', 'rvn')
+        result = result.replace('BTC', 'RVN')
+        #result = result.replace('electrum', 'electrum-ravencoin')
+        #result = result.replace('Electrum', 'Electrum-Ravencoin')
+        return result
+    return converter
 
 # note: do not use old-style (%) formatting inside translations,
 #       as syntactically incorrectly translated strings would raise exceptions (see #3237).
@@ -53,6 +64,7 @@ else:
 # note: f-strings cannot be translated! see https://stackoverflow.com/q/49797658
 #       So this does not work:   _(f"My name: {name}")
 #       instead use .format:     _("My name: {}").format(name)
+@ravencoinifier
 def _(msg: str, *, context=None) -> str:
     if msg == "":
         return ""  # empty string must not be translated. see #7158

@@ -520,7 +520,7 @@ class BaseWizard(Logger):
         if self.seed_type == 'bip39':
             def f(passphrase):
                 root_seed = bip39_to_seed(seed, passphrase)
-                self.on_restore_bip43(root_seed)
+                self.on_restore_bip43(root_seed, seed=seed, passphrase=passphrase)
             self.passphrase_dialog(run_next=f, is_restoring=True) if is_ext else f('')
         elif self.seed_type == 'slip39':
             def f(passphrase):
@@ -528,20 +528,20 @@ class BaseWizard(Logger):
                 self.on_restore_bip43(root_seed)
             self.passphrase_dialog(run_next=f, is_restoring=True) if is_ext else f('')
         elif self.seed_type in ['standard', 'segwit']:
-            f = lambda passphrase: self.run('create_keystore', seed, passphrase)
+            f = lambda passphrase: self.run('create_keystore', seed, passphrase, False)
             self.passphrase_dialog(run_next=f, is_restoring=True) if is_ext else f('')
         elif self.seed_type == 'old':
-            self.run('create_keystore', seed, '')
+            self.run('create_keystore', seed, '', False)
         elif mnemonic.is_any_2fa_seed_type(self.seed_type):
             self.load_2fa()
             self.run('on_restore_seed', seed, is_ext)
         else:
             raise Exception('Unknown seed type', self.seed_type)
 
-    def on_restore_bip43(self, root_seed):
+    def on_restore_bip43(self, root_seed, *, seed=None, passphrase=None):
         def f(derivation, script_type):
             derivation = normalize_bip32_derivation(derivation)
-            self.run('on_bip43', root_seed, derivation, script_type)
+            self.run('on_bip43', root_seed, derivation, script_type, seed=seed, passphrase=passphrase)
         if self.wallet_type == 'standard':
             def get_account_xpub(account_path):
                 root_node = BIP32Node.from_rootseed(root_seed, xtype="standard")
@@ -556,9 +556,9 @@ class BaseWizard(Logger):
         if is_bip39:
             root_seed = bip39_to_seed(seed, passphrase if passphrase else '')
             if self.wallet_type == 'multisig':
-                derivation = normalize_bip32_derivation(bip44_derivation(0, bip43_purpose=45))
+                derivation = normalize_bip32_derivation("m/45'/0")
             else:
-                derivation = normalize_bip32_derivation(bip44_derivation(0))
+                derivation = normalize_bip32_derivation(bip44_derivation(0, bip43_purpose=44))
             k = keystore.from_bip43_rootseed(root_seed, derivation, xtype='standard', seed=seed, passphrase=passphrase)
         else:
             k = keystore.from_seed(seed, passphrase, self.wallet_type == 'multisig')
@@ -566,8 +566,8 @@ class BaseWizard(Logger):
             self.data['lightning_xprv'] = k.get_lightning_xprv(None)
         self.on_keystore(k)
 
-    def on_bip43(self, root_seed, derivation, script_type):
-        k = keystore.from_bip43_rootseed(root_seed, derivation, xtype=script_type)
+    def on_bip43(self, root_seed, derivation, script_type, *, seed=None, passphrase=None):
+        k = keystore.from_bip43_rootseed(root_seed, derivation, xtype=script_type, seed=seed, passphrase=passphrase)
         self.on_keystore(k)
 
     def get_script_type_of_wallet(self) -> Optional[str]:
@@ -717,19 +717,20 @@ class BaseWizard(Logger):
         self.opt_slip39 = False
         self.show_seed_dialog(run_next=self.request_passphrase, seed_text=seed)
 
-    def request_passphrase(self, seed, opt_passphrase, is_bip39):
+    def request_passphrase(self, seed, opt_passphrase, seed_type):
         if opt_passphrase:
-            f = lambda x: self.confirm_seed(seed, x, is_bip39)
+            f = lambda x: self.confirm_seed(seed, x, seed_type)
             self.passphrase_dialog(run_next=f)
         else:
-            self.run('confirm_seed', seed, '', is_bip39)
+            self.run('confirm_seed', seed, '', seed_type)
 
-    def confirm_seed(self, seed, passphrase, is_bip39):
-        f = lambda x: self.confirm_passphrase(seed, passphrase, is_bip39)
+    def confirm_seed(self, seed, passphrase, seed_type):
+        f = lambda x: self.confirm_passphrase(seed, passphrase, seed_type == 'bip39')
         self.confirm_seed_dialog(
             run_next=f,
             seed=seed if self.config.get('debug_seed') else '',
             test=lambda x: mnemonic.is_matching_seed(seed=seed, seed_again=x),
+            seed_type=seed_type,
         )
 
     def confirm_passphrase(self, seed, passphrase, is_bip39):

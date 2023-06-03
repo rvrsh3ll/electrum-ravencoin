@@ -886,8 +886,8 @@ class Interface(Logger):
         try:
             real = not mock and self.blockchain.can_connect(bad_header, check_height=False)
         except NotEnoughHeaders:
-            self.logger.info('not enough headers; requesting chunk')
             if height <= constants.net.max_checkpoint():
+                self.logger.info('not enough headers; requesting chunk')
                 real, count = await self.request_chunk(height)
                 assert count == constants.net.DGW_CHECKPOINTS_SPACING, 'Bad initial header request'
             
@@ -934,8 +934,8 @@ class Interface(Logger):
             try:
                 can_connect = blockchain.can_connect(header) if 'mock' not in header else header['mock']['connect'](height)
             except NotEnoughHeaders:
-                self.logger.info('not enough headers; requesting chunk')
                 if height <= constants.net.max_checkpoint():
+                    self.logger.info('not enough headers; requesting chunk')
                     can_connect, count = await self.request_chunk(height)
                     assert count == constants.net.DGW_CHECKPOINTS_SPACING, 'Bad initial header request'
             if chain or can_connect:
