@@ -207,13 +207,15 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
 
         self.tabs = tabs = QTabWidget(self)
         self.send_tab = self.create_send_tab()
+        self.asset_tab = self.create_asset_tab()
         self.receive_tab = self.create_receive_tab()
         self.addresses_tab = self.create_addresses_tab()
         self.utxo_tab = self.create_utxo_tab()
         self.console_tab = self.create_console_tab()
         self.contacts_tab = self.create_contacts_tab()
-        self.channels_tab = self.create_channels_tab()
+        #self.channels_tab = self.create_channels_tab()
         tabs.addTab(self.create_history_tab(), read_QIcon("tab_history.png"), _('History'))
+        tabs.addTab(self.asset_tab, read_QIcon("bitcoin.png"), _('Assets'))
         tabs.addTab(self.send_tab, read_QIcon("tab_send.png"), _('Send'))
         tabs.addTab(self.receive_tab, read_QIcon("tab_receive.png"), _('Receive'))
 
@@ -225,7 +227,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
                 tabs.addTab(tab, icon, description.replace("&", ""))
 
         add_optional_tab(tabs, self.addresses_tab, read_QIcon("tab_addresses.png"), _("&Addresses"))
-        add_optional_tab(tabs, self.channels_tab, read_QIcon("lightning.png"), _("Channels"))
+        #add_optional_tab(tabs, self.channels_tab, read_QIcon("lightning.png"), _("Channels"))
         add_optional_tab(tabs, self.utxo_tab, read_QIcon("tab_coins.png"), _("Co&ins"))
         add_optional_tab(tabs, self.contacts_tab, read_QIcon("tab_contacts.png"), _("Con&tacts"))
         add_optional_tab(tabs, self.console_tab, read_QIcon("tab_console.png"), _("Con&sole"))
@@ -436,22 +438,22 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
     def on_event_on_history(self, *args):
         self.on_fx_history()
 
-    @qt_event_listener
-    def on_event_gossip_db_loaded(self, *args):
-        self.channels_list.gossip_db_loaded.emit(*args)
+    #@qt_event_listener
+    #def on_event_gossip_db_loaded(self, *args):
+    #    self.channels_list.gossip_db_loaded.emit(*args)
 
-    @qt_event_listener
-    def on_event_channels_updated(self, *args):
-        wallet = args[0]
-        if wallet == self.wallet:
-            self.channels_list.update_rows.emit(*args)
+    #@qt_event_listener
+    #def on_event_channels_updated(self, *args):
+    #    wallet = args[0]
+    #    if wallet == self.wallet:
+    #        self.channels_list.update_rows.emit(*args)
 
-    @qt_event_listener
-    def on_event_channel(self, *args):
-        wallet = args[0]
-        if wallet == self.wallet:
-            self.channels_list.update_single_row.emit(*args)
-            self.update_status()
+    #@qt_event_listener
+    #def on_event_channel(self, *args):
+    #    wallet = args[0]
+    #    if wallet == self.wallet:
+    #        self.channels_list.update_single_row.emit(*args)
+    #        self.update_status()
 
     @qt_event_listener
     def on_event_banner(self, *args):
@@ -494,7 +496,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         self.update_console()
         self.receive_tab.do_clear()
         self.receive_tab.request_list.update()
-        self.channels_list.update()
+        #self.channels_list.update()
         self.tabs.show()
         self.init_geometry()
         if self.config.GUI_QT_HIDE_ON_STARTUP and self.gui_object.tray.isVisible():
@@ -521,7 +523,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
 
     @classmethod
     def get_app_name_and_version_str(cls) -> str:
-        name = "Electrum"
+        name = "Electrum Ravencoin"
         if constants.net.TESTNET:
             name += " " + constants.net.NET_NAME.capitalize()
         return f"{name} {ELECTRUM_VERSION}"
@@ -706,7 +708,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         view_menu = menubar.addMenu(_("&View"))
         add_toggle_action(view_menu, self.addresses_tab)
         add_toggle_action(view_menu, self.utxo_tab)
-        add_toggle_action(view_menu, self.channels_tab)
+        #add_toggle_action(view_menu, self.channels_tab)
         add_toggle_action(view_menu, self.contacts_tab)
         add_toggle_action(view_menu, self.console_tab)
 
@@ -1012,7 +1014,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         self.address_list.update()
         self.utxo_list.update()
         self.contact_list.update()
-        self.channels_list.update_rows.emit(wallet)
+        #self.channels_list.update_rows.emit(wallet)
         self.update_completions()
 
     def refresh_tabs(self, wallet=None):
@@ -1022,7 +1024,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         self.address_list.refresh_all()
         self.utxo_list.refresh_all()
         self.contact_list.refresh_all()
-        self.channels_list.update_rows.emit(self.wallet)
+        #self.channels_list.update_rows.emit(self.wallet)
 
     def create_channels_tab(self):
         self.channels_list = ChannelsList(self)
@@ -1097,6 +1099,14 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
     def create_send_tab(self):
         from .send_tab import SendTab
         return SendTab(self)
+
+    def create_asset_tab(self):
+        if isinstance(self.wallet, Multisig_Wallet):
+            error_label = QLabel(_('Multisig wallets currently cannot own assets'))
+            error_label.setAlignment(Qt.AlignCenter)
+            return error_label
+        from .asset_tab import AssetTab
+        return AssetTab(self)
 
     def get_contact_payto(self, key):
         _type, label = self.contacts.get(key)

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from decimal import Decimal
-from typing import Union
+from typing import Union, Callable
 
 from PyQt5.QtCore import pyqtSignal, Qt, QSize
 from PyQt5.QtGui import QPalette, QPainter
@@ -42,7 +42,7 @@ class SizedFreezableLineEdit(FreezableLineEdit):
 class AmountEdit(SizedFreezableLineEdit):
     shortcut = pyqtSignal()
 
-    def __init__(self, base_unit, is_int=False, parent=None, *, max_amount=None):
+    def __init__(self, base_unit, is_int=False, parent=None, *, max_amount: int = None, min_amount: int = None, callback: Callable = None):
         # This seems sufficient for hundred-BTC amounts with 8 decimals
         width = 16 * char_width_in_lineedit()
         super().__init__(width=width, parent=parent)
@@ -52,6 +52,8 @@ class AmountEdit(SizedFreezableLineEdit):
         self.is_shortcut = False
         self.extra_precision = 0
         self.max_amount = max_amount
+        self.min_amount = min_amount
+        self.callback = callback
 
     def decimal_point(self):
         return 8
@@ -76,11 +78,17 @@ class AmountEdit(SizedFreezableLineEdit):
         if self.max_amount:
             if (amt := self._get_amount_from_text(s)) and amt >= self.max_amount:
                 s = self._get_text_from_amount(self.max_amount)
+        if self.min_amount:
+            if (amt := self._get_amount_from_text(s)) is not None and amt <= self.min_amount:
+                s = self._get_text_from_amount(self.min_amount)
         self.setText(s)
         # setText sets Modified to False.  Instead we want to remember
         # if updates were because of user modification.
         self.setModified(self.hasFocus())
         self.setCursorPosition(pos)
+        
+        if self.callback:
+            self.callback(self.get_amount())
 
     def paintEvent(self, event):
         QLineEdit.paintEvent(self, event)
@@ -107,6 +115,13 @@ class AmountEdit(SizedFreezableLineEdit):
         return amt
 
     def _get_text_from_amount(self, amount) -> str:
+        if isinstance(amount, float) or isinstance(amount, Decimal):
+            raw = '%.8f' % amount
+            while raw[-1] == '0':
+                raw = raw[:-1]
+            if raw[-1] == '.' or raw[-1] == DECIMAL_POINT:
+                raw = raw[:-1]
+            return raw
         return "%d" % amount
 
     def setAmount(self, amount):

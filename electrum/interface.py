@@ -44,6 +44,7 @@ from aiorpcx.jsonrpc import JSONRPC, CodeMessageError
 from aiorpcx.rawsocket import RSClient
 import certifi
 
+from .asset import get_error_for_asset_name
 from .util import (ignore_exceptions, log_exceptions, bfh, MySocksProxy,
                    is_integer, is_non_negative_integer, is_hash256_str, is_hex_str,
                    is_int_or_float, is_non_negative_int_or_float, OldTaskGroup)
@@ -1182,6 +1183,13 @@ class Interface(Logger):
             res = int(res * bitcoin.COIN)
         return res
 
+
+    async def get_asset_metadata(self, asset: str) -> dict:
+        error = get_error_for_asset_name(asset)
+        if error:
+            raise Exception(f'bad asset: {error}')
+        res = await self.session.send_request('blockchain.asset.get_meta', [asset])
+        return res
 
 def _assert_header_does_not_check_against_any_chain(header: dict) -> None:
     chain_bad = blockchain.check_header(header) if 'mock' not in header else header['mock']['check'](header)

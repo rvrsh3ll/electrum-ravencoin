@@ -28,13 +28,13 @@ FEE_DEPTH_TARGETS = [10_000_000, 5_000_000, 2_000_000, 1_000_000,
 FEE_LN_ETA_TARGET = 2  # note: make sure the network is asking for estimates for this target
 
 # satoshi per kbyte
-FEERATE_MAX_DYNAMIC = 1500000
-FEERATE_WARNING_HIGH_FEE = 600000
-FEERATE_FALLBACK_STATIC_FEE = 150000
-FEERATE_DEFAULT_RELAY = 1000
-FEERATE_MAX_RELAY = 50000
-FEERATE_STATIC_VALUES = [1000, 2000, 5000, 10000, 20000, 30000,
-                         50000, 70000, 100000, 150000, 200000, 300000]
+FEERATE_MAX_DYNAMIC = 1500000 * 1000
+FEERATE_WARNING_HIGH_FEE = 600000 * 1000
+FEERATE_FALLBACK_STATIC_FEE = 150000 * 1000
+FEERATE_DEFAULT_RELAY = 1000 * 1000
+FEERATE_MAX_RELAY = 50000 * 1000
+FEERATE_STATIC_VALUES = [1000 * 1000, 2000 * 1000, 5000 * 1000, 10000 * 1000, 20000 * 1000, 30000 * 1000,
+                         50000 * 1000, 70000 * 1000, 100000 * 1000, 150000 * 1000, 200000 * 1000, 300000 * 1000]
 FEERATE_REGTEST_HARDCODED = 180000  # for eclair compat
 
 # The min feerate_per_kw that can be used in lightning so that
@@ -680,8 +680,8 @@ class SimpleConfig(Logger):
 
         fee_level: float between 0.0 and 1.0, representing fee slider position
         """
-        if constants.net is constants.BitcoinRegtest:
-            return FEERATE_REGTEST_HARDCODED
+        #if constants.net is constants.BitcoinRegtest:
+        #    return FEERATE_REGTEST_HARDCODED
         if dyn is None:
             dyn = self.is_dynfee()
         if mempool is None:
@@ -921,12 +921,14 @@ class SimpleConfig(Logger):
     GUI_QML_USER_KNOWS_PRESS_AND_HOLD = ConfigVar('user_knows_press_and_hold', default=False, type_=bool)
 
     BTC_AMOUNTS_DECIMAL_POINT = ConfigVar('decimal_point', default=DECIMAL_POINT_DEFAULT, type_=int)
-    BTC_AMOUNTS_FORCE_NZEROS_AFTER_DECIMAL_POINT = ConfigVar('num_zeros', default=0, type_=int)
+    BTC_AMOUNTS_FORCE_NZEROS_AFTER_DECIMAL_POINT = ConfigVar('num_zeros', default=1, type_=int)
     BTC_AMOUNTS_PREC_POST_SAT = ConfigVar('amt_precision_post_satoshi', default=0, type_=int)
     BTC_AMOUNTS_ADD_THOUSANDS_SEP = ConfigVar('amt_add_thousands_sep', default=False, type_=bool)
 
-    BLOCK_EXPLORER = ConfigVar('block_explorer', default='Blockstream.info', type_=str)
+    BLOCK_EXPLORER = ConfigVar('block_explorer', default='rvn.cryptoscope.io', type_=str)
     BLOCK_EXPLORER_CUSTOM = ConfigVar('block_explorer_custom', default=None)
+    IPFS_EXPLORER = ConfigVar('ipfs_explorer', default='cloudflare-ipfs.com', type_=str)
+    IPFS_EXPLORER_CUSTOM = ConfigVar('ipfs_explorer_custom', default=None)
     VIDEO_DEVICE_PATH = ConfigVar('video_device', default='default', type_=str)
     OPENALIAS_ID = ConfigVar('alias', default="", type_=str)
     HWD_SESSION_TIMEOUT = ConfigVar('session_timeout', default=300, type_=int)
@@ -938,6 +940,7 @@ class SimpleConfig(Logger):
     BLOCKCHAIN_PREFERRED_BLOCK = ConfigVar('blockchain_preferred_block', default=None)
     SHOW_CRASH_REPORTER = ConfigVar('show_crash_reporter', default=True, type_=bool)
     DONT_SHOW_TESTNET_WARNING = ConfigVar('dont_show_testnet_warning', default=False, type_=bool)
+    DONT_SHOW_INTERNET_WARNING = ConfigVar('dont_show_internet_warning', default=False, type_=bool)
     RECENTLY_OPEN_WALLET_FILES = ConfigVar('recently_open', default=None)
     IO_DIRECTORY = ConfigVar('io_dir', default=os.path.expanduser('~'), type_=str)
     WALLET_BACKUP_DIRECTORY = ConfigVar('backup_dir', default=None, type_=str)

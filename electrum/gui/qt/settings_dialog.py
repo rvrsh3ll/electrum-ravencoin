@@ -300,6 +300,46 @@ class SettingsDialog(QDialog, QtEventListener):
         block_ex_hbox_w = QWidget()
         block_ex_hbox_w.setLayout(block_ex_hbox)
 
+        ipfs_explorers = sorted(util.ipfs_explorer_info().keys())
+        IPFS_EX_CUSTOM_ITEM = _("Custom URL")
+        if IPFS_EX_CUSTOM_ITEM in ipfs_explorers:  # malicious translation?
+            ipfs_explorers.remove(IPFS_EX_CUSTOM_ITEM)
+        ipfs_explorers.append(IPFS_EX_CUSTOM_ITEM)
+        msg = _('Choose which online ipfs explorer to use for functions that open a web browser')
+        ipfs_ex_label = HelpLabel(_('Online IPFS Explorer') + ':', msg)
+        ipfs_ex_combo = QComboBox()
+        ipfs_ex_custom_e = QLineEdit(str(self.config.IPFS_EXPLORER_CUSTOM or ''))
+        ipfs_ex_combo.addItems(ipfs_explorers)
+        ipfs_ex_combo.setCurrentIndex(
+            ipfs_ex_combo.findText(util.ipfs_explorer(self.config) or IPFS_EX_CUSTOM_ITEM))
+        def showhide_ipfs_ex_custom_e():
+            ipfs_ex_custom_e.setVisible(ipfs_ex_combo.currentText() == IPFS_EX_CUSTOM_ITEM)
+        showhide_ipfs_ex_custom_e()
+        def on_ie_combo(x):
+            if ipfs_ex_combo.currentText() == IPFS_EX_CUSTOM_ITEM:
+                on_ie_edit()
+            else:
+                ie_result = ipfs_explorers[ipfs_ex_combo.currentIndex()]
+                self.config.IPFS_EXPLORER_CUSTOM = None
+                self.config.IPFS_EXPLORER = ie_result
+            showhide_ipfs_ex_custom_e()
+        ipfs_ex_combo.currentIndexChanged.connect(on_ie_combo)
+        def on_ie_edit():
+            val = ipfs_ex_custom_e.text()
+            try:
+                val = ast.literal_eval(val)  # to also accept tuples
+            except Exception:
+                pass
+            self.config.IPFS_EXPLORER_CUSTOM = val
+        ipfs_ex_custom_e.editingFinished.connect(on_ie_edit)
+        ipfs_ex_hbox = QHBoxLayout()
+        ipfs_ex_hbox.setContentsMargins(0, 0, 0, 0)
+        ipfs_ex_hbox.setSpacing(0)
+        ipfs_ex_hbox.addWidget(ipfs_ex_combo)
+        ipfs_ex_hbox.addWidget(ipfs_ex_custom_e)
+        ipfs_ex_hbox_w = QWidget()
+        ipfs_ex_hbox_w.setLayout(ipfs_ex_hbox)
+
         # Fiat Currency
         self.history_rates_cb = QCheckBox(_('Download historical rates'))
         ccy_combo = QComboBox()
@@ -365,10 +405,11 @@ class SettingsDialog(QDialog, QtEventListener):
         gui_widgets.append((lang_label, lang_combo))
         gui_widgets.append((colortheme_label, colortheme_combo))
         gui_widgets.append((block_ex_label, block_ex_hbox_w))
+        gui_widgets.append((ipfs_ex_label, ipfs_ex_hbox_w))
         units_widgets = []
         units_widgets.append((unit_label, unit_combo))
         units_widgets.append((nz_label, nz))
-        units_widgets.append((msat_cb, None))
+        #units_widgets.append((msat_cb, None))
         units_widgets.append((thousandsep_cb, None))
         lightning_widgets = []
         lightning_widgets.append((trampoline_cb, None))
@@ -380,7 +421,7 @@ class SettingsDialog(QDialog, QtEventListener):
         misc_widgets = []
         misc_widgets.append((updatecheck_cb, None))
         misc_widgets.append((filelogging_cb, None))
-        misc_widgets.append((alias_label, self.alias_e))
+        #misc_widgets.append((alias_label, self.alias_e))
         misc_widgets.append((qr_label, qr_combo))
         if len(choosers) > 1:
             misc_widgets.append((chooser_label, chooser_combo))
@@ -389,7 +430,7 @@ class SettingsDialog(QDialog, QtEventListener):
             (gui_widgets, _('Appearance')),
             (units_widgets, _('Units')),
             (fiat_widgets, _('Fiat')),
-            (lightning_widgets, _('Lightning')),
+            #(lightning_widgets, _('Lightning')),
             (misc_widgets, _('Misc')),
         ]
         for widgets, name in tabs_info:

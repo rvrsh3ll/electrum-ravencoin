@@ -1164,6 +1164,13 @@ class Network(Logger, NetworkRetryManager[ServerAddr]):
             raise RequestTimedOut()
         return await self.interface.get_txid_from_txpos(tx_height, tx_pos, merkle)
 
+    @best_effort_reliable
+    @catch_server_exceptions
+    async def get_asset_metadata(self, asset: str) -> dict:
+        if self.interface is None:
+            raise RequestTimedOut()
+        return await self.interface.get_asset_metadata(asset)
+
     def blockchain(self) -> Blockchain:
         interface = self.interface
         if interface and interface.blockchain is not None:

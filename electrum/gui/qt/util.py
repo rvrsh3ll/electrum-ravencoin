@@ -11,7 +11,7 @@ import webbrowser
 from decimal import Decimal
 from functools import partial, lru_cache, wraps
 from typing import (NamedTuple, Callable, Optional, TYPE_CHECKING, Union, List, Dict, Any,
-                    Sequence, Iterable, Tuple, Type)
+                    Sequence, Iterable, Tuple, Type, Coroutine)
 
 from PyQt5 import QtWidgets, QtCore
 from PyQt5.QtGui import (QFont, QColor, QCursor, QPixmap, QStandardItem, QImage,
@@ -26,7 +26,7 @@ from PyQt5.QtWidgets import (QPushButton, QLabel, QMessageBox, QHBoxLayout,
                              QFileDialog, QWidget, QToolButton, QTreeView, QPlainTextEdit,
                              QHeaderView, QApplication, QToolTip, QTreeWidget, QStyledItemDelegate,
                              QMenu, QStyleOptionViewItem, QLayout, QLayoutItem, QAbstractButton,
-                             QGraphicsEffect, QGraphicsScene, QGraphicsPixmapItem, QSizePolicy)
+                             QGraphicsEffect, QGraphicsScene, QGraphicsPixmapItem, QSizePolicy, QCheckBox)
 
 from electrum.i18n import _, languages
 from electrum.util import FileImportFailed, FileExportFailed, make_aiohttp_session, resource_path
@@ -182,7 +182,6 @@ class InfoButton(HelpMixin, QPushButton):
         self.setFocusPolicy(Qt.NoFocus)
         self.setFixedWidth(6 * char_width_in_lineedit())
         self.clicked.connect(self.show_help)
-
 
 class Buttons(QHBoxLayout):
     def __init__(self, *buttons):
@@ -829,7 +828,53 @@ class OverlayControlMixin(GenericInputHandler):
                 menu.addAction(read_QIcon(opt_icon), opt_text, opt_cb)
         btn.setMenu(menu)
 
+class ValidatedDelayedCallbackEditor:
+    def __init__(self, event_loop_getter: Callable[[], asyncio.AbstractEventLoop], get_error: Callable[[str], Optional[str]], delay: float, on_done: Coroutine):
+        self.line_edit = QLineEdit()
+        self.line_edit.setFont(QFont(MONOSPACE_FONT))
+        
+        self.error_button = QToolButton()
+        self.error_button.setIcon(read_QIcon('expired.png'))
+        #self.error_button.setStyleSheet("background-color: rgba(255, 255, 255, 0); ")
+        no_resize = self.error_button.sizePolicy()
+        no_resize.setRetainSizeWhenHidden(True)
+        self.error_button.setSizePolicy(no_resize)
 
+
+        self.error_button.hide()
+
+        self._current_task: Optional[asyncio.Task] = None
+        self._get_error = get_error
+        self._event_loop_getter = event_loop_getter
+        self._delay = delay
+        self._on_done = on_done
+            
+        self.line_edit.textChanged.connect(self.validate_text)
+
+    def validate_text(self):
+        if self._current_task:
+            self._current_task.cancel()
+            self._current_task = None
+
+        error = self._get_error(self.line_edit.text())
+        event_loop = self._event_loop_getter()
+
+        if not event_loop:
+            if not error:
+                error = 'Internal Error: no event loop'
+
+        if error:
+            self.error_button.show()
+            self.error_button.setToolTip(error)
+            return
+        else:
+            self.error_button.hide()
+
+        async def waiter():
+            await asyncio.sleep(self._delay)
+            await self._on_done()
+
+        self._current_task = event_loop.create_task(waiter())
 
 class ButtonsLineEdit(OverlayControlMixin, QLineEdit):
     def __init__(self, text=None):
@@ -1140,6 +1185,30 @@ def webopen(url: str):
     else:
         webbrowser.open(url)
 
+def webopen_safe(url: str, config: 'SimpleConfig', parent: 'MessageBoxMixin'):
+    goto_website = True
+    if not config.DONT_SHOW_INTERNET_WARNING:
+        cb = QCheckBox(_("Don't show this message again."))
+        cb_checked = False
+
+        def on_cb(x):
+            nonlocal cb_checked
+            cb_checked = x == Qt.Checked
+
+        cb.stateChanged.connect(on_cb)
+        goto_website = parent.question(_('You are about to visit:\n\n'
+                                        '{}\n\n'
+                                        'IPFS hashes can link to anything. Please follow '
+                                        'safe practices and common sense. If you are unsure '
+                                        'about what\'s on the other end of an IPFS, don\'t '
+                                        'visit it!\n\n'
+                                        'Are you sure you want to continue?').format(url),
+                                    title=_('Warning: External Data'), checkbox=cb)
+        if cb_checked:
+            config.DONT_SHOW_INTERNET_WARNING = True
+        
+    if goto_website:
+        webopen(url)
 
 class FixedAspectRatioLayout(QLayout):
     def __init__(self, parent: QWidget = None, aspect_ratio: float = 1.0):

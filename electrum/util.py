@@ -85,11 +85,11 @@ def all_subclasses(cls) -> Set:
 ca_path = certifi.where()
 
 
-base_units = {'BTC':8, 'mBTC':5, 'bits':2, 'sat':0}
+base_units = {'RVN':8} #, 'mBTC':5, 'bits':2, 'sat':0}
 base_units_inverse = inv_dict(base_units)
-base_units_list = ['BTC', 'mBTC', 'bits', 'sat']  # list(dict) does not guarantee order
+base_units_list = ['RVN'] #, 'mBTC', 'bits', 'sat']  # list(dict) does not guarantee order
 
-DECIMAL_POINT_DEFAULT = 5  # mBTC
+DECIMAL_POINT_DEFAULT = 8  # RVN
 
 
 class UnknownBaseUnit(Exception): pass
@@ -884,78 +884,17 @@ def age(
             return _("in over {} years").format(round(distance_in_minutes / 525600))
 
 mainnet_block_explorers = {
-    '3xpl.com': ('https://3xpl.com/bitcoin/',
-                        {'tx': 'transaction/', 'addr': 'address/'}),
-    'Bitupper Explorer': ('https://bitupper.com/en/explorer/bitcoin/',
-                        {'tx': 'transactions/', 'addr': 'addresses/'}),
-    'Bitflyer.jp': ('https://chainflyer.bitflyer.jp/',
-                        {'tx': 'Transaction/', 'addr': 'Address/'}),
-    'Blockchain.info': ('https://blockchain.com/btc/',
-                        {'tx': 'tx/', 'addr': 'address/'}),
-    'blockchainbdgpzk.onion': ('https://blockchainbdgpzk.onion/',
-                        {'tx': 'tx/', 'addr': 'address/'}),
-    'Blockstream.info': ('https://blockstream.info/',
-                        {'tx': 'tx/', 'addr': 'address/'}),
-    'Bitaps.com': ('https://btc.bitaps.com/',
-                        {'tx': '', 'addr': ''}),
-    'BTC.com': ('https://btc.com/',
-                        {'tx': '', 'addr': ''}),
-    'Chain.so': ('https://www.chain.so/',
-                        {'tx': 'tx/BTC/', 'addr': 'address/BTC/'}),
-    'Insight.is': ('https://insight.bitpay.com/',
-                        {'tx': 'tx/', 'addr': 'address/'}),
-    'TradeBlock.com': ('https://tradeblock.com/blockchain/',
-                        {'tx': 'tx/', 'addr': 'address/'}),
-    'BlockCypher.com': ('https://live.blockcypher.com/btc/',
-                        {'tx': 'tx/', 'addr': 'address/'}),
-    'Blockchair.com': ('https://blockchair.com/bitcoin/',
-                        {'tx': 'transaction/', 'addr': 'address/'}),
-    'blockonomics.co': ('https://www.blockonomics.co/',
-                        {'tx': 'api/tx?txid=', 'addr': '#/search?q='}),
-    'mempool.space': ('https://mempool.space/',
-                        {'tx': 'tx/', 'addr': 'address/'}),
-    'mempool.emzy.de': ('https://mempool.emzy.de/',
-                        {'tx': 'tx/', 'addr': 'address/'}),
-    'OXT.me': ('https://oxt.me/',
-                        {'tx': 'transaction/', 'addr': 'address/'}),
-    'smartbit.com.au': ('https://www.smartbit.com.au/',
-                        {'tx': 'tx/', 'addr': 'address/'}),
-    'mynode.local': ('http://mynode.local:3002/',
-                        {'tx': 'tx/', 'addr': 'address/'}),
-    'system default': ('blockchain:/',
+    'rvn.cryptoscope.io': ('https://rvn.cryptoscope.io/',
+                        {'tx': 'tx/?txid=', 'addr': 'address/?address='}),
+    'ravencoin.network': ('https://ravencoin.network/',
                         {'tx': 'tx/', 'addr': 'address/'}),
 }
 
 testnet_block_explorers = {
-    'Bitaps.com': ('https://tbtc.bitaps.com/',
-                       {'tx': '', 'addr': ''}),
-    'BlockCypher.com': ('https://live.blockcypher.com/btc-testnet/',
-                       {'tx': 'tx/', 'addr': 'address/'}),
-    'Blockchain.info': ('https://www.blockchain.com/btc-testnet/',
-                       {'tx': 'tx/', 'addr': 'address/'}),
-    'Blockstream.info': ('https://blockstream.info/testnet/',
+    'rvn.cryptoscope.io': ('https://rvnt.cryptoscope.io/',
+                        {'tx': 'tx/?txid=', 'addr': 'address/?address='}),
+    'ravencoin.network': ('https://testnet.ravencoin.network/',
                         {'tx': 'tx/', 'addr': 'address/'}),
-    'mempool.space': ('https://mempool.space/testnet/',
-                        {'tx': 'tx/', 'addr': 'address/'}),
-    'smartbit.com.au': ('https://testnet.smartbit.com.au/',
-                       {'tx': 'tx/', 'addr': 'address/'}),
-    'system default': ('blockchain://000000000933ea01ad0ee984209779baaec3ced90fa3f408719526f8d77f4943/',
-                       {'tx': 'tx/', 'addr': 'address/'}),
-}
-
-signet_block_explorers = {
-    'bc-2.jp': ('https://explorer.bc-2.jp/',
-                        {'tx': 'tx/', 'addr': 'address/'}),
-    'mempool.space': ('https://mempool.space/signet/',
-                        {'tx': 'tx/', 'addr': 'address/'}),
-    'bitcoinexplorer.org': ('https://signet.bitcoinexplorer.org/',
-                       {'tx': 'tx/', 'addr': 'address/'}),
-    'wakiyamap.dev': ('https://signet-explorer.wakiyamap.dev/',
-                       {'tx': 'tx/', 'addr': 'address/'}),
-    'ex.signet.bublina.eu.org': ('https://ex.signet.bublina.eu.org/',
-                       {'tx': 'tx/', 'addr': 'address/'}),
-    'system default': ('blockchain:/',
-                       {'tx': 'tx/', 'addr': 'address/'}),
 }
 
 _block_explorer_default_api_loc = {'tx': 'tx/', 'addr': 'address/'}
@@ -965,8 +904,8 @@ def block_explorer_info():
     from . import constants
     if constants.net.NET_NAME == "testnet":
         return testnet_block_explorers
-    elif constants.net.NET_NAME == "signet":
-        return signet_block_explorers
+    #elif constants.net.NET_NAME == "signet":
+    #    return signet_block_explorers
     return mainnet_block_explorers
 
 
@@ -1012,13 +951,74 @@ def block_explorer_URL(config: 'SimpleConfig', kind: str, item: str) -> Optional
     url_parts = [explorer_url, kind_str, item]
     return ''.join(url_parts)
 
+
+ipfs_explorers = {
+    'ipfs.scalaproject.io': ('https://ipfs.scalaproject.io/',
+                {'ipfs': 'ipfs/'}),
+    'cloudflare-ipfs.com': ('https://cloudflare-ipfs.com/',
+                {'ipfs': 'ipfs/'}),
+    'ipfs.scalaproject.io': ('https://ipfs.scalaproject.io/',
+                {'ipfs': 'ipfs/'}),
+    'nftstorage.link': ('https://nftstorage.link/',
+                {'ipfs': 'ipfs/'}),
+}
+
+_ipfs_explorer_default_api_loc = {'ipfs': 'ipfs/'}
+
+def ipfs_explorer_info():
+    return ipfs_explorers
+
+
+def ipfs_explorer(config: 'SimpleConfig') -> Optional[str]:
+    """Returns name of selected ipfs explorer,
+    or None if a custom one (not among hardcoded ones) is configured.
+    """
+    if config.IPFS_EXPLORER_CUSTOM is not None:
+        return None
+    be_key = config.IPFS_EXPLORER
+    be_tuple = ipfs_explorer_info().get(be_key)
+    if be_tuple is None:
+        be_key = config.cv.IPFS_EXPLORER.get_default_value()
+    assert isinstance(be_key, str), f"{be_key!r} should be str"
+    return be_key
+
+
+def ipfs_explorer_tuple(config: 'SimpleConfig') -> Optional[Tuple[str, dict]]:
+    custom_be = config.IPFS_EXPLORER_CUSTOM
+    if custom_be:
+        if isinstance(custom_be, str):
+            return custom_be, _ipfs_explorer_default_api_loc
+        if isinstance(custom_be, (tuple, list)) and len(custom_be) == 2:
+            return tuple(custom_be)
+        _logger.warning(f"not using {config.cv.IPFS_EXPLORER_CUSTOM.key()!r} from config. "
+                        f"expected a str or a pair but got {custom_be!r}")
+        return None
+    else:
+        # using one of the hardcoded ipfs explorers
+        return ipfs_explorer_info().get(ipfs_explorer(config))
+
+
+def ipfs_explorer_URL(config: 'SimpleConfig', kind: str, item: str) -> Optional[str]:
+    be_tuple = ipfs_explorer_tuple(config)
+    if not be_tuple:
+        return
+    explorer_url, explorer_dict = be_tuple
+    kind_str = explorer_dict.get(kind)
+    if kind_str is None:
+        return
+    if explorer_url[-1] != "/":
+        explorer_url += "/"
+    url_parts = [explorer_url, kind_str, item]
+    return ''.join(url_parts)
+
+
 # URL decode
 #_ud = re.compile('%([0-9a-hA-H]{2})', re.MULTILINE)
 #urldecode = lambda x: _ud.sub(lambda m: chr(int(m.group(1), 16)), x)
 
 
 # note: when checking against these, use .lower() to support case-insensitivity
-BITCOIN_BIP21_URI_SCHEME = 'bitcoin'
+BITCOIN_BIP21_URI_SCHEME = 'raven'
 LIGHTNING_URI_SCHEME = 'lightning'
 
 
