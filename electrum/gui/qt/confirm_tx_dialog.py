@@ -25,7 +25,7 @@
 
 from decimal import Decimal
 from functools import partial
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Optional, Union, Mapping
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QIcon
@@ -554,6 +554,8 @@ class TxEditor(WindowModalDialog):
         fee = self.tx.get_fee()
         assert fee is not None
         amount = self.tx.output_value() if self.output_value == '!' else self.output_value
+        if isinstance(amount, Mapping):
+            amount = amount.get(None, 0)
         tx_size = self.tx.estimated_size()
         fee_warning_tuple = self.wallet.get_tx_fee_warning(
             invoice_amt=amount, tx_size=tx_size, fee=fee)
@@ -604,7 +606,7 @@ class TxEditor(WindowModalDialog):
 class ConfirmTxDialog(TxEditor):
     help_text = ''#_('Set the mining fee of your transaction')
 
-    def __init__(self, *, window: 'ElectrumWindow', make_tx, output_value: Union[int, str], allow_preview=True):
+    def __init__(self, *, window: 'ElectrumWindow', make_tx, output_value: Union[int, str, Mapping[Optional[str], Union[int, str]]], allow_preview=True):
 
         TxEditor.__init__(
             self,
@@ -624,6 +626,10 @@ class ConfirmTxDialog(TxEditor):
                 amount_str = self.main_window.format_amount_and_units(amount)
             else:
                 amount_str = "max"
+        elif isinstance(self.output_value, Mapping):
+            base_amount = self.output_value.get(None, 0)
+            amount_str = self.main_window.format_amount_and_units(base_amount)
+            amount_str += ', ' + ', '.join((f'{self.main_window.config.format_amount(amount)} {asset}' for asset, amount in self.output_value.items() if asset))
         else:
             amount = self.output_value
             amount_str = self.main_window.format_amount_and_units(amount)

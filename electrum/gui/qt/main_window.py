@@ -215,9 +215,9 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         self.contacts_tab = self.create_contacts_tab()
         #self.channels_tab = self.create_channels_tab()
         tabs.addTab(self.create_history_tab(), read_QIcon("tab_history.png"), _('History'))
-        tabs.addTab(self.asset_tab, read_QIcon("bitcoin.png"), _('Assets'))
         tabs.addTab(self.send_tab, read_QIcon("tab_send.png"), _('Send'))
         tabs.addTab(self.receive_tab, read_QIcon("tab_receive.png"), _('Receive'))
+        tabs.addTab(self.asset_tab, read_QIcon("bitcoin.png"), _('Assets'))
 
         def add_optional_tab(tabs, tab, icon, description):
             tab.tab_icon = icon

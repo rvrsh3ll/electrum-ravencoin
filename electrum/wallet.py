@@ -1688,7 +1688,8 @@ class Abstract_Wallet(ABC, Logger, EventListener):
             fee=None,
             change_addr: str = None,
             is_sweep=False,
-            rbf=True) -> PartialTransaction:
+            rbf=True,
+            fee_mixin=None) -> PartialTransaction:
         """Can raise NotEnoughFunds or NoDynamicFeeEstimates."""
 
         if not coins:  # any bitcoin tx must have at least 1 input by consensus
@@ -1723,6 +1724,9 @@ class Abstract_Wallet(ABC, Logger, EventListener):
             fee_estimator = fee
         else:
             raise Exception(f'Invalid argument fee: {fee}')
+
+        if fee_mixin:
+            fee_estimator = fee_mixin(fee_estimator)
 
         # set if we merge with another transaction
         rbf_merge_txid = None

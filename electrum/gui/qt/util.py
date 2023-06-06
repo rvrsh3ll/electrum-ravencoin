@@ -174,6 +174,14 @@ class HelpButton(HelpMixin, QToolButton):
         self.setFixedWidth(round(2.2 * char_width_in_lineedit()))
         self.clicked.connect(self.show_help)
 
+class WarnButton(HelpMixin, QToolButton):
+    def __init__(self):
+        QToolButton.__init__(self)
+        HelpMixin.__init__(self, '', help_title='Warning')
+        self.setIcon(read_QIcon('expired.png'))
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setFixedWidth(round(2.2 * char_width_in_lineedit()))
+        self.clicked.connect(self.show_help)
 
 class InfoButton(HelpMixin, QPushButton):
     def __init__(self, text: str):
@@ -833,13 +841,11 @@ class ValidatedDelayedCallbackEditor:
         self.line_edit = QLineEdit()
         self.line_edit.setFont(QFont(MONOSPACE_FONT))
         
-        self.error_button = QToolButton()
-        self.error_button.setIcon(read_QIcon('expired.png'))
+        self.error_button = WarnButton()
         #self.error_button.setStyleSheet("background-color: rgba(255, 255, 255, 0); ")
         no_resize = self.error_button.sizePolicy()
         no_resize.setRetainSizeWhenHidden(True)
         self.error_button.setSizePolicy(no_resize)
-
 
         self.error_button.hide()
 
@@ -866,6 +872,7 @@ class ValidatedDelayedCallbackEditor:
         if error:
             self.error_button.show()
             self.error_button.setToolTip(error)
+            self.error_button.help_text = error
             return
         else:
             self.error_button.hide()

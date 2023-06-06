@@ -1,9 +1,12 @@
 import re
 
 from enum import Enum
-from typing import Optional, Sequence
+from typing import Optional, Sequence, Mapping, Union, TYPE_CHECKING
 
+from .bitcoin import address_to_script, construct_script, int_to_hex, opcodes, COIN
 from .i18n import _
+
+from .transaction import PartialTxOutput, MalformedBitcoinScript, script_GetOp
 
 # https://github.com/RavenProject/Ravencoin/blob/master/src/assets/assets.cpp
 
@@ -14,6 +17,14 @@ MIN_ASSET_LENGTH = 3
 DEFAULT_ASSET_AMOUNT_MAX = 21_000_000_000
 UNIQUE_ASSET_AMOUNT_MAX = 1
 QUALIFIER_ASSET_AMOUNT_MAX = 10
+
+RVN_ASSET_PREFIX = b'rvn'
+RVN_ASSET_TYPE_CREATE = b'q'
+RVN_ASSET_TYPE_CREATE_INT = RVN_ASSET_TYPE_CREATE[0]
+RVN_ASSET_TYPE_OWNER = b'o'
+RVN_ASSET_TYPE_OWNER_INT = RVN_ASSET_TYPE_OWNER[0]
+
+ASSET_OWNER_IDENTIFIER = '!'
 
 _ROOT_NAME_CHARACTERS = r'^[A-Z0-9._]{3,}$'
 _SUB_NAME_CHARACTERS = r'^[A-Z0-9._]+$'
@@ -111,6 +122,9 @@ class AssetType(Enum):
     SUB_QUALIFIER = 7
     RESTRICTED = 8
 
+class AssetException(Exception):
+    pass
+
 def get_error_for_asset_typed(asset: str, asset_type: AssetType) -> Optional[str]:
     if asset_type == AssetType.SUB and _SUB_NAME_DELIMITER not in asset:
         return _('Not a sub asset.')
@@ -170,3 +184,122 @@ def get_error_for_asset_name(asset: str) -> Optional[str]:
     elif re.match(_SUB_QUALIFIER_INDICATOR, asset): return get_error_for_asset_typed(asset, AssetType.SUB_QUALIFIER)
     elif re.match(_RESTRICTED_INDICATOR, asset): return get_error_for_asset_typed(asset, AssetType.RESTRICTED)
     else: return get_error_for_asset_typed(asset, AssetType.SUB if _isAssetNameASubAsset(asset) else AssetType.ROOT)
+
+def generate_create_script(address: str, asset: str, amount: int, divisions: int, reissuable: bool, associated_data: Optional[bytes]) -> 'PartialTxOutput':
+    if get_error_for_asset_name(asset):
+        raise AssetException('Bad asset')
+    if not amount > 0 or amount > DEFAULT_ASSET_AMOUNT_MAX * COIN:
+        raise AssetException('Bad amount')
+    if divisions < 0 or divisions > 8:
+        raise AssetException('Bad divisions')
+    if associated_data and len(associated_data) != 34:
+        raise AssetException('Bad data')
+
+    asset_data = (f'{RVN_ASSET_PREFIX.hex()}{RVN_ASSET_TYPE_CREATE.hex()}'
+                  f'{int_to_hex(len(asset))}{asset.encode().hex()}'
+                  f'{int_to_hex(amount, 8)}{int_to_hex(divisions)}'
+                  f"{'01' if reissuable else '00'}{'01' if associated_data else '00'}"
+                  f'{associated_data.hex() if associated_data else ""}')
+    asset_script = construct_script([opcodes.OP_ASSET, asset_data, opcodes.OP_DROP])
+    base_script = address_to_script(address)
+    return base_script + asset_script
+
+def generate_owner_script(address: str, asset: str) -> 'PartialTxOutput':
+    if asset[-1] != ASSET_OWNER_IDENTIFIER:
+        asset += ASSET_OWNER_IDENTIFIER
+    if get_error_for_asset_name(asset):
+        raise AssetException('Bad asset')
+    
+    asset_data = (f'{RVN_ASSET_PREFIX.hex()}{RVN_ASSET_TYPE_OWNER.hex()}'
+                  f'{int_to_hex(len(asset))}{asset.encode().hex()}')
+    
+    asset_script = construct_script([opcodes.OP_ASSET, asset_data, opcodes.OP_DROP])
+    base_script = address_to_script(address)
+    return base_script + asset_script
+
+
+class AssetVoutType(Enum):
+    NONE = 1
+    TRANSFER = 2
+    CREATE = 3
+    OWNER = 4
+    REISSUE = 5
+
+class BaseAssetVoutInformation():
+    def __init__(self, type_: AssetVoutType):
+        self._type = type_
+
+    def get_type(self):
+        return self._type
+    
+    def is_transferable(self):
+        return self._type in (AssetVoutType.CREATE, AssetVoutType.OWNER, AssetVoutType.TRANSFER, AssetVoutType.REISSUE)
+
+class NoAssetVoutInformation(BaseAssetVoutInformation):
+    def __init__(self):
+        BaseAssetVoutInformation.__init__(self, AssetVoutType.NONE)
+
+class MetadataAssetVoutInformation(BaseAssetVoutInformation):
+    def __init__(self, type_: AssetVoutType, asset: str, amount: int, divisions: int, reissuable: bool, associated_data: Optional[bytes]):
+        BaseAssetVoutInformation.__init__(self, type_)
+        self.asset = asset
+        self.amount = amount
+        self.divisions = divisions
+        self.reissuable = reissuable
+        self.associated_data = associated_data
+
+class OwnerAssetVoutInformation(BaseAssetVoutInformation):
+    def __init__(self, asset: str):
+        BaseAssetVoutInformation.__init__(self, AssetVoutType.OWNER)
+        self.asset = asset
+        self.amount = COIN
+
+def get_asset_info_from_script(script: bytes) -> BaseAssetVoutInformation:
+    try:
+        decoded = [x for x in script_GetOp(script)]
+    except MalformedBitcoinScript:
+        return None
+
+    for i, (op, _, index) in enumerate(decoded):
+        if op == opcodes.OP_ASSET:
+            if i == 0:
+                pass
+            else:
+                asset_portion = script[index:]
+                asset_prefix_position = asset_portion.find(RVN_ASSET_PREFIX)
+                if asset_prefix_position < 0: break
+                if len(asset_portion) < len(RVN_ASSET_PREFIX) + 3: break
+                vout_type = asset_portion[len(RVN_ASSET_PREFIX) + 1]
+                if vout_type == RVN_ASSET_TYPE_CREATE_INT:
+                    asset_vout_type = AssetVoutType.CREATE
+                elif vout_type == RVN_ASSET_TYPE_OWNER_INT:
+                    asset_vout_type = AssetVoutType.OWNER
+                else: break
+
+                asset_length = asset_portion[len(RVN_ASSET_PREFIX) + 2]
+                if len(asset_portion) < len(RVN_ASSET_PREFIX) + 3 + asset_length: break
+
+                asset = asset_portion[len(RVN_ASSET_PREFIX) + 3:len(RVN_ASSET_PREFIX) + 3 + asset_length].decode()
+                if asset_vout_type == AssetVoutType.OWNER:
+                    return OwnerAssetVoutInformation(asset)
+
+                if len(asset_portion) < len(RVN_ASSET_PREFIX) + 3 + 8 + asset_length: break
+                asset_amount = int.from_bytes(asset_portion[len(RVN_ASSET_PREFIX) + 3 + asset_length:len(RVN_ASSET_PREFIX) + 3 + 8 + asset_length], 'little')
+
+                if len(asset_portion) < len(RVN_ASSET_PREFIX) + 3 + 8 + 2 + asset_length: break
+                divisions = asset_portion[len(RVN_ASSET_PREFIX) + 3 + 8 + asset_length]
+                reissuable = bool(asset_portion[len(RVN_ASSET_PREFIX) + 3 + 8 + 1 + asset_length])
+
+                if asset_vout_type == AssetVoutType.CREATE:
+                    if len(asset_portion) < len(RVN_ASSET_PREFIX) + 3 + 8 + 3 + asset_length: break
+                    has_associated_data = asset_portion[len(RVN_ASSET_PREFIX) + 3 + 8 + 2 + asset_length]
+                    if has_associated_data:
+                        if len(asset_portion) < len(RVN_ASSET_PREFIX) + 3 + 8 + 4 + 34 + asset_length: break
+                        associated_data = asset_portion[len(RVN_ASSET_PREFIX) + 3 + 8 + 3 + asset_length:len(RVN_ASSET_PREFIX) + 3 + 8 + 3 + 34 + asset_length]
+                        return MetadataAssetVoutInformation(asset_vout_type, asset, asset_amount, divisions, reissuable, associated_data)
+                    else:
+                        return MetadataAssetVoutInformation(asset_vout_type, asset, asset_amount, divisions, reissuable, None)
+
+                break
+
+    return NoAssetVoutInformation()

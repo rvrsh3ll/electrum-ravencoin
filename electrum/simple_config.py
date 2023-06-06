@@ -906,6 +906,7 @@ class SimpleConfig(Logger):
     GUI_QT_HISTORY_TAB_SHOW_TOOLBAR = ConfigVar('show_toolbar_history', default=False, type_=bool)
     GUI_QT_ADDRESSES_TAB_SHOW_TOOLBAR = ConfigVar('show_toolbar_addresses', default=False, type_=bool)
     GUI_QT_TX_DIALOG_FETCH_TXIN_DATA = ConfigVar('tx_dialog_fetch_txin_data', default=False, type_=bool)
+    GUI_QT_TX_DIALOG_SHOW_ALL_DATA = ConfigVar('tx_dialog_show_all_data', default=False, type_=bool)
     GUI_QT_RECEIVE_TABS_INDEX = ConfigVar('receive_tabs_index', default=0, type_=int)
     GUI_QT_RECEIVE_TAB_QR_VISIBLE = ConfigVar('receive_qr_visible', default=False, type_=bool)
     GUI_QT_TX_EDITOR_SHOW_IO = ConfigVar('show_tx_io', default=False, type_=bool)

@@ -173,6 +173,16 @@ class AddressSynchronizer(Logger, EventListener):
             return tx.outputs()[prevout_n].value
         return None
 
+    def get_txin_scriptpubkey(self, txin: TxInput) -> Optional[bytes]:
+        if txin.scriptpubkey is not None:
+            return txin.scriptpubkey
+        prevout_hash = txin.prevout.txid.hex()
+        prevout_n = txin.prevout.out_idx
+        tx = self.db.get_transaction(prevout_hash)
+        if tx:
+            return tx.outputs()[prevout_n].scriptpubkey
+        return None
+
     def load_unverified_transactions(self):
         # review transactions that are in the history
         for addr in self.db.get_history():

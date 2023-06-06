@@ -46,14 +46,15 @@ from electrum.simple_config import SimpleConfig
 from electrum.util import quantize_feerate
 from electrum import bitcoin
 
-from electrum.bitcoin import base_encode, NLOCKTIME_BLOCKHEIGHT_MAX
+from electrum.asset import BaseAssetVoutInformation, AssetVoutType, get_asset_info_from_script
+from electrum.bitcoin import base_encode, NLOCKTIME_BLOCKHEIGHT_MAX, opcodes
 from electrum.i18n import _
 from electrum.plugin import run_hook
 from electrum import simple_config
 from electrum.transaction import SerializationError, Transaction, PartialTransaction, PartialTxInput, TxOutpoint
 from electrum.transaction import TxinDataFetchProgress
 from electrum.logging import get_logger
-from electrum.util import ShortID, get_asyncio_loop
+from electrum.util import ShortID, get_asyncio_loop, convert_bytes_to_utf8_safe
 from electrum.network import Network
 
 from . import util
@@ -188,10 +189,12 @@ class TxInOutWidget(QWidget):
             cursor: QCursor,
             txio_idx: int,
             is_coinbase: bool,
+            script: Optional[bytes] = None,
             tcf_shortid: QTextCharFormat = None,
             short_id: str,
             addr: Optional[str],
             value: Optional[int],
+            asset_info: Optional[BaseAssetVoutInformation] = None,
         ):
             tcf_ext = QTextCharFormat(ext)
             tcf_addr = addr_text_format(addr)
@@ -202,24 +205,74 @@ class TxInOutWidget(QWidget):
                 tcf.setAnchorNames([a_name])
             if is_coinbase:
                 cursor.insertText('coinbase', tcf_ext)
+                cursor.insertBlock()    
+                if script:
+                    script_str = convert_bytes_to_utf8_safe(script)
+                    if len(script_str) > 60 and not self.main_window.config.GUI_QT_TX_DIALOG_SHOW_ALL_DATA:
+                        script_str = script_str[0:50] + ' … ' + script_str[-9:]
+                
+                    cursor.insertText(f'\t {script_str}', tcf_ext)
+                else:
+                    cursor.insertText('\t <unknown script>')
             else:
                 # short_id
                 cursor.insertText(short_id, tcf_shortid)
                 cursor.insertText(" " * max(0, 15 - len(short_id)), tcf_ext)  # padding
                 cursor.insertText('\t', tcf_ext)
-                # addr
-                if addr is None:
-                    address_str = '<address unknown>'
-                elif len(addr) <= 42:
-                    address_str = addr
+                if script:
+                    # op_return
+                    op_return_str = convert_bytes_to_utf8_safe(script)
+                    if len(op_return_str) > 50 and not self.main_window.config.GUI_QT_TX_DIALOG_SHOW_ALL_DATA:
+                        op_return_str = op_return_str[0:40] + ' … ' + op_return_str[-9:]
+                    cursor.insertText(f'OP_RETURN: {op_return_str}')
                 else:
-                    address_str = addr[0:30] + '…' + addr[-11:]
-                cursor.insertText(address_str, tcf_addr)
-                cursor.insertText(" " * max(0, 42 - len(address_str)), tcf_ext)  # padding
-                cursor.insertText('\t', tcf_ext)
-                # value
-                value_str = self.main_window.format_amount(value, whitespaces=True)
-                cursor.insertText(value_str, tcf_ext)
+                    # addr
+                    if addr is None:
+                        address_str = '<address unknown>'
+                    elif len(addr) <= 40 or self.main_window.config.GUI_QT_TX_DIALOG_SHOW_ALL_DATA:
+                        address_str = addr
+                    else:
+                        address_str = addr[0:30] + ' … ' + addr[-9:]
+                    cursor.insertText(address_str, tcf_addr)
+                    cursor.insertText(" " * max(0, 42 - len(address_str)), tcf_ext)  # padding
+                    cursor.insertText('\t', tcf_ext)
+                    # value
+                    value_str = self.main_window.format_amount(value, whitespaces=True)
+                    cursor.insertText(value_str, tcf_ext)
+
+                    if asset_info is not None:
+                        asset_vout_type = asset_info.get_type()
+                        if asset_info.is_transferable():
+                            cursor.insertBlock()
+                            if asset_vout_type == AssetVoutType.CREATE:
+                                asset_vout_type_str = _('Creation of:')
+                            elif asset_vout_type == AssetVoutType.OWNER:
+                                asset_vout_type_str = _('Creation of:')
+                            elif asset_vout_type == AssetVoutType.TRANSFER:
+                                asset_vout_type_str = _('Transfer of:')
+                            elif asset_vout_type == AssetVoutType.REISSUE:
+                                asset_vout_type_str = _('Reissuance of:')
+                            cursor.insertText(f'\t{asset_vout_type_str} {asset_info.asset}', tcf_ext)
+
+                        if self.main_window.config.GUI_QT_TX_DIALOG_SHOW_ALL_DATA:
+                            if asset_vout_type in (AssetVoutType.CREATE, AssetVoutType.REISSUE):
+                                cursor.insertBlock()
+                                cursor.insertText(_('\tReissuable: {}\t\tDivisibility: {}').format(asset_info.reissuable, 'No change' if asset_info.divisions == 0xff else asset_info.divisions), tcf_ext)
+                                cursor.insertBlock()
+                                raw_associated_data = asset_info.associated_data
+                                associated_data_str = 'None'
+                                if raw_associated_data:
+                                    if raw_associated_data[0] == 0x54:
+                                        associated_data_str = raw_associated_data[2:].hex()
+                                    else:
+                                        associated_data_str = base_encode(raw_associated_data, base=58)
+                                cursor.insertText(_('\tAssociated Data: {}').format(associated_data_str), tcf_ext)
+
+                    elif addr is not None:
+                        cursor.insertBlock()
+                        cursor.insertText('\t <asset data unknown>', tcf_ext)
+
+                        
             cursor.insertBlock()
 
         i_text = self.inputs_textedit
@@ -230,12 +283,16 @@ class TxInOutWidget(QWidget):
         for txin_idx, txin in enumerate(self.tx.inputs()):
             addr = self.wallet.adb.get_txin_address(txin)
             txin_value = self.wallet.adb.get_txin_value(txin)
+            txin_script = self.wallet.adb.get_txin_scriptpubkey(txin)
+            
             tcf_shortid = QTextCharFormat(lnk)
             tcf_shortid.setAnchorHref(txin.prevout.txid.hex())
             insert_tx_io(
                 cursor=cursor, is_coinbase=txin.is_coinbase_input(), txio_idx=txin_idx,
                 tcf_shortid=tcf_shortid,
                 short_id=str(txin.short_id), addr=addr, value=txin_value,
+                script=txin.script_sig if txin.is_coinbase_input() else None,
+                asset_info=get_asset_info_from_script(txin_script) if txin_script else None
             )
 
         self.outputs_header.setText(_("Outputs") + ' (%d)'%len(self.tx.outputs()))
@@ -258,9 +315,12 @@ class TxInOutWidget(QWidget):
             else:
                 short_id = f"unknown:{txout_idx}"
             addr = o.get_ui_address_str()
+            
             insert_tx_io(
                 cursor=cursor, is_coinbase=False, txio_idx=txout_idx,
                 short_id=str(short_id), addr=addr, value=o.value,
+                script=o.scriptpubkey if o.scriptpubkey[0] == opcodes.OP_RETURN else None,
+                asset_info=get_asset_info_from_script(o.scriptpubkey)
             )
 
         self.txo_color_recv.legend_label.setVisible(tf_used_recv)

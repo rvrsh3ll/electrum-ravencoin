@@ -51,7 +51,7 @@ from .bitcoin import (TYPE_ADDRESS, TYPE_SCRIPT, hash_160,
                       base_encode, construct_witness, construct_script)
 from .crypto import sha256d
 from .logging import get_logger
-from .util import ShortID, OldTaskGroup
+from .util import ShortID, OldTaskGroup, convert_bytes_to_utf8_safe
 from .descriptor import Descriptor, MissingSolutionPiece, create_dummy_descriptor_from_address
 
 if TYPE_CHECKING:
@@ -124,13 +124,29 @@ class Sighash(IntEnum):
 
 class TxOutput:
     scriptpubkey: bytes
-    value: Union[int, str]
+    _value: Union[int, str]
 
     def __init__(self, *, scriptpubkey: bytes, value: Union[int, str]):
         self.scriptpubkey = scriptpubkey
         if not (isinstance(value, int) or parse_max_spend(value) is not None):
             raise ValueError(f"bad txout value: {value!r}")
-        self.value = value  # int in satoshis; or spend-max-like str
+        self._value = value  # int in satoshis; or spend-max-like str
+
+    @property
+    def asset(self):
+        from .asset import get_asset_info_from_script
+        asset_data = get_asset_info_from_script(self.scriptpubkey)
+        if asset_data.is_transferable():
+            return asset_data.asset
+        return None
+
+    @property
+    def value(self):
+        from .asset import get_asset_info_from_script
+        asset_data = get_asset_info_from_script(self.scriptpubkey)
+        if asset_data.is_transferable():
+            return asset_data.amount
+        return self._value
 
     @classmethod
     def from_address_and_value(cls, address: str, value: Union[int, str]) -> Union['TxOutput', 'PartialTxOutput']:
@@ -138,7 +154,7 @@ class TxOutput:
                    value=value)
 
     def serialize_to_network(self) -> bytes:
-        buf = int.to_bytes(self.value, 8, byteorder="little", signed=False)
+        buf = int.to_bytes(self._value, 8, byteorder="little", signed=False)
         script = self.scriptpubkey
         buf += bfh(var_int(len(script.hex()) // 2))
         buf += script
@@ -153,13 +169,13 @@ class TxOutput:
             raise SerializationError('extra junk at the end of TxOutput bytes')
         return txout
 
-    def to_legacy_tuple(self) -> Tuple[int, str, Union[int, str]]:
+    def to_legacy_tuple(self) -> Tuple[int, str, Union[int, str], Optional[str]]:
         if self.address:
-            return TYPE_ADDRESS, self.address, self.value
-        return TYPE_SCRIPT, self.scriptpubkey.hex(), self.value
+            return TYPE_ADDRESS, self.address, self.value, self.asset
+        return TYPE_SCRIPT, self.scriptpubkey.hex(), self.value, self.asset
 
     @classmethod
-    def from_legacy_tuple(cls, _type: int, addr: str, val: Union[int, str]) -> Union['TxOutput', 'PartialTxOutput']:
+    def from_legacy_tuple(cls, _type: int, addr: str, val: Union[int, str], asset: Optional[str]) -> Union['TxOutput', 'PartialTxOutput']:
         if _type == TYPE_ADDRESS:
             return cls.from_address_and_value(addr, val)
         if _type == TYPE_SCRIPT:
@@ -665,6 +681,11 @@ def get_address_from_output_script(_bytes: bytes, *, net=None) -> Optional[str]:
         decoded = [x for x in script_GetOp(_bytes)]
     except MalformedBitcoinScript:
         return None
+
+    for i, (op, _, _) in enumerate(decoded):
+        if op == opcodes.OP_ASSET:
+            decoded = decoded[:i]
+            break
 
     # p2pkh
     if match_script_against_template(decoded, SCRIPTPUBKEY_TEMPLATE_P2PKH):
@@ -2022,9 +2043,9 @@ class PartialTransaction(Transaction):
         self.BIP69_sort(outputs=False)
         self.invalidate_ser_cache()
 
-    def add_outputs(self, outputs: List[PartialTxOutput]) -> None:
+    def add_outputs(self, outputs: List[PartialTxOutput], *, do_sort=True) -> None:
         self._outputs.extend(outputs)
-        self.BIP69_sort(inputs=False)
+        self.BIP69_sort(inputs=False, outputs=do_sort)
         self.invalidate_ser_cache()
 
     def set_rbf(self, rbf: bool) -> None:

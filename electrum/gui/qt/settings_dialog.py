@@ -340,6 +340,12 @@ class SettingsDialog(QDialog, QtEventListener):
         ipfs_ex_hbox_w = QWidget()
         ipfs_ex_hbox_w.setLayout(ipfs_ex_hbox)
 
+        tx_view_more_cb = QCheckBox(_("Show more data when viewing transactions"))
+        tx_view_more_cb.setChecked(self.config.GUI_QT_TX_DIALOG_SHOW_ALL_DATA)
+        def on_set_tx_view_more(v):
+            self.config.GUI_QT_TX_DIALOG_SHOW_ALL_DATA = (v == Qt.Checked)
+        tx_view_more_cb.stateChanged.connect(on_set_tx_view_more)
+
         # Fiat Currency
         self.history_rates_cb = QCheckBox(_('Download historical rates'))
         ccy_combo = QComboBox()
@@ -406,8 +412,9 @@ class SettingsDialog(QDialog, QtEventListener):
         gui_widgets.append((colortheme_label, colortheme_combo))
         gui_widgets.append((block_ex_label, block_ex_hbox_w))
         gui_widgets.append((ipfs_ex_label, ipfs_ex_hbox_w))
+        gui_widgets.append((tx_view_more_cb, None))
         units_widgets = []
-        units_widgets.append((unit_label, unit_combo))
+        #units_widgets.append((unit_label, unit_combo))
         units_widgets.append((nz_label, nz))
         #units_widgets.append((msat_cb, None))
         units_widgets.append((thousandsep_cb, None))
