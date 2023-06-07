@@ -34,6 +34,7 @@ from .util import profiler, bfh, TxMinedInfo, UnrelatedTransactionException, wit
 from .transaction import Transaction, TxOutput, TxInput, PartialTxInput, TxOutpoint, PartialTransaction
 from .synchronizer import Synchronizer
 from .verifier import SPV
+from .asset import get_asset_info_from_script
 from .blockchain import hash_header, Blockchain
 from .i18n import _
 from .logging import Logger
@@ -164,7 +165,7 @@ class AddressSynchronizer(Logger, EventListener):
         if address:
             d = self.db.get_txo_addr(prevout_hash, address)
             try:
-                v, cb = d[prevout_n]
+                v, asset, cb = d[prevout_n]
                 return v
             except KeyError:
                 pass
@@ -326,11 +327,11 @@ class AddressSynchronizer(Logger, EventListener):
                 if addr and self.is_mine(addr):
                     outputs = self.db.get_txo_addr(prevout_hash, addr)
                     try:
-                        v, is_cb = outputs[prevout_n]
+                        v, asset, is_cb = outputs[prevout_n]
                     except KeyError:
                         pass
                     else:
-                        self.db.add_txi_addr(tx_hash, addr, ser, v)
+                        self.db.add_txi_addr(tx_hash, addr, ser, v, asset)
                         self._get_balance_cache.clear()  # invalidate cache
             for txi in tx.inputs():
                 if txi.is_coinbase_input():
@@ -344,16 +345,17 @@ class AddressSynchronizer(Logger, EventListener):
             for n, txo in enumerate(tx.outputs()):
                 v = txo.value
                 ser = tx_hash + ':%d'%n
+                asset_data = get_asset_info_from_script(txo.scriptpubkey)
                 scripthash = bitcoin.script_to_scripthash(txo.scriptpubkey.hex())
-                self.db.add_prevout_by_scripthash(scripthash, prevout=TxOutpoint.from_str(ser), value=v)
+                self.db.add_prevout_by_scripthash(scripthash, prevout=TxOutpoint.from_str(ser), value=asset_data.amount or v, asset=asset_data.asset)
                 addr = txo.address
                 if addr and self.is_mine(addr):
-                    self.db.add_txo_addr(tx_hash, addr, n, v, is_coinbase)
+                    self.db.add_txo_addr(tx_hash, addr, n, asset_data.amount or v, asset_data.asset, is_coinbase)
                     self._get_balance_cache.clear()  # invalidate cache
                     # give v to txi that spends me
                     next_tx = self.db.get_spent_outpoint(tx_hash, n)
                     if next_tx is not None:
-                        self.db.add_txi_addr(next_tx, addr, ser, v)
+                        self.db.add_txi_addr(next_tx, addr, ser, asset_data.amount or v, asset_data.asset)
                         self._add_tx_to_local_history(next_tx)
             # add to local history
             self._add_tx_to_local_history(tx_hash)
@@ -743,11 +745,11 @@ class AddressSynchronizer(Logger, EventListener):
         delta = 0
         # subtract the value of coins sent from address
         d = self.db.get_txi_addr(tx_hash, address)
-        for n, v in d:
+        for n, v, asset in d:
             delta -= v
         # add the value of the coins received at address
         d = self.db.get_txo_addr(tx_hash, address)
-        for n, (v, cb) in d.items():
+        for n, (v, asset, cb) in d.items():
             delta += v
         return delta
 
@@ -806,10 +808,10 @@ class AddressSynchronizer(Logger, EventListener):
                 tx_mined_info = self.get_tx_height(tx_hash)
                 txpos = tx_mined_info.txpos if tx_mined_info.txpos is not None else -1
                 d = self.db.get_txo_addr(tx_hash, address)
-                for n, (v, is_cb) in d.items():
+                for n, (v, asset, is_cb) in d.items():
                     received[tx_hash + ':%d'%n] = (height, txpos, v, is_cb)
                 l = self.db.get_txi_addr(tx_hash, address)
-                for txi, v in l:
+                for txi, v, asset in l:
                     sent[txi] = tx_hash, height, txpos
         return received, sent
 

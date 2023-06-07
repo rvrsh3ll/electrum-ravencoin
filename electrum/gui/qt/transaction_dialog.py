@@ -196,6 +196,9 @@ class TxInOutWidget(QWidget):
             value: Optional[int],
             asset_info: Optional[BaseAssetVoutInformation] = None,
         ):
+            if asset_info and asset_info.is_transferable():
+                value = asset_info.amount
+
             tcf_ext = QTextCharFormat(ext)
             tcf_addr = addr_text_format(addr)
             if tcf_shortid is None:
@@ -284,7 +287,6 @@ class TxInOutWidget(QWidget):
             addr = self.wallet.adb.get_txin_address(txin)
             txin_value = self.wallet.adb.get_txin_value(txin)
             txin_script = self.wallet.adb.get_txin_scriptpubkey(txin)
-            
             tcf_shortid = QTextCharFormat(lnk)
             tcf_shortid.setAnchorHref(txin.prevout.txid.hex())
             insert_tx_io(

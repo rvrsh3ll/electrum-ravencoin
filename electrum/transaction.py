@@ -32,7 +32,7 @@ import traceback
 import sys
 import io
 import base64
-from typing import (Sequence, Union, NamedTuple, Tuple, Optional, Iterable,
+from typing import (Sequence, Union, NamedTuple, Tuple, Optional, Iterable, Mapping,
                     Callable, List, Dict, Set, TYPE_CHECKING)
 from collections import defaultdict
 from enum import IntEnum
@@ -124,13 +124,13 @@ class Sighash(IntEnum):
 
 class TxOutput:
     scriptpubkey: bytes
-    _value: Union[int, str]
+    value: Union[int, str]
 
     def __init__(self, *, scriptpubkey: bytes, value: Union[int, str]):
         self.scriptpubkey = scriptpubkey
         if not (isinstance(value, int) or parse_max_spend(value) is not None):
             raise ValueError(f"bad txout value: {value!r}")
-        self._value = value  # int in satoshis; or spend-max-like str
+        self.value = value  # int in satoshis; or spend-max-like str
 
     @property
     def asset(self):
@@ -140,13 +140,12 @@ class TxOutput:
             return asset_data.asset
         return None
 
-    @property
-    def value(self):
+    def asset_aware_value(self):
         from .asset import get_asset_info_from_script
         asset_data = get_asset_info_from_script(self.scriptpubkey)
         if asset_data.is_transferable():
             return asset_data.amount
-        return self._value
+        return self.value
 
     @classmethod
     def from_address_and_value(cls, address: str, value: Union[int, str]) -> Union['TxOutput', 'PartialTxOutput']:
@@ -154,7 +153,7 @@ class TxOutput:
                    value=value)
 
     def serialize_to_network(self) -> bytes:
-        buf = int.to_bytes(self._value, 8, byteorder="little", signed=False)
+        buf = int.to_bytes(self.value, 8, byteorder="little", signed=False)
         script = self.scriptpubkey
         buf += bfh(var_int(len(script.hex()) // 2))
         buf += script
@@ -169,13 +168,13 @@ class TxOutput:
             raise SerializationError('extra junk at the end of TxOutput bytes')
         return txout
 
-    def to_legacy_tuple(self) -> Tuple[int, str, Union[int, str], Optional[str]]:
-        if self.address:
-            return TYPE_ADDRESS, self.address, self.value, self.asset
-        return TYPE_SCRIPT, self.scriptpubkey.hex(), self.value, self.asset
+    def to_legacy_tuple(self) -> Tuple[int, str, Union[int, str]]:
+        if self.address and not self.asset:
+            return TYPE_ADDRESS, self.address, self.value
+        return TYPE_SCRIPT, self.scriptpubkey.hex(), self.value
 
     @classmethod
-    def from_legacy_tuple(cls, _type: int, addr: str, val: Union[int, str], asset: Optional[str]) -> Union['TxOutput', 'PartialTxOutput']:
+    def from_legacy_tuple(cls, _type: int, addr: str, val: Union[int, str]) -> Union['TxOutput', 'PartialTxOutput']:
         if _type == TYPE_ADDRESS:
             return cls.from_address_and_value(addr, val)
         if _type == TYPE_SCRIPT:
@@ -336,7 +335,12 @@ class TxInput:
         """
         return self._is_coinbase_output
 
-    def value_sats(self) -> Optional[int]:
+    def value_sats(self, *, asset_aware=False) -> Optional[int]:
+        if asset_aware:
+            from .asset import get_asset_info_from_script
+            asset_data = get_asset_info_from_script(self.scriptpubkey)
+            if asset_data.is_transferable():
+                return asset_data.amount
         return self.__value_sats
 
     @property
@@ -1183,13 +1187,23 @@ class Transaction:
         else:
             raise Exception('output not found', addr)
 
-    def input_value(self) -> int:
-        input_values = [txin.value_sats() for txin in self.inputs()]
+    def input_value(self, *, asset_aware=False) -> Union[int, Mapping[Optional[str], int]]:
+        input_values = [txin.value_sats(asset_aware=asset_aware) for txin in self.inputs()]
         if any([val is None for val in input_values]):
             raise MissingTxInputAmount()
+        if asset_aware:
+            ret_val = defaultdict(lambda: 0)
+            for o in self.outputs():
+                ret_val[o.asset] = o.asset_aware_value()
+            return ret_val
         return sum(input_values)
 
-    def output_value(self) -> int:
+    def output_value(self, *, asset_aware=False) -> Union[int, Mapping[Optional[str], int]]:
+        if asset_aware:
+            ret_val = defaultdict(lambda: 0)
+            for o in self.outputs():
+                ret_val[o.asset] = o.asset_aware_value()
+            return ret_val
         return sum(o.value for o in self.outputs())
 
     def get_fee(self) -> Optional[int]:

@@ -24,7 +24,7 @@
 # SOFTWARE.
 from collections import defaultdict
 from math import floor, log10
-from typing import NamedTuple, List, Callable, Sequence, Union, Dict, Tuple, Mapping, Type, TYPE_CHECKING
+from typing import NamedTuple, List, Callable, Sequence, Union, Dict, Tuple, Mapping, Type, TYPE_CHECKING, Optional
 from decimal import Decimal
 
 from .bitcoin import sha256, COIN, is_address
@@ -290,7 +290,7 @@ class CoinChooserBase(Logger):
 
         # Copy the outputs so when adding change we don't modify "outputs"
         base_tx = PartialTransaction.from_io(inputs[:], outputs[:])
-        input_value = base_tx.input_value()
+        input_value: Mapping[Optional[str], int] = base_tx.input_value(asset_aware=True)
 
         # Weight of the transaction with no inputs and no change
         # Note: this will use legacy tx serialization as the need for "segwit"
@@ -298,7 +298,7 @@ class CoinChooserBase(Logger):
         # marker and flag are excluded, which is compensated in get_tx_weight()
         # FIXME calculation will be off by this (2 wu) in case of RBF batching
         base_weight = base_tx.estimated_weight()
-        spent_amount = base_tx.output_value()
+        spent_amount: Mapping[Optional[str], int] = base_tx.output_value(asset_aware=True)
 
         def fee_estimator_w(weight):
             return fee_estimator_vb(Transaction.virtual_size_from_weight(weight))

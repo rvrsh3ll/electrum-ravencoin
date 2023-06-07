@@ -1210,7 +1210,7 @@ class Abstract_Wallet(ABC, Logger, EventListener):
                 scripthash = bitcoin.script_to_scripthash(invoice_scriptpubkey.hex())
                 prevouts_and_values = self.db.get_prevouts_by_scripthash(scripthash)
                 confs_and_values = []
-                for prevout, v in prevouts_and_values:
+                for prevout, v, asset in prevouts_and_values:
                     relevant_txs.add(prevout.txid.hex())
                     tx_height = self.adb.get_tx_height(prevout.txid.hex())
                     if 0 < tx_height.height <= invoice.height:  # exclude txs older than invoice
@@ -2818,7 +2818,7 @@ class Abstract_Wallet(ABC, Logger, EventListener):
             return Decimal('NaN')
         for addr in txi_addresses:
             d = self.db.get_txi_addr(txid, addr)
-            for ser, v in d:
+            for ser, v, asset in d:
                 input_value += v
                 total_price += self.coin_price(ser.split(':')[0], price_func, ccy, v)
         return total_price / (input_value/Decimal(COIN))

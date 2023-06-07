@@ -514,7 +514,15 @@ def address_to_scripthash(addr: str, *, net=None) -> str:
 
 
 def script_to_scripthash(script: str) -> str:
-    h = sha256(bfh(script))[0:32]
+    from .transaction import script_GetOp
+    raw_script = bfh(script)
+    decoded = script_GetOp(raw_script)
+    for _, (op, _, index) in enumerate(decoded):
+        if op == opcodes.OP_ASSET:
+            raw_script = raw_script[:index]
+            break
+
+    h = sha256(raw_script)[0:32]
     return h[::-1].hex()
 
 def public_key_to_p2pk_script(pubkey: str) -> str:

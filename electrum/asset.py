@@ -226,6 +226,9 @@ class AssetVoutType(Enum):
     REISSUE = 5
 
 class BaseAssetVoutInformation():
+    asset = None
+    amount: Optional[int] = None
+
     def __init__(self, type_: AssetVoutType):
         self._type = type_
 
