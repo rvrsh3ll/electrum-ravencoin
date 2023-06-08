@@ -25,7 +25,7 @@ import asyncio
 import threading
 import itertools
 from collections import defaultdict
-from typing import TYPE_CHECKING, Dict, Optional, Set, Tuple, NamedTuple, Sequence, List
+from typing import TYPE_CHECKING, Dict, Optional, Set, Tuple, NamedTuple, Sequence, List, Mapping, Union
 
 from .crypto import sha256
 from . import bitcoin, util
@@ -58,6 +58,7 @@ TX_HEIGHT_INF = 10 ** 9
 class HistoryItem(NamedTuple):
     txid: str
     tx_mined_status: TxMinedInfo
+    asset: Optional[str]
     delta: int
     fee: Optional[int]
     balance: int
@@ -92,6 +93,7 @@ class AddressSynchronizer(Logger, EventListener):
         self.threadlocal_cache = threading.local()
 
         self._get_balance_cache = {}
+        self._get_asset_balance_cache = {}
 
         self.load_and_cleanup()
 
@@ -204,6 +206,7 @@ class AddressSynchronizer(Logger, EventListener):
     @event_listener
     def on_event_blockchain_updated(self, *args):
         self._get_balance_cache = {}  # invalidate cache
+        self._get_asset_balance_cache = {}
 
     async def stop(self):
         if self.network:
@@ -333,6 +336,7 @@ class AddressSynchronizer(Logger, EventListener):
                     else:
                         self.db.add_txi_addr(tx_hash, addr, ser, v, asset)
                         self._get_balance_cache.clear()  # invalidate cache
+                        self._get_asset_balance_cache.clear()
             for txi in tx.inputs():
                 if txi.is_coinbase_input():
                     continue
@@ -352,6 +356,7 @@ class AddressSynchronizer(Logger, EventListener):
                 if addr and self.is_mine(addr):
                     self.db.add_txo_addr(tx_hash, addr, n, asset_data.amount or v, asset_data.asset, is_coinbase)
                     self._get_balance_cache.clear()  # invalidate cache
+                    self._get_asset_balance_cache.clear()
                     # give v to txi that spends me
                     next_tx = self.db.get_spent_outpoint(tx_hash, n)
                     if next_tx is not None:
@@ -404,6 +409,7 @@ class AddressSynchronizer(Logger, EventListener):
             self._remove_tx_from_local_history(tx_hash)
             for addr in itertools.chain(self.db.get_txi_addresses(tx_hash), self.db.get_txo_addresses(tx_hash)):
                 self._get_balance_cache.clear()  # invalidate cache
+                self._get_asset_balance_cache.clear()
             self.db.remove_txi(tx_hash)
             self.db.remove_txo(tx_hash)
             self.db.remove_tx_fee(tx_hash)
@@ -495,6 +501,7 @@ class AddressSynchronizer(Logger, EventListener):
                 self.db.clear_history()
                 self._history_local.clear()
                 self._get_balance_cache.clear()  # invalidate cache
+                self._get_asset_balance_cache.clear()
 
     def _get_tx_sort_key(self, tx_hash: str) -> Tuple[int, int]:
         """Returns a key to be used for sorting txs."""
@@ -539,35 +546,45 @@ class AddressSynchronizer(Logger, EventListener):
         domain = set(domain)
         # 1. Get the history of each address in the domain, maintain the
         #    delta of a tx as the sum of its deltas on domain addresses
-        tx_deltas = defaultdict(int)  # type: Dict[str, int]
+        tx_deltas = defaultdict(lambda: defaultdict(int))  # type: Dict[str, Dict[Optional[str], int]]
+        balance = 0
         for addr in domain:
             h = self.get_address_history(addr).items()
             for tx_hash, height in h:
-                tx_deltas[tx_hash] += self.get_tx_delta(tx_hash, addr)
+                for asset, value in self.get_tx_delta(tx_hash, addr).items():
+                    tx_deltas[tx_hash][asset] += value
         # 2. create sorted history
         history = []
         for tx_hash in tx_deltas:
-            delta = tx_deltas[tx_hash]
             tx_mined_status = self.get_tx_height(tx_hash)
             fee = self.get_tx_fee(tx_hash)
-            history.append((tx_hash, tx_mined_status, delta, fee))
+            for _asset, delta in tx_deltas[tx_hash].items():
+                history.append((tx_hash, tx_mined_status, _asset, delta, fee))
         history.sort(key = lambda x: self._get_tx_sort_key(x[0]))
         # 3. add balance
         h2 = []
-        balance = 0
-        for tx_hash, tx_mined_status, delta, fee in history:
-            balance += delta
+        balance = defaultdict(int)
+        for tx_hash, tx_mined_status, asset, delta, fee in history:
+            balance[asset] += delta
             h2.append(HistoryItem(
                 txid=tx_hash,
                 tx_mined_status=tx_mined_status,
+                asset=asset,
                 delta=delta,
                 fee=fee,
-                balance=balance))
+                balance=balance[asset]))
         # sanity check
-        c, u, x = self.get_balance(domain)
-        if balance != c + u + x:
-            self.logger.error(f'sanity check failed! c={c},u={u},x={x} while history balance={balance}')
-            raise Exception("wallet.get_history() failed balance sanity-check")
+        asset_balances = self.get_balance(domain, asset_aware=True)
+        for key in balance.keys():
+            if key not in asset_balances:
+                self.logger.error(f'sanity check failed! history balance key={key} not found')
+                raise Exception("wallet.get_history() failed balance sanity-check")
+            
+        for key, _balance in balance.items():
+            c, u, x = asset_balances.get(key, (None, None, None))
+            if _balance != c + u + x:
+                self.logger.error(f'sanity check failed! key={key}; c={c},u={u},x={x} while history balance={_balance}')
+                raise Exception("wallet.get_history() failed balance sanity-check")
         return h2
 
     def _add_tx_to_local_history(self, txid):
@@ -740,17 +757,17 @@ class AddressSynchronizer(Logger, EventListener):
         return nsent, nans
 
     @with_transaction_lock
-    def get_tx_delta(self, tx_hash: str, address: str) -> int:
+    def get_tx_delta(self, tx_hash: str, address: str) -> Mapping[Optional[str], int]:
         """effect of tx on address"""
-        delta = 0
+        delta = defaultdict(int)
         # subtract the value of coins sent from address
         d = self.db.get_txi_addr(tx_hash, address)
         for n, v, asset in d:
-            delta -= v
+            delta[asset] -= v
         # add the value of the coins received at address
         d = self.db.get_txo_addr(tx_hash, address)
         for n, (v, asset, cb) in d.items():
-            delta += v
+            delta[asset] += v
         return delta
 
     def get_tx_fee(self, txid: str) -> Optional[int]:
@@ -809,7 +826,7 @@ class AddressSynchronizer(Logger, EventListener):
                 txpos = tx_mined_info.txpos if tx_mined_info.txpos is not None else -1
                 d = self.db.get_txo_addr(tx_hash, address)
                 for n, (v, asset, is_cb) in d.items():
-                    received[tx_hash + ':%d'%n] = (height, txpos, v, is_cb)
+                    received[tx_hash + ':%d'%n] = (height, txpos, asset, v, is_cb)
                 l = self.db.get_txi_addr(tx_hash, address)
                 for txi, v, asset in l:
                     sent[txi] = tx_hash, height, txpos
@@ -819,11 +836,12 @@ class AddressSynchronizer(Logger, EventListener):
         received, sent = self.get_addr_io(address)
         out = {}
         for prevout_str, v in received.items():
-            tx_height, tx_pos, value, is_cb = v
+            tx_height, tx_pos, asset, value, is_cb = v
             prevout = TxOutpoint.from_str(prevout_str)
             utxo = PartialTxInput(prevout=prevout, is_coinbase_output=is_cb)
             utxo._trusted_address = address
             utxo._trusted_value_sats = value
+            utxo._trusted_asset = asset
             utxo.block_height = tx_height
             utxo.block_txpos = tx_pos
             if prevout_str in sent:
@@ -844,15 +862,17 @@ class AddressSynchronizer(Logger, EventListener):
         return out
 
     # return the total amount ever received by an address
+    '''
     def get_addr_received(self, address):
         received, sent = self.get_addr_io(address)
         return sum([value for height, pos, value, is_cb in received.values()])
-
+    '''
+        
     @with_lock
     @with_transaction_lock
     @with_local_height_cached
     def get_balance(self, domain, *, excluded_addresses: Set[str] = None,
-                    excluded_coins: Set[str] = None) -> Tuple[int, int, int]:
+                    excluded_coins: Set[str] = None, asset_aware=False) -> Union[Tuple[int, int, int], Mapping[Optional[str], Tuple[int, int, int]]]:
         """Return the balance of a set of addresses:
         confirmed and matured, unconfirmed, unmatured
         """
@@ -866,52 +886,93 @@ class AddressSynchronizer(Logger, EventListener):
 
         cache_key = sha256(','.join(sorted(domain)) + ';'
                            + ','.join(sorted(excluded_coins)))
-        cached_value = self._get_balance_cache.get(cache_key)
+        
+        if asset_aware:
+            cached_value = self._get_asset_balance_cache.get(cache_key)
+        else:
+            cached_value = self._get_balance_cache.get(cache_key)
+        
         if cached_value:
             return cached_value
 
-        coins = {}
+        coins = {}  # type: Dict[TxOutpoint, PartialTxInput]
         for address in domain:
             coins.update(self.get_addr_outputs(address))
 
-        c = u = x = 0
+        if asset_aware:
+            c = defaultdict(int)
+            u = defaultdict(int)
+            x = defaultdict(int)
+        else:
+            c = u = x = 0
+        
         mempool_height = self.get_local_height() + 1  # height of next block
-        for utxo in coins.values():  # type: PartialTxInput
+        for utxo in coins.values():
             if utxo.spent_height is not None:
                 continue
             if utxo.prevout.to_str() in excluded_coins:
                 continue
-            v = utxo.value_sats()
+
+            v = utxo.value_sats(asset_aware=asset_aware)
             tx_height = utxo.block_height
             is_cb = utxo.is_coinbase_output()
             if is_cb and tx_height + COINBASE_MATURITY > mempool_height:
-                x += v
+                if asset_aware:
+                    x[utxo.asset] += v
+                else:
+                    x += v
             elif tx_height > 0:
-                c += v
+                if asset_aware:
+                    c[utxo.asset] += v
+                else:
+                    c += v
             else:
                 txid = utxo.prevout.txid.hex()
                 tx = self.db.get_transaction(txid)
                 assert tx is not None # txid comes from get_addr_io
                 # we look at the outputs that are spent by this transaction
                 # if those outputs are ours and confirmed, we count this coin as confirmed
-                confirmed_spent_amount = 0
+
+                if asset_aware:
+                    confirmed_spent_amount = defaultdict(int)
+                else:
+                    confirmed_spent_amount = 0
+                
                 for txin in tx.inputs():
                     if txin.prevout in coins:
                         coin = coins[txin.prevout]
                         if coin.block_height > 0:
-                            confirmed_spent_amount += coin.value_sats()
+                            if asset_aware:
+                                confirmed_spent_amount[coin.asset] += coin.value_sats(asset_aware=asset_aware)
+                            else:
+                                confirmed_spent_amount += coin.value_sats(asset_aware=asset_aware)
                 # Compare amount, in case tx has confirmed and unconfirmed inputs, or is a coinjoin.
                 # (fixme: tx may have multiple change outputs)
-                if confirmed_spent_amount >= v:
-                    c += v
+
+                if asset_aware:
+                    if confirmed_spent_amount[utxo.asset] >= v:
+                        c[utxo.asset] += v
+                    else:
+                        c[utxo.asset] += confirmed_spent_amount[utxo.asset]
+                        u[utxo.asset] += v - confirmed_spent_amount[utxo.asset]
                 else:
-                    c += confirmed_spent_amount
-                    u += v - confirmed_spent_amount
-        result = c, u, x
-        # cache result.
-        # Cache needs to be invalidated if a transaction is added to/
-        # removed from history; or on new blocks (maturity...)
-        self._get_balance_cache[cache_key] = result
+                    if confirmed_spent_amount >= v:
+                        c += v
+                    else:
+                        c += confirmed_spent_amount
+                        u += v - confirmed_spent_amount
+
+        if asset_aware:
+            result = {}
+            for asset in set(c.keys()).union(u.keys()).union(x.keys()):
+                result[asset] = c[asset], u[asset], x[asset]
+            self._get_asset_balance_cache[cache_key] = result
+        else:
+            result = c, u, x
+            # cache result.
+            # Cache needs to be invalidated if a transaction is added to/
+            # removed from history; or on new blocks (maturity...)
+            self._get_balance_cache[cache_key] = result
         return result
 
     @with_local_height_cached

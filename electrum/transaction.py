@@ -134,18 +134,24 @@ class TxOutput:
 
     @property
     def asset(self):
-        from .asset import get_asset_info_from_script
-        asset_data = get_asset_info_from_script(self.scriptpubkey)
-        if asset_data.is_transferable():
-            return asset_data.asset
-        return None
+        if self._asset == _NEEDS_RECALC:
+            from .asset import get_asset_info_from_script
+            asset_data = get_asset_info_from_script(self.scriptpubkey)
+            if asset_data.is_transferable():
+                self._asset = asset_data.asset
+            else:
+                self._asset = None
+        return self._asset
 
     def asset_aware_value(self):
-        from .asset import get_asset_info_from_script
-        asset_data = get_asset_info_from_script(self.scriptpubkey)
-        if asset_data.is_transferable():
-            return asset_data.amount
-        return self.value
+        if self._asset_value == _NEEDS_RECALC:
+            from .asset import get_asset_info_from_script
+            asset_data = get_asset_info_from_script(self.scriptpubkey)
+            if asset_data.is_transferable():
+                self._asset_value = asset_data.amount
+            else:
+                self._asset_value = self.value
+        return self._asset_value
 
     @classmethod
     def from_address_and_value(cls, address: str, value: Union[int, str]) -> Union['TxOutput', 'PartialTxOutput']:
@@ -189,6 +195,8 @@ class TxOutput:
     def scriptpubkey(self, scriptpubkey: bytes):
         self._scriptpubkey = scriptpubkey
         self._address = _NEEDS_RECALC
+        self._asset_value = _NEEDS_RECALC
+        self._asset = _NEEDS_RECALC
 
     @property
     def address(self) -> Optional[str]:
@@ -288,6 +296,7 @@ class TxInput:
         self.__scriptpubkey = None  # type: Optional[bytes]
         self.__address = None  # type: Optional[str]
         self.__value_sats = None  # type: Optional[int]
+        self.__asset_value_sats = None  # type: Optional[int]
 
     @property
     def short_id(self):
@@ -316,6 +325,8 @@ class TxInput:
         out_idx = self.prevout.out_idx
         self.__scriptpubkey = self._utxo.outputs()[out_idx].scriptpubkey
         self.__address = _NEEDS_RECALC
+        self.__asset_value_sats = _NEEDS_RECALC
+        self.__asset = _NEEDS_RECALC
         self.__value_sats = self._utxo.outputs()[out_idx].value
 
     def validate_data(self, *, utxo: Optional['Transaction'] = None, **kwargs) -> None:
@@ -337,10 +348,14 @@ class TxInput:
 
     def value_sats(self, *, asset_aware=False) -> Optional[int]:
         if asset_aware:
-            from .asset import get_asset_info_from_script
-            asset_data = get_asset_info_from_script(self.scriptpubkey)
-            if asset_data.is_transferable():
-                return asset_data.amount
+            if self.__asset_value_sats is _NEEDS_RECALC:
+                from .asset import get_asset_info_from_script
+                asset_data = get_asset_info_from_script(self.scriptpubkey)
+                if asset_data.is_transferable():
+                    self.__asset_value_sats = asset_data.amount
+                else:
+                    self.__asset_value_sats = self.__value_sats
+            return self.__asset_value_sats
         return self.__value_sats
 
     @property
@@ -348,6 +363,18 @@ class TxInput:
         if self.__address is _NEEDS_RECALC:
             self.__address = get_address_from_output_script(self.__scriptpubkey)
         return self.__address
+
+    @property
+    def asset(self) -> Optional[str]:
+        if not hasattr(self, '__asset'): return None
+        if self.__asset is _NEEDS_RECALC:
+            from .asset import get_asset_info_from_script
+            asset_data = get_asset_info_from_script(self.scriptpubkey)
+            if asset_data.is_transferable():
+                self.__asset = asset_data.asset
+            else:
+                self.__asset = None
+        return self.__asset
 
     @property
     def scriptpubkey(self) -> Optional[bytes]:
@@ -1188,21 +1215,26 @@ class Transaction:
             raise Exception('output not found', addr)
 
     def input_value(self, *, asset_aware=False) -> Union[int, Mapping[Optional[str], int]]:
-        input_values = [txin.value_sats(asset_aware=asset_aware) for txin in self.inputs()]
+        if asset_aware:
+            input_values = [((txin.asset, txin.value_sats(asset_aware=True)) for txin in self.inputs())]
+            if any([(asset is None or val is None) for asset, val in input_values]):
+                raise MissingTxInputAmount()
+        
+            ret_val = defaultdict(int)
+            for asset, val in input_values:
+                ret_val[asset] += val
+            return ret_val
+        
+        input_values = [txin.value_sats() for txin in self.inputs()]
         if any([val is None for val in input_values]):
             raise MissingTxInputAmount()
-        if asset_aware:
-            ret_val = defaultdict(lambda: 0)
-            for o in self.outputs():
-                ret_val[o.asset] = o.asset_aware_value()
-            return ret_val
         return sum(input_values)
 
     def output_value(self, *, asset_aware=False) -> Union[int, Mapping[Optional[str], int]]:
         if asset_aware:
-            ret_val = defaultdict(lambda: 0)
+            ret_val = defaultdict(int)
             for o in self.outputs():
-                ret_val[o.asset] = o.asset_aware_value()
+                ret_val[o.asset] += o.asset_aware_value()
             return ret_val
         return sum(o.value for o in self.outputs())
 
@@ -1395,6 +1427,7 @@ class PartialTxInput(TxInput, PSBTSection):
 
         self._script_descriptor = None  # type: Optional[Descriptor]
         self._trusted_value_sats = None  # type: Optional[int]
+        self._trusted_asset = None  # type: Optional[str]
         self._trusted_address = None  # type: Optional[str]
         self._is_p2sh_segwit = None  # type: Optional[bool]  # None means unknown
         self._is_native_segwit = None  # type: Optional[bool]  # None means unknown
@@ -1587,14 +1620,20 @@ class PartialTxInput(TxInput, PSBTSection):
             key_type, key = self.get_keytype_and_key_from_fullkey(full_key)
             wr(key_type, val, key=key)
 
-    def value_sats(self) -> Optional[int]:
-        if (val := super().value_sats()) is not None:
+    def value_sats(self, *, asset_aware=False) -> Optional[int]:
+        if (val := super().value_sats(asset_aware=asset_aware)) is not None:
             return val
+        if not asset_aware and self._trusted_asset:
+            return 0
         if self._trusted_value_sats is not None:
             return self._trusted_value_sats
         if self.witness_utxo:
             return self.witness_utxo.value
         return None
+
+    @property
+    def asset(self) -> Optional[str]:
+        return super().asset or self._trusted_asset
 
     @property
     def address(self) -> Optional[str]:

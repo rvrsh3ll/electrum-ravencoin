@@ -395,6 +395,7 @@ class Commands:
                 raise Exception("missing prevout for txin")
             txin = PartialTxInput(prevout=prevout)
             try:
+                raise NotImplementedError()
                 txin._trusted_value_sats = int(txin_dict.get('value') or txin_dict['value_sats'])
             except KeyError:
                 raise Exception("missing 'value_sats' field for txin")

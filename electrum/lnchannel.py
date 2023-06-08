@@ -525,6 +525,7 @@ class ChannelBackup(AbstractChannel):
     def get_capacity(self):
         lnwatcher = self.lnworker.lnwatcher
         if lnwatcher:
+            raise NotImplementedError()
             # fixme: we should probably not call that method here
             return lnwatcher.adb.get_tx_delta(self.funding_outpoint.txid, self.cb.funding_address)
         return None

@@ -42,6 +42,7 @@ from PyQt5.QtWidgets import (QMenu, QHeaderView, QLabel, QMessageBox,
 
 from electrum.gui import messages
 from electrum.address_synchronizer import TX_HEIGHT_LOCAL, TX_HEIGHT_FUTURE
+from electrum.asset import ASSET_OWNER_IDENTIFIER
 from electrum.i18n import _
 from electrum.util import (block_explorer_URL, profiler, TxMinedInfo,
                            OrderedDictWithIndex, timestamp_to_datetime,
@@ -114,6 +115,7 @@ class HistoryNode(CustomNode):
         is_lightning = tx_item.get('lightning', False)
         timestamp = tx_item['timestamp']
         short_id = None
+
         if is_lightning:
             status = 0
             if timestamp is None:
@@ -131,6 +133,13 @@ class HistoryNode(CustomNode):
             except KeyError:
                 tx_mined_info = self.model._tx_mined_info_from_tx_item(tx_item)
                 status, status_str = window.wallet.get_tx_status(tx_hash, tx_mined_info)
+
+        if asset := tx_item.get('asset'):
+            status_str = asset
+            if asset[-1] != ASSET_OWNER_IDENTIFIER:
+                status_str += ' '
+            if len(status_str) > 10:
+                status_str = status_str[:5] + '…' + status_str[-5:]
 
         if role == ROLE_SORT_ORDER:
             d = {
@@ -158,10 +167,16 @@ class HistoryNode(CustomNode):
             return QVariant(get_item_key(tx_item))
         if role not in (Qt.DisplayRole, Qt.EditRole):
             if col == HistoryColumns.STATUS and role == Qt.DecorationRole:
+                if tx_item.get('asset'):
+                    return QVariant()
                 icon = "lightning" if is_lightning else TX_ICONS[status]
                 return QVariant(read_QIcon(icon))
+            elif col == HistoryColumns.STATUS and role == Qt.TextAlignmentRole:
+                return QVariant(int(Qt.AlignRight | Qt.AlignVCenter))
             elif col == HistoryColumns.STATUS and role == Qt.ToolTipRole:
-                if is_lightning:
+                if asset := tx_item.get('asset'):
+                    msg = _('This transaction contains the asset {}').format(asset)
+                elif is_lightning:
                     msg = 'lightning transaction'
                 else:  # on-chain
                     if tx_item['height'] == TX_HEIGHT_LOCAL:

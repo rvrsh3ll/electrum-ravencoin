@@ -566,6 +566,7 @@ def make_htlc_tx_inputs(htlc_output_txid: str, htlc_output_index: int,
                           nsequence=0)
     txin.witness_script = bfh(witness_script)
     txin.script_sig = b''
+    raise NotImplementedError()
     txin._trusted_value_sats = amount_msat // 1000
     c_inputs = [txin]
     return c_inputs
@@ -833,6 +834,7 @@ def make_funding_input(local_funding_pubkey: bytes, remote_funding_pubkey: bytes
     ppubkeys = [descriptor.PubkeyProvider.parse(pk) for pk in pubkeys]
     multi = descriptor.MultisigDescriptor(pubkeys=ppubkeys, thresh=2, is_sorted=True)
     c_input.script_descriptor = descriptor.WSHDescriptor(subdescriptor=multi)
+    raise NotImplementedError()
     c_input._trusted_value_sats = funding_sat
     return c_input
 

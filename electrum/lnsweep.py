@@ -484,6 +484,7 @@ def create_sweeptx_their_ctx_htlc(
     val = ctx.outputs()[output_idx].value
     prevout = TxOutpoint(txid=bfh(ctx.txid()), out_idx=output_idx)
     txin = PartialTxInput(prevout=prevout)
+    raise NotImplementedError()
     txin._trusted_value_sats = val
     txin.witness_script = witness_script
     txin.script_sig = b''
@@ -513,6 +514,7 @@ def create_sweeptx_their_ctx_to_remote(
     val = ctx.outputs()[output_idx].value
     prevout = TxOutpoint(txid=bfh(ctx.txid()), out_idx=output_idx)
     txin = PartialTxInput(prevout=prevout)
+    raise NotImplementedError()
     txin._trusted_value_sats = val
     desc = descriptor.get_singlesig_descriptor_from_legacy_leaf(pubkey=our_payment_pubkey, script_type='p2wpkh')
     txin.script_descriptor = desc
@@ -543,6 +545,7 @@ def create_sweeptx_ctx_to_local(
     val = ctx.outputs()[output_idx].value
     prevout = TxOutpoint(txid=bfh(ctx.txid()), out_idx=output_idx)
     txin = PartialTxInput(prevout=prevout)
+    raise NotImplementedError()
     txin._trusted_value_sats = val
     txin.script_sig = b''
     txin.witness_script = witness_script

@@ -61,6 +61,7 @@ from .util import (NotEnoughFunds, UserCancelled, profiler, OldTaskGroup, ignore
 from .simple_config import SimpleConfig, FEE_RATIO_HIGH_WARNING, FEERATE_WARNING_HIGH_FEE
 from .bitcoin import COIN, TYPE_ADDRESS
 from .bitcoin import is_address, address_to_script, is_minikey, relayfee, dust_threshold
+from .asset import get_asset_info_from_script
 from .crypto import sha256d
 from . import keystore
 from .keystore import (load_keystore, Hardware_KeyStore, KeyStore, KeyStoreWithMPK,
@@ -1051,6 +1052,7 @@ class Abstract_Wallet(ABC, Logger, EventListener):
                 'timestamp': hist_item.tx_mined_status.timestamp,
                 'monotonic_timestamp': monotonic_timestamp,
                 'incoming': True if hist_item.delta>0 else False,
+                'asset': hist_item.asset,
                 'bc_value': Satoshis(hist_item.delta),
                 'bc_balance': Satoshis(hist_item.balance),
                 'date': timestamp_to_datetime(hist_item.tx_mined_status.timestamp),
@@ -1215,11 +1217,13 @@ class Abstract_Wallet(ABC, Logger, EventListener):
                     tx_height = self.adb.get_tx_height(prevout.txid.hex())
                     if 0 < tx_height.height <= invoice.height:  # exclude txs older than invoice
                         continue
-                    confs_and_values.append((tx_height.conf or 0, v))
+                    confs_and_values.append((tx_height.conf or 0, v, asset))
                 # check that there is at least one TXO, and that they pay enough.
                 # note: "at least one TXO" check is needed for zero amount invoice (e.g. OP_RETURN)
+                asset_data = get_asset_info_from_script(invoice_scriptpubkey)
                 vsum = 0
-                for conf, v in reversed(sorted(confs_and_values)):
+                for conf, v, asset in reversed(sorted(confs_and_values)):
+                    if asset != asset_data.asset: continue
                     vsum += v
                     if vsum >= invoice_amt:
                         conf_needed = min(conf_needed, conf) if conf_needed is not None else conf
@@ -1239,7 +1243,8 @@ class Abstract_Wallet(ABC, Logger, EventListener):
         onchain_history = self.get_onchain_history(domain=onchain_domain)
         for tx_item in onchain_history:
             txid = tx_item['txid']
-            transactions_tmp[txid] = tx_item
+            asset = tx_item.get('asset')
+            transactions_tmp[f'{txid}:{asset}'] = tx_item
         # add lnworker onchain transactions
         lnworker_history = self.lnworker.get_onchain_history() if self.lnworker and include_lightning else {}
         for txid, item in lnworker_history.items():
@@ -1276,12 +1281,13 @@ class Abstract_Wallet(ABC, Logger, EventListener):
             txid, tx_item = x
             ts = tx_item.get('monotonic_timestamp') or tx_item.get('timestamp') or float('inf')
             height = self.adb.tx_height_to_sort_height(tx_item.get('height'))
-            return ts, height
+            asset = tx_item.get('asset') or ''
+            return ts, height, txid, asset
         transactions = OrderedDictWithIndex()
         for k, v in sorted(list(transactions_tmp.items()), key=sort_key):
             transactions[k] = v
         now = time.time()
-        balance = 0
+        balance = defaultdict(int)
         for item in transactions.values():
             # add on-chain and lightning values
             value = Decimal(0)
@@ -1289,10 +1295,11 @@ class Abstract_Wallet(ABC, Logger, EventListener):
                 value += item['bc_value'].value
             if item.get('ln_value'):
                 value += item.get('ln_value').value
+            asset = item.get('asset')
             # note: 'value' and 'balance' has msat precision (as LN has msat precision)
             item['value'] = Satoshis(value)
-            balance += value
-            item['balance'] = Satoshis(balance)
+            balance[asset] += value
+            item['balance'] = Satoshis(balance[asset])
             if include_fiat:
                 txid = item.get('txid')
                 if not item.get('lightning') and txid:
@@ -2263,6 +2270,7 @@ class Abstract_Wallet(ABC, Logger, EventListener):
         address = address or txin.address
         # add witness_utxo
         if txin.witness_utxo is None and txin.is_segwit() and address:
+            raise NotImplementedError()
             received, spent = self.adb.get_addr_io(address)
             item = received.get(txin.prevout.to_str())
             if item:
