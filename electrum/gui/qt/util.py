@@ -21,7 +21,7 @@ from PyQt5.QtCore import (Qt, QPersistentModelIndex, QModelIndex, pyqtSignal,
                           QSortFilterProxyModel, QSize, QLocale, QAbstractItemModel,
                           QEvent, QRect, QPoint, QObject)
 from PyQt5.QtWidgets import (QPushButton, QLabel, QMessageBox, QHBoxLayout,
-                             QAbstractItemView, QVBoxLayout, QLineEdit,
+                             QAbstractItemView, QVBoxLayout, QLineEdit, QFrame,
                              QStyle, QDialog, QGroupBox, QButtonGroup, QRadioButton,
                              QFileDialog, QWidget, QToolButton, QTreeView, QPlainTextEdit,
                              QHeaderView, QApplication, QToolTip, QTreeWidget, QStyledItemDelegate,
@@ -1366,6 +1366,15 @@ def qt_event_listener(func):
         self.qt_callback_signal.emit( (func,) + args)
     return decorator
 
+class QHSeperationLine(QFrame):
+    def __init__(self):
+        super().__init__()
+        self.setMinimumWidth(1)
+        self.setFixedHeight(1)
+        self.setFrameShape(QFrame.HLine)
+        self.setFrameShadow(QFrame.Sunken)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Minimum)
+        self.setStyleSheet(ColorScheme.GRAY.as_stylesheet(True))
 
 if __name__ == "__main__":
     app = QApplication([])

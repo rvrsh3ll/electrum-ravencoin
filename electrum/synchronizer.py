@@ -256,8 +256,8 @@ class Synchronizer(SynchronizerBase):
             self._stale_asset_metadatas[asset] = await self.taskgroup.spawn(disconnect_if_still_stale)
         else:
             self._stale_asset_metadatas.pop(asset, asyncio.Future()).cancel()
-            txid, verified_metadata_height = self.adb.db.get_verified_asset_metadata_base_source(asset)
-            if verified_metadata_height is not None and result['source']['height'] < verified_metadata_height:
+            base_tup = self.adb.db.get_verified_asset_metadata_base_source(asset)
+            if base_tup is not None and result['source']['height'] < base_tup[1]:
                 self.requested_asset_metadata.discard((asset, status))
                 raise GracefulDisconnect(_('Server is trying to send old metadata for {}').format(asset), log_level=logging.ERROR)            
             self.adb.add_unverified_or_unconfirmed_asset_metadata(asset, result)

@@ -61,7 +61,7 @@ from .util import (NotEnoughFunds, UserCancelled, profiler, OldTaskGroup, ignore
 from .simple_config import SimpleConfig, FEE_RATIO_HIGH_WARNING, FEERATE_WARNING_HIGH_FEE
 from .bitcoin import COIN, TYPE_ADDRESS
 from .bitcoin import is_address, address_to_script, is_minikey, relayfee, dust_threshold
-from .asset import get_asset_info_from_script
+from .asset import get_asset_info_from_script, AssetMetadata
 from .crypto import sha256d
 from . import keystore
 from .keystore import (load_keystore, Hardware_KeyStore, KeyStore, KeyStoreWithMPK,
@@ -73,7 +73,7 @@ from . import transaction, bitcoin, coinchooser, paymentrequest, ecc, bip32
 from .transaction import (Transaction, TxInput, UnknownTxinType, TxOutput,
                           PartialTransaction, PartialTxInput, PartialTxOutput, TxOutpoint)
 from .plugin import run_hook
-from .address_synchronizer import (AddressSynchronizer, TX_HEIGHT_LOCAL,
+from .address_synchronizer import (AddressSynchronizer, TX_HEIGHT_LOCAL, METADATA_VERIFIED, METADATA_UNCONFIRMED, METADATA_UNVERIFIED,
                                    TX_HEIGHT_UNCONF_PARENT, TX_HEIGHT_UNCONFIRMED, TX_HEIGHT_FUTURE, TX_TIMESTAMP_INF)
 from .invoices import BaseInvoice, Invoice, Request
 from .invoices import PR_PAID, PR_UNPAID, PR_UNKNOWN, PR_EXPIRED, PR_UNCONFIRMED, PR_INFLIGHT
@@ -695,6 +695,25 @@ class Abstract_Wallet(ABC, Logger, EventListener):
     def get_addresses(self) -> Sequence[str]:
         pass
 
+    def get_assets_to_watch(self) -> Sequence[str]:
+        return self.db.get_assets()
+
+    def do_we_own_this_asset(self, asset: str) -> bool:
+        balances = self.get_balance(asset_aware=True)
+        return asset in balances and sum(balances[asset]) > 0
+    
+    def get_asset_metadata(self, asset: str) -> Optional[Tuple[AssetMetadata, int]]:
+        verified = self.db.get_verified_asset_metadata(asset)
+        if verified:
+            return verified, METADATA_VERIFIED
+        unconfirmed = self.adb.unconfirmed_asset_metadata.get(asset, None)
+        if unconfirmed:
+            return unconfirmed[0], METADATA_UNCONFIRMED
+        unverified = self.adb.unverified_asset_metadata.get(asset, None)
+        if unverified:
+            return unverified[0], METADATA_UNVERIFIED
+        return None
+
     @abstractmethod
     def get_address_index(self, address: str) -> Optional[AddressIndexGeneric]:
         pass
@@ -908,7 +927,10 @@ class Abstract_Wallet(ABC, Logger, EventListener):
         """
         with self.lock, self.transaction_lock:
             if self._last_full_history is None:
-                self._last_full_history = self.get_full_history(None, include_lightning=False)
+                # We only care about getting the height here
+                # We don't care about assets because this is
+                # A information leak test
+                self._last_full_history = {k[0]: v for k, v in self.get_full_history(None, include_lightning=False).items()}
                 # populate cache in chronological order (confirmed tx only)
                 # todo: get_full_history should return unconfirmed tx topologically sorted
                 for _txid, tx_item in self._last_full_history.items():
@@ -1245,10 +1267,11 @@ class Abstract_Wallet(ABC, Logger, EventListener):
         for tx_item in onchain_history:
             txid = tx_item['txid']
             asset = tx_item.get('asset')
-            transactions_tmp[f'{txid}:{asset}'] = tx_item
+            transactions_tmp[(txid, asset)] = tx_item
         # add lnworker onchain transactions
         lnworker_history = self.lnworker.get_onchain_history() if self.lnworker and include_lightning else {}
         for txid, item in lnworker_history.items():
+            raise NotImplementedError()
             if txid in transactions_tmp:
                 tx_item = transactions_tmp[txid]
                 tx_item['group_id'] = item.get('group_id')  # for swaps
@@ -1270,6 +1293,7 @@ class Abstract_Wallet(ABC, Logger, EventListener):
         # add lightning_transactions
         lightning_history = self.lnworker.get_lightning_history() if self.lnworker and include_lightning else {}
         for tx_item in lightning_history.values():
+            raise NotImplementedError()
             txid = tx_item.get('txid')
             ln_value = Decimal(tx_item['amount_msat']) / 1000
             tx_item['lightning'] = True
@@ -1278,12 +1302,23 @@ class Abstract_Wallet(ABC, Logger, EventListener):
             transactions_tmp[key] = tx_item
         # sort on-chain and LN stuff into new dict, by timestamp
         # (we rely on this being a *stable* sort)
+
+        class StringKey(str):
+            def __init__(self, _str: str):
+                self._encapsulated = _str
+            def __lt__(self, other):
+                if self._encapsulated is None:
+                    return False
+                if other is None:
+                    return True
+                return self._encapsulated < other
+
         def sort_key(x):
-            txid, tx_item = x
+            (txid, asset), tx_item = x
             ts = tx_item.get('monotonic_timestamp') or tx_item.get('timestamp') or float('inf')
             height = self.adb.tx_height_to_sort_height(tx_item.get('height'))
-            asset = tx_item.get('asset') or ''
-            return ts, height, txid, asset
+            return ts, height, txid, StringKey(asset)
+        
         transactions = OrderedDictWithIndex()
         for k, v in sorted(list(transactions_tmp.items()), key=sort_key):
             transactions[k] = v

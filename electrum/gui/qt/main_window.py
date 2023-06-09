@@ -1015,6 +1015,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         self.utxo_list.update()
         self.contact_list.update()
         #self.channels_list.update_rows.emit(wallet)
+        self.asset_tab.update()
         self.update_completions()
 
     def refresh_tabs(self, wallet=None):

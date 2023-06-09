@@ -1,12 +1,13 @@
 import asyncio
+import enum
 from decimal import Decimal
 from typing import Optional, TYPE_CHECKING, Sequence, List, Callable, Any
 from urllib.parse import urlparse
 
-from PyQt5.QtGui import QFontMetrics, QFont
+from PyQt5.QtGui import QFontMetrics, QFont, QStandardItemModel, QStandardItem
 from PyQt5.QtCore import pyqtSignal, QPoint, Qt
-from PyQt5.QtWidgets import (QLabel, QVBoxLayout, QGridLayout, QSizePolicy, QLineEdit, QCheckBox,
-                             QHBoxLayout, QCompleter, QWidget, QToolTip, QPushButton, QTabWidget)
+from PyQt5.QtWidgets import (QLabel, QVBoxLayout, QGridLayout, QSizePolicy, QLineEdit, QCheckBox, QSplitter, QScrollArea,
+                             QHBoxLayout, QCompleter, QWidget, QFrame, QPushButton, QTabWidget, QAbstractItemView)
 
 from electrum import util, paymentrequest, constants
 from electrum import lnutil
@@ -14,9 +15,10 @@ from electrum.asset import get_error_for_asset_typed, AssetType, DEFAULT_ASSET_A
 from electrum.bitcoin import base_decode, BaseDecodeError, COIN, is_address
 from electrum.plugin import run_hook
 from electrum.i18n import _
-from electrum.util import (get_asyncio_loop, FailedToParsePaymentIdentifier, format_satoshis_plain,
+from electrum.util import (get_asyncio_loop, FailedToParsePaymentIdentifier, format_satoshis_plain, profiler,
                            InvalidBitcoinURI, maybe_extract_lightning_payment_identifier, NotEnoughFunds,
                            NoDynamicFeeEstimates, InvoiceError, parse_max_spend, DECIMAL_POINT)
+from electrum.address_synchronizer import METADATA_UNCONFIRMED, METADATA_UNVERIFIED
 from electrum.invoices import PR_PAID, Invoice, PR_BROADCASTING, PR_BROADCAST
 from electrum.transaction import Transaction, PartialTxInput, PartialTransaction, PartialTxOutput
 from electrum.network import TxBroadcastError, BestEffortRequestFailed, UntrustedServerReturnedError
@@ -25,9 +27,10 @@ from electrum.lnaddr import lndecode, LnInvoiceException
 from electrum.lnurl import decode_lnurl, request_lnurl, callback_lnurl, LNURLError, LNURL6Data
 
 from .amountedit import AmountEdit, BTCAmountEdit, SizedFreezableLineEdit
-from .util import WaitingDialog, HelpLabel, MessageBoxMixin, char_width_in_lineedit, GenericInputHandler, EnterButton
+from .util import WaitingDialog, HelpLabel, MessageBoxMixin, char_width_in_lineedit, GenericInputHandler, EnterButton, ColorScheme
 from .util import get_iconname_camera, get_iconname_qrcode, read_QIcon, MONOSPACE_FONT, ChoicesLayout, ValidatedDelayedCallbackEditor
 from .confirm_tx_dialog import ConfirmTxDialog
+from .my_treeview import MyTreeView
 
 if TYPE_CHECKING:
     from .main_window import ElectrumWindow
@@ -70,6 +73,120 @@ class AssetAmountEdit(OnlyNumberAmountEdit):
         print(text)
         return text
         
+class AssetList(MyTreeView):
+    class Columns(MyTreeView.BaseColumnsEnum):
+        ASSET = enum.auto()
+        BALANCE = enum.auto()
+
+    headers = {
+        Columns.ASSET: _('Asset'),
+        Columns.BALANCE: _('Balance'),
+    }
+    filter_columns = [Columns.ASSET]
+    stretch_column = Columns.ASSET
+
+    ROLE_ASSET_STR = Qt.UserRole + 1000
+    key_role = ROLE_ASSET_STR
+
+    def __init__(self, parent: 'ViewAssetPanel'):
+        super().__init__(
+            main_window=parent.parent.window,
+            stretch_column=self.stretch_column,
+        )
+        self.parent = parent
+        self.wallet = self.main_window.wallet
+        self.std_model = QStandardItemModel(self)
+        self.setModel(self.std_model)
+        self.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.setSortingEnabled(True)
+    
+    @profiler(min_threshold=0.05)
+    def update(self):
+        # not calling maybe_defer_update() as it interferes with coincontrol status bar
+        assets = self.wallet.get_assets_to_watch()
+        self.model().clear()
+        self.update_headers(self.__class__.headers)
+        for idx, asset in enumerate(assets):
+            labels = [""] * len(self.Columns)
+            labels[self.Columns.ASSET] = asset
+            if self.wallet.do_we_own_this_asset(asset):
+                amount = sum(self.wallet.get_balance(asset_aware=True)[asset])
+                labels[self.Columns.BALANCE] = self.main_window.config.format_amount(amount, whitespaces=True, precision=8)
+            asset_item = [QStandardItem(x) for x in labels]
+            self.set_editability(asset_item)
+            asset_item[self.Columns.ASSET].setData(asset, self.ROLE_ASSET_STR)
+            asset_item[self.Columns.ASSET].setFont(QFont(MONOSPACE_FONT))
+            asset_item[self.Columns.BALANCE].setFont(QFont(MONOSPACE_FONT))
+            self.model().insertRow(idx, asset_item)
+            self.refresh_row(asset, idx)
+        self.filter()
+
+    def refresh_row(self, key, row):
+        assert row is not None
+        asset_item = [self.std_model.item(row, col) for col in self.Columns]
+        
+        result = self.wallet.get_asset_metadata(key)
+        if result is None:
+            tooltip = _('No asset metadata avaliable')
+        else:
+            metadata, kind = result
+            tooltip = _('{} total coins of this asset are circulating').format(format_satoshis_plain(metadata.sats_in_circulation, decimal_point=8))
+            if kind == METADATA_UNCONFIRMED:
+                tooltip += ' ' + _('(this metadata is not yet confirmed)')
+            elif kind == METADATA_UNVERIFIED:
+                tooltip += ' ' + _('(this metadata was not able to be verified)')
+
+        if self.wallet.do_we_own_this_asset(key):
+            color = self._default_bg_brush
+        else:
+            color = ColorScheme.GRAY.as_color(True)
+            tooltip += ' ' + _('(we do not own this asset)')
+
+        for col in asset_item:
+            col.setBackground(color)
+            col.setToolTip(tooltip)
+        
+    def mousePressEvent(self, e):
+        if e.button() != Qt.MouseButton.LeftButton:
+            return super().mousePressEvent(e)
+        idx = self.indexAt(e.pos())
+        if not idx.isValid():
+            return
+        asset = self.model().index(idx.row(), self.Columns.ASSET).data(self.ROLE_ASSET_STR)
+        self.parent.metadata_viewer.update_asset_trigger.emit(asset)
+        super().mousePressEvent(e)
+
+class MetadataViewer(QFrame):
+    update_asset_trigger = pyqtSignal(str)
+
+    def __init__(self, parent: 'ViewAssetPanel'):
+        QFrame.__init__(self)
+        self.parent = parent
+        self.update_asset_trigger.connect(lambda x: print(x))
+
+        scroll_layout = QScrollArea(self)
+
+class ViewAssetPanel(QSplitter, Logger):
+    def __init__(self, parent: 'AssetTab'):
+        QWidget.__init__(self)
+        Logger.__init__(self)
+
+        self.parent = parent
+
+        self.asset_list = AssetList(self)
+        self.metadata_viewer = MetadataViewer(self)
+
+        self.asset_list.setMinimumWidth(300)
+        self.metadata_viewer.setMinimumWidth(300)
+
+        self.setChildrenCollapsible(False)
+        self.addWidget(self.asset_list)
+        self.addWidget(self.metadata_viewer)
+
+    def update(self):
+        self.asset_list.update()
+        super().update()
+
 class CreateAssetPanel(QWidget, Logger):
     def __init__(self, parent: 'AssetTab'):
         QWidget.__init__(self)
@@ -374,6 +491,8 @@ class AssetTab(QWidget, MessageBoxMixin, Logger):
         self.wallet = window.wallet
         self.network = window.network
 
+        self.view_asset_tab = ViewAssetPanel(self)
+
         if self.wallet.is_watching_only():
             self.create_asset_tab = QLabel(_('Watch only wallets cannot create assets'))
             self.create_asset_tab.setAlignment(Qt.AlignCenter)
@@ -384,9 +503,14 @@ class AssetTab(QWidget, MessageBoxMixin, Logger):
         self.info_label.setAlignment(Qt.AlignCenter)
 
         self.tabs = tabs = QTabWidget(self)
+        tabs.addTab(self.view_asset_tab, read_QIcon("eye1.png"), _('View'))
         tabs.addTab(self.create_asset_tab, read_QIcon("preferences.png"), _('Create'))
         tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         vbox = QVBoxLayout(self)
         vbox.addWidget(self.info_label)
         vbox.addWidget(self.tabs)
+
+    def update(self):
+        self.view_asset_tab.update()
+        super().update()

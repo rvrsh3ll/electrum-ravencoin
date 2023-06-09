@@ -51,6 +51,10 @@ TX_HEIGHT_LOCAL = -2
 TX_HEIGHT_UNCONF_PARENT = -1
 TX_HEIGHT_UNCONFIRMED = 0
 
+METADATA_VERIFIED = 1
+METADATA_UNCONFIRMED = 0
+METADATA_UNVERIFIED = -1
+
 TX_TIMESTAMP_INF = 999_999_999_999
 TX_HEIGHT_INF = 10 ** 9
 
@@ -671,6 +675,8 @@ class AddressSynchronizer(Logger, EventListener):
             source_ipfs = __source_outpoint, __source_height
 
         with self.lock:
+            if asset in self.unconfirmed_asset_metadata:
+                self.unconfirmed_asset_metadata.pop(asset, None)
             if source_height > 0:
                 self.unverified_asset_metadata[asset] = metadata, source, source_divisions, source_ipfs
             else:
