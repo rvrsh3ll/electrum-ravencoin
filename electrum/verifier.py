@@ -22,16 +22,17 @@
 # SOFTWARE.
 
 import asyncio
-from typing import Sequence, Optional, TYPE_CHECKING
+from typing import Sequence, Optional, TYPE_CHECKING, Tuple
 
 import aiorpcx
 
 from .util import TxMinedInfo, NetworkJobOnDefaultServer
 from .crypto import sha256d
+from .asset import get_asset_info_from_script, AssetMetadata, AssetException, MetadataAssetVoutInformation
 from .bitcoin import hash_decode, hash_encode
-from .transaction import Transaction
+from .transaction import Transaction, TxOutpoint
 from .blockchain import hash_header
-from .interface import GracefulDisconnect
+from .interface import GracefulDisconnect, RequestCorrupted
 from . import constants
 
 if TYPE_CHECKING:
@@ -72,40 +73,170 @@ class SPV(NetworkJobOnDefaultServer):
             await self._request_proofs()
             await asyncio.sleep(0.1)
 
-    async def _request_proofs(self):
+    async def _maybe_defer(self, tx_hash: str, tx_height: int) -> bool:
         local_height = self.blockchain.height()
-        unverified = self.wallet.get_unverified_txs()
+        # do not request merkle branch if we already requested it
+        if tx_hash in self.requested_merkle or tx_hash in self.merkle_roots:
+            return True
+        # or before headers are available
+        if not (0 < tx_height <= local_height):
+            return True
+        # if it's in the checkpoint region, we still might not have the header
+        header = self.blockchain.read_header(tx_height)
+        if header is None:
+            if tx_height < constants.net.max_checkpoint():
+                # FIXME these requests are not counted (self._requests_sent += 1)
+                await self.taskgroup.spawn(self.interface.request_chunk(tx_height, None, can_return_early=True))
+            return True
+        # request now
+        self.logger.info(f'requested merkle {tx_hash}')
+        self.requested_merkle.add(tx_hash)
+        return False
 
+    async def _request_proofs(self):
+        unverified = self.wallet.get_unverified_txs()
         for tx_hash, tx_height in unverified.items():
-            # do not request merkle branch if we already requested it
-            if tx_hash in self.requested_merkle or tx_hash in self.merkle_roots:
-                continue
-            # or before headers are available
-            if not (0 < tx_height <= local_height):
-                continue
-            # if it's in the checkpoint region, we still might not have the header
-            header = self.blockchain.read_header(tx_height)
-            if header is None:
-                if tx_height < constants.net.max_checkpoint():
-                    # FIXME these requests are not counted (self._requests_sent += 1)
-                    await self.taskgroup.spawn(self.interface.request_chunk(tx_height, None, can_return_early=True))
-                continue
-            # request now
-            self.logger.info(f'requested merkle {tx_hash}')
-            self.requested_merkle.add(tx_hash)
-            await self.taskgroup.spawn(self._request_and_verify_single_proof, tx_hash, tx_height)
+            if await self._maybe_defer(tx_hash, tx_height): continue
+            await self.taskgroup.spawn(self._verify_unverified_transaction, tx_hash, tx_height)
+
+        unverified_assets = self.wallet.get_unverified_asset_metadatas()
+        for asset, (metadata, source_tuple, divisions_tuple, associated_data_tuple) in unverified_assets.items():
+            source_txid = source_tuple[0].txid.hex()
+            source_height = source_tuple[1]
+            if source_txid not in self.merkle_roots and await self._maybe_defer(source_txid, source_height): continue
+            if divisions_tuple:
+                source_txid = divisions_tuple[0].txid.hex()
+                source_height = divisions_tuple[1]
+                if source_txid not in self.merkle_roots and await self._maybe_defer(source_txid, source_height): continue
+            if associated_data_tuple:
+                source_txid = associated_data_tuple[0].txid.hex()
+                source_height = associated_data_tuple[1]
+                if source_txid not in self.merkle_roots and await self._maybe_defer(source_txid, source_height): continue
+
+            self.logger.info(f'attempting to verify {asset}')
+            await self.taskgroup.spawn(self._verify_unverified_asset_metadata(asset, metadata, source_tuple, divisions_tuple, associated_data_tuple))
+                
+    async def _verify_unverified_asset_metadata(
+            self, 
+            asset: str, 
+            metadata: AssetMetadata, 
+            source: Tuple[TxOutpoint, int],
+            divisions_source: Tuple[TxOutpoint, int] | None, 
+            associated_data_source: Tuple[TxOutpoint, int] | None):
+        
+        if divisions_source:
+            source_txid = divisions_source[0].txid.hex()
+            source_idx = divisions_source[0].out_idx
+            source_height = divisions_source[1]
+            try:
+                if not self.wallet.db.get_verified_tx(source_txid) and source_txid not in self.merkle_roots:
+                    await self._request_and_verify_single_proof(source_txid, source_height)
+                else:
+                    self.requested_merkle.discard(source_txid)
+                tx = self.wallet.get_transaction(source_txid)
+                if not tx:
+                    self._requests_sent += 1
+                    async with self._network_request_semaphore:
+                        raw_tx = await self.interface.get_transaction(source_txid)
+                        tx = Transaction(raw_tx)
+                    self._requests_answered += 1
+                asset_info = get_asset_info_from_script(tx.outputs()[source_idx].scriptpubkey)
+                if not isinstance(asset_info, MetadataAssetVoutInformation):
+                    raise AssetException('No metadata at this outpoint!(1)')
+                if asset_info.asset != asset:
+                    raise AssetException('Not our asset!(1)')
+                if asset_info.divisions != metadata.divisions:
+                    raise AssetException('Bad division amount!')
+            except (aiorpcx.jsonrpc.RPCError, RequestCorrupted, AssetException, IndexError) as e:
+                self.logger.info(f'bad asset metadata for {asset} (1): {repr(e)}')
+                self.wallet.remove_unverified_asset_metadata(asset, source[1])
+                raise GracefulDisconnect(e) from e
+            
+        if associated_data_source:
+            source_txid = associated_data_source[0].txid.hex()
+            source_idx = associated_data_source[0].out_idx
+            source_height = associated_data_source[1]
+            try:
+                if not self.wallet.db.get_verified_tx(source_txid) and source_txid not in self.merkle_roots:
+                    await self._request_and_verify_single_proof(source_txid, source_height)
+                else:
+                    self.requested_merkle.discard(source_txid)
+                tx = self.wallet.get_transaction(source_txid)
+                if not tx:
+                    self._requests_sent += 1
+                    async with self._network_request_semaphore:
+                        raw_tx = await self.interface.get_transaction(source_txid)
+                        tx = Transaction(raw_tx)
+                    self._requests_answered += 1
+                asset_info = get_asset_info_from_script(tx.outputs()[source_idx].scriptpubkey)
+                if not isinstance(asset_info, MetadataAssetVoutInformation):
+                    raise AssetException('No metadata at this outpoint!(2)')
+                if asset_info.asset != asset:
+                    raise AssetException('Not our asset!(2)')
+                if asset_info.associated_data != metadata.associated_data:
+                    raise AssetException('Bad associated data!')
+            except (aiorpcx.jsonrpc.RPCError, RequestCorrupted, AssetException, IndexError) as e:
+                self.logger.info(f'bad asset metadata for {asset} (2): {repr(e)}')
+                self.wallet.remove_unverified_asset_metadata(asset, source[1])
+                raise GracefulDisconnect(e) from e
+            
+        source_txid = source[0].txid.hex()
+        source_idx = source[0].out_idx
+        source_height = source[1]
+        try:
+            if not self.wallet.db.get_verified_tx(source_txid) and source_txid not in self.merkle_roots:
+                await self._request_and_verify_single_proof(source_txid, source_height)
+            else:
+                self.requested_merkle.discard(source_txid)
+            tx = self.wallet.get_transaction(source_txid)
+            if not tx:
+                self._requests_sent += 1
+                async with self._network_request_semaphore:
+                    raw_tx = await self.interface.get_transaction(source_txid)
+                    tx = Transaction(raw_tx)
+                self._requests_answered += 1
+            asset_info = get_asset_info_from_script(tx.outputs()[source_idx].scriptpubkey)
+            if not isinstance(asset_info, MetadataAssetVoutInformation):
+                raise AssetException('No metadata at this outpoint!(3)')
+            if asset_info.asset != asset:
+                raise AssetException('Not our asset!(3)')
+            if asset_info.divisions != metadata.divisions and not divisions_source:
+                raise AssetException('Bad divisions! (2)')
+            if asset_info.associated_data != metadata.associated_data and not associated_data_source:
+                raise AssetException('Bad associated data! (2)')
+            if asset_info.reissuable != metadata.reissuable:
+                raise AssetException('Bad reissuable')
+        except (aiorpcx.jsonrpc.RPCError, RequestCorrupted, AssetException, IndexError) as e:
+            self.logger.info(f'bad asset metadata for {asset} (3): {repr(e)}')
+            self.wallet.remove_unverified_asset_metadata(asset, source[1])
+            raise GracefulDisconnect(e) from e
+        
+        self.logger.info(f'verified metadata for {asset}')
+        self.wallet.add_verified_asset_metadata(asset, metadata, source, divisions_source, associated_data_source)
+
+    async def _verify_unverified_transaction(self, tx_hash, tx_height):
+        try:
+            pos, header = await self._request_and_verify_single_proof(tx_hash, tx_height)
+        except aiorpcx.jsonrpc.RPCError:
+            self.logger.info(f'tx {tx_hash} not at height {tx_height}')
+            self.wallet.remove_unverified_tx(tx_hash, tx_height)
+            return
+        
+        header_hash = hash_header(header)
+        tx_info = TxMinedInfo(height=tx_height,
+                            timestamp=header.get('timestamp'),
+                            txpos=pos,
+                            header_hash=header_hash)
+        self.wallet.add_verified_tx(tx_hash, tx_info)
+
 
     async def _request_and_verify_single_proof(self, tx_hash, tx_height):
         try:
             self._requests_sent += 1
             async with self._network_request_semaphore:
                 merkle = await self.interface.get_merkle_for_transaction(tx_hash, tx_height)
-        except aiorpcx.jsonrpc.RPCError:
-            self.logger.info(f'tx {tx_hash} not at height {tx_height}')
-            self.wallet.remove_unverified_tx(tx_hash, tx_height)
-            self.requested_merkle.discard(tx_hash)
-            return
         finally:
+            self.requested_merkle.discard(tx_hash)
             self._requests_answered += 1
         # Verify the hash of the server-provided merkle branch to a
         # transaction matches the merkle root of its block
@@ -129,14 +260,10 @@ class SPV(NetworkJobOnDefaultServer):
         # we passed all the tests
         self.merkle_roots[tx_hash] = header.get('merkle_root')
         self.requested_merkle.discard(tx_hash)
-        self.logger.info(f"verified {tx_hash}")
-        header_hash = hash_header(header)
-        tx_info = TxMinedInfo(height=tx_height,
-                              timestamp=header.get('timestamp'),
-                              txpos=pos,
-                              header_hash=header_hash)
-        self.wallet.add_verified_tx(tx_hash, tx_info)
+        self.logger.info(f"verified {tx_hash}")    
 
+        return pos, header
+        
     @classmethod
     def hash_merkle_root(cls, merkle_branch: Sequence[str], tx_hash: str, leaf_pos_in_tree: int):
         """Return calculated merkle root."""
@@ -192,7 +319,8 @@ class SPV(NetworkJobOnDefaultServer):
 
     def is_up_to_date(self):
         return (not self.requested_merkle
-                and not self.wallet.unverified_tx)
+                and not self.wallet.unverified_tx
+                and not self.wallet.unverified_asset_metadata)
 
 
 def verify_tx_is_in_block(tx_hash: str, merkle_branch: Sequence[str],

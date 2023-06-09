@@ -34,8 +34,10 @@ from . import util
 from .transaction import Transaction, PartialTransaction
 from .util import make_aiohttp_session, NetworkJobOnDefaultServer, random_shuffled_copy, OldTaskGroup
 from .bitcoin import address_to_scripthash, is_address
+from .asset import AssetMetadata, get_error_for_asset_name
 from .logging import Logger
 from .interface import GracefulDisconnect, NetworkTimeout
+from .i18n import _
 
 if TYPE_CHECKING:
     from .network import Network
@@ -54,6 +56,23 @@ def history_status(h):
     return hashlib.sha256(status.encode('ascii')).digest().hex()
 
 
+def asset_status(asset_data):
+    if not asset_data:
+        return None
+    if isinstance(asset_data, AssetMetadata):
+        return asset_data.status()
+
+    sat_amount = asset_data['sats_in_circulation']
+    div_amt = asset_data['divisions']
+    reissuable = False if asset_data['reissuable'] == 0 else True
+    has_ipfs = False if asset_data['has_ipfs'] == 0 else True
+
+    h = ''.join([str(sat_amount), str(div_amt), str(reissuable), str(has_ipfs)])
+    if has_ipfs:
+        h += asset_data['ipfs']
+
+    return hashlib.sha256(h.encode('ascii')).digest().hex()
+
 class SynchronizerBase(NetworkJobOnDefaultServer):
     """Subscribe over the network to a set of addresses, and monitor their statuses.
     Every time a status changes, run a coroutine provided by the subclass.
@@ -70,7 +89,14 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
         self._handling_addr_statuses = set()
         self.scripthash_to_address = {}
         self._processed_some_notifications = False  # so that we don't miss them
+        
+        self._adding_assets = set()
+        self.requested_assets = set()
+        self._handling_asset_statuses = set()
+        self._processed_some_asset_notifications = False
+
         # Queues
+        self.asset_status_queue = asyncio.Queue()
         self.status_queue = asyncio.Queue()
 
     async def _run_tasks(self, *, taskgroup):
@@ -78,14 +104,20 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
         try:
             async with taskgroup as group:
                 await group.spawn(self.handle_status())
+                await group.spawn(self.handle_asset_status())
                 await group.spawn(self.main())
         finally:
             # we are being cancelled now
             self.session.unsubscribe(self.status_queue)
+            self.session.unsubscribe(self.asset_status_queue)
 
     def add(self, addr):
         if not is_address(addr): raise ValueError(f"invalid bitcoin address {addr}")
         self._adding_addrs.add(addr)  # this lets is_up_to_date already know about addr
+
+    def add_asset(self, asset):
+        if error := get_error_for_asset_name(asset): raise ValueError(f'invalid asset: {error}')
+        self._adding_assets.add(asset)
 
     async def _add_address(self, addr: str):
         try:
@@ -96,11 +128,23 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
         finally:
             self._adding_addrs.discard(addr)  # ok for addr not to be present
 
+    async def _add_asset(self, asset: str):
+        try:
+            if error := get_error_for_asset_name(asset): raise ValueError(f'invalid asset: {error}')
+            if asset in self.requested_assets: return
+            self.requested_assets.add(asset)
+            await self.taskgroup.spawn(self._subscribe_to_asset, asset)
+        finally:
+            self._adding_assets.discard(asset)
+
     async def _on_address_status(self, addr, status):
         """Handle the change of the status of an address.
         Should remove addr from self._handling_addr_statuses when done.
         """
         raise NotImplementedError()  # implemented by subclasses
+
+    async def _on_asset_status(self, asset, status):
+        raise NotImplementedError()
 
     async def _subscribe_to_address(self, addr):
         h = address_to_scripthash(addr)
@@ -115,6 +159,15 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
             raise
         self._requests_answered += 1
 
+    async def _subscribe_to_asset(self, asset):
+        self._requests_sent += 1
+        try:
+            async with self._network_request_semaphore:
+                await self.session.subscribe('blockchain.asset.subscribe', [asset], self.asset_status_queue)
+        except RPCError as _:
+            raise
+        self._requests_answered += 1
+
     async def handle_status(self):
         while True:
             h, status = await self.status_queue.get()
@@ -123,6 +176,14 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
             self.requested_addrs.discard(addr)  # ok for addr not to be present
             await self.taskgroup.spawn(self._on_address_status, addr, status)
             self._processed_some_notifications = True
+
+    async def handle_asset_status(self):
+        while True:
+            asset, status = await self.asset_status_queue.get()
+            self._handling_asset_statuses.add(asset)
+            self.requested_assets.discard(asset)
+            await self.taskgroup.spawn(self._on_asset_status, asset, status)
+            self._processed_some_asset_notifications = True
 
     async def main(self):
         raise NotImplementedError()  # implemented by subclasses
@@ -145,7 +206,9 @@ class Synchronizer(SynchronizerBase):
         self._init_done = False
         self.requested_tx = {}
         self.requested_histories = set()
+        self.requested_asset_metadata = set()
         self._stale_histories = dict()  # type: Dict[str, asyncio.Task]
+        self._stale_asset_metadatas = dict()  # type: Dict[str, asyncio.Task]
 
     def diagnostic_name(self):
         return self.adb.diagnostic_name()
@@ -158,7 +221,47 @@ class Synchronizer(SynchronizerBase):
                 and not self.requested_histories
                 and not self.requested_tx
                 and not self._stale_histories
-                and self.status_queue.empty())
+                and not self._adding_assets
+                and not self.requested_assets
+                and not self._handling_asset_statuses
+                and not self.requested_asset_metadata
+                and not self._stale_asset_metadatas
+                and self.status_queue.empty()
+                and self.asset_status_queue.empty())
+
+    async def _on_asset_status(self, asset, status):
+        try:
+            metadata = self.adb.db.get_asset_metadata(asset)
+            if asset_status(metadata) == status:
+                return
+            if (asset, status) in self.requested_asset_metadata:
+                return
+            self.requested_asset_metadata.add((asset, status))
+            self._stale_asset_metadatas.pop(asset, asyncio.Future()).cancel()
+        finally:
+            self._handling_asset_statuses.discard(asset)
+        self._requests_sent += 1
+        async with self._network_request_semaphore:
+            result = await self.interface.get_asset_metadata(asset)
+        self._requests_answered += 1
+        self.logger.info(f'receiving metadata {asset}: {result}')
+        if asset_status(result) != status:
+            self.logger.info(f"error: asset status mismatch: {asset}. we'll wait a bit for status update.")
+            # The server is supposed to send a new status notification, which will trigger a new
+            # get_history. We shall wait a bit for this to happen, otherwise we disconnect.
+            async def disconnect_if_still_stale():
+                timeout = self.network.get_network_timeout_seconds(NetworkTimeout.Generic)
+                await asyncio.sleep(timeout)
+                raise SynchronizerFailure(f"timeout reached waiting for asset {asset}: metadata still stale")
+            self._stale_asset_metadatas[asset] = await self.taskgroup.spawn(disconnect_if_still_stale)
+        else:
+            self._stale_asset_metadatas.pop(asset, asyncio.Future()).cancel()
+            txid, verified_metadata_height = self.adb.db.get_verified_asset_metadata_base_source(asset)
+            if verified_metadata_height is not None and result['source']['height'] < verified_metadata_height:
+                self.requested_asset_metadata.discard((asset, status))
+                raise GracefulDisconnect(_('Server is trying to send old metadata for {}').format(asset), log_level=logging.ERROR)            
+            self.adb.add_unverified_or_unconfirmed_asset_metadata(asset, result)
+        self.requested_asset_metadata.discard((asset, status))
 
     async def _on_address_status(self, addr, status):
         try:
@@ -255,6 +358,8 @@ class Synchronizer(SynchronizerBase):
         # add addresses to bootstrap
         for addr in random_shuffled_copy(self.adb.get_addresses()):
             await self._add_address(addr)
+        for asset in random_shuffled_copy(self.adb.get_assets()):
+            await self._add_asset(asset)
         # main loop
         self._init_done = True
         prev_uptodate = False
@@ -265,8 +370,9 @@ class Synchronizer(SynchronizerBase):
             up_to_date = self.adb.is_up_to_date()
             # see if status changed
             if (up_to_date != prev_uptodate
-                    or up_to_date and self._processed_some_notifications):
+                    or up_to_date and (self._processed_some_notifications or self._processed_some_asset_notifications)):
                 self._processed_some_notifications = False
+                self._processed_some_asset_notifications = False
                 self.adb.up_to_date_changed()
             prev_uptodate = up_to_date
 

@@ -36,6 +36,7 @@ import time
 import attr
 
 from . import util, bitcoin
+from .asset import AssetMetadata
 from .util import profiler, WalletFileException, multisig_type, TxMinedInfo, bfh
 from .invoices import Invoice, Request
 from .keystore import bip44_derivation
@@ -587,6 +588,71 @@ class WalletDB(JsonDB):
             for i, addr in enumerate(self.change_addresses):
                 self._addr_to_addr_index[addr] = (1, i)
 
+    def load_assets(self):
+        """ called from Abstract_Wallet.__init__ """
+        self.assets_to_watch = self.get('assets_to_watch', set())  # type: Set[str]
+        self.verified_asset_metadata = self.get_dict('verified_asset_metadata')  # type: Dict[str, Tuple[AssetMetadata, Tuple[TxOutpoint, int], Tuple[TxOutpoint, int] | None, Tuple[TxOutpoint, int] | None]]       
+
+    @locked
+    def get_assets(self) -> Sequence[str]:
+        return list(sorted(self.assets_to_watch))
+    
+    @locked
+    def get_asset_metadata(self, asset) -> Optional[AssetMetadata]:
+        assert isinstance(asset, str)
+        result = self.verified_asset_metadata.get(asset)
+        if result is None: return None
+        return result[0]
+
+    @modifier
+    def add_verified_asset_metadata(self, asset: str, metadata: AssetMetadata, source_tup: Tuple[TxOutpoint, int], source_divisions_tup: Tuple[TxOutpoint, int] | None, source_associated_data_tup: Tuple[TxOutpoint, int] | None):
+        assert isinstance(asset, str)
+        assert isinstance(metadata, AssetMetadata)
+        assert isinstance(source_tup, Tuple)
+        assert len(source_tup) == 2
+        assert isinstance(source_tup[0], TxOutpoint)
+        assert isinstance(source_tup[1], int)
+        if source_divisions_tup is not None:
+            assert isinstance(source_divisions_tup, Tuple)
+            assert len(source_divisions_tup) == 2
+            assert isinstance(source_divisions_tup[0], TxOutpoint)
+            assert isinstance(source_divisions_tup[1], int)
+        if source_associated_data_tup is not None:
+            assert isinstance(source_associated_data_tup, Tuple)
+            assert len(source_associated_data_tup) == 2
+            assert isinstance(source_associated_data_tup[0], TxOutpoint)
+            assert isinstance(source_associated_data_tup[1], int)
+
+        self.verified_asset_metadata[asset] = metadata, source_tup, source_divisions_tup, source_associated_data_tup
+
+    @locked
+    def get_verified_asset_metadata(self, asset: str) -> Optional[AssetMetadata]:
+        assert isinstance(asset, str)
+        result = self.verified_asset_metadata.get(asset, None)
+        if not result: return None
+        return result[0]
+    
+    @locked
+    def get_verified_asset_metadata_base_source(self, asset: str) -> Optional[Tuple[str, int]]:
+        assert isinstance(asset, str)
+        result = self.verified_asset_metadata.get(asset, None)
+        if not result: return None
+        return result[1][0].txid.hex(), result[1][1]
+    
+    @locked
+    def get_assets_verified_after_height(self, height: int) -> Sequence[str]:
+        assert isinstance(height, int)
+        assets = []
+        for asset, (_, (_, verified_height), _, _) in self.verified_asset_metadata.items():
+            if verified_height > height:
+                assets.append(asset)
+        return assets
+
+    @modifier
+    def remove_verified_asset_metadata(self, asset: str):
+        assert isinstance(asset, str)
+        return self.verified_asset_metadata.pop(asset, None)
+
     @profiler
     def _load_transactions(self):
         self.data = StoredDict(self.data, self, [])
@@ -653,6 +719,15 @@ class WalletDB(JsonDB):
             v = dict((k, ShachainElement(bfh(x[0]), int(x[1]))) for k, x in v.items())
         elif key == 'data_loss_protect_remote_pcp':
             v = dict((k, bfh(x)) for k, x in v.items())
+        elif key == 'assets_to_watch':
+            v = set(v)
+        elif key == 'verified_asset_metadata':
+            v = dict((k, (
+                AssetMetadata(**metadata),
+                (TxOutpoint.from_json(tup1[0]), tup1[1]),
+                (TxOutpoint.from_json(tup2[0]), tup2[1]) if tup2 else None,
+                (TxOutpoint.from_json(tup3[0]), tup3[1]) if tup3 else None,
+            )) for k, (metadata, tup1, tup2, tup3) in v.items())
         # convert htlc_id keys to int
         if key in ['adds', 'locked_in', 'settles', 'fails', 'fee_updates', 'buckets',
                    'unacked_updates', 'unfulfilled_htlcs', 'fail_htlc_reasons', 'onion_keys']:

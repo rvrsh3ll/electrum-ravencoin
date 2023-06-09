@@ -318,6 +318,7 @@ class Abstract_Wallet(ABC, Logger, EventListener):
         self.storage = storage
         # load addresses needs to be called before constructor for sanity checks
         db.load_addresses(self.wallet_type)
+        db.load_assets()
         self.keystore = None  # type: Optional[KeyStore]  # will be set by load_keystore
         Logger.__init__(self)
 

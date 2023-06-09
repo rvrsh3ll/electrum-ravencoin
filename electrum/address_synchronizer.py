@@ -34,7 +34,7 @@ from .util import profiler, bfh, TxMinedInfo, UnrelatedTransactionException, wit
 from .transaction import Transaction, TxOutput, TxInput, PartialTxInput, TxOutpoint, PartialTransaction
 from .synchronizer import Synchronizer
 from .verifier import SPV
-from .asset import get_asset_info_from_script
+from .asset import get_asset_info_from_script, AssetMetadata
 from .blockchain import hash_header, Blockchain
 from .i18n import _
 from .logging import Logger
@@ -92,6 +92,9 @@ class AddressSynchronizer(Logger, EventListener):
         # thread local storage for caching stuff
         self.threadlocal_cache = threading.local()
 
+        self.unverified_asset_metadata = {}  # type: Dict[str, Tuple[AssetMetadata, Tuple[TxOutpoint, int], Optional[Tuple[TxOutpoint, int]], Optional[Tuple[TxOutpoint, int]]]]
+        self.unconfirmed_asset_metadata = {}  # type: Dict[str, Tuple[AssetMetadata, Tuple[TxOutpoint, int], Optional[Tuple[TxOutpoint, int]], Optional[Tuple[TxOutpoint, int]]]]
+
         self._get_balance_cache = {}
         self._get_asset_balance_cache = {}
 
@@ -121,6 +124,9 @@ class AddressSynchronizer(Logger, EventListener):
 
     def get_addresses(self):
         return sorted(self.db.get_history())
+
+    def get_assets(self):
+        return sorted(self.db.get_assets())
 
     def get_address_history(self, addr: str) -> Dict[str, int]:
         """Returns the history for the address, as a txid->height dict.
@@ -575,13 +581,8 @@ class AddressSynchronizer(Logger, EventListener):
                 balance=balance[asset]))
         # sanity check
         asset_balances = self.get_balance(domain, asset_aware=True)
-        for key in balance.keys():
-            if key not in asset_balances:
-                self.logger.error(f'sanity check failed! history balance key={key} not found')
-                raise Exception("wallet.get_history() failed balance sanity-check")
-            
         for key, _balance in balance.items():
-            c, u, x = asset_balances.get(key, (None, None, None))
+            c, u, x = asset_balances[key]
             if _balance != c + u + x:
                 self.logger.error(f'sanity check failed! key={key}; c={c},u={u},x={x} while history balance={_balance}')
                 raise Exception("wallet.get_history() failed balance sanity-check")
@@ -642,6 +643,60 @@ class AddressSynchronizer(Logger, EventListener):
                 else:
                     self.unconfirmed_tx[tx_hash] = tx_height
 
+    def add_unverified_or_unconfirmed_asset_metadata(self, asset, d):
+        metadata = AssetMetadata(
+            sats_in_circulation=d['sats_in_circulation'],
+            divisions = d['divisions'],
+            reissuable = d['reissuable'],
+            associated_data = d['ipfs'] if d['has_ipfs'] else None
+        )
+
+        source_outpoint = TxOutpoint(txid=bytes.fromhex(d['source']['tx_hash']), out_idx=d['source']['tx_pos'])
+        source_height = d['source']['height']
+
+        source = source_outpoint, source_height
+
+        source_divisions = None
+
+        if 'source_divisions' in d:
+            _source_outpoint = TxOutpoint(txid=bytes.fromhex(d['source_divisions']['tx_hash']), out_idx=d['source_divisions']['tx_pos'])
+            _source_height = d['source_divisions']['height']
+            source_divisions = _source_outpoint, _source_height
+
+        source_ipfs = None
+
+        if 'source_ipfs' in d:
+            __source_outpoint = TxOutpoint(txid=bytes.fromhex(d['source_ipfs']['tx_hash']), out_idx=d['source_ipfs']['tx_pos'])
+            __source_height = d['source_ipfs']['height']
+            source_ipfs = __source_outpoint, __source_height
+
+        with self.lock:
+            if source_height > 0:
+                self.unverified_asset_metadata[asset] = metadata, source, source_divisions, source_ipfs
+            else:
+                self.unconfirmed_asset_metadata[asset] = metadata, source, source_divisions, source_ipfs
+
+    def get_unverified_asset_metadatas(self):
+        '''Returns a map from tx hash to transaction height'''
+        with self.lock:
+            return dict(self.unverified_asset_metadata)  # copy
+
+    def remove_unverified_asset_metadata(self, asset: str, source_height: int):
+        with self.lock:
+            maybe_metadata = self.unverified_asset_metadata.get(asset, None)
+            if maybe_metadata:
+                current_height = maybe_metadata[1][1]
+                if current_height == source_height:
+                    self.unverified_asset_metadata.pop(asset, None)
+
+    def add_verified_asset_metadata(self, asset: str, metadata: AssetMetadata, source_tup, source_divisions_tup, source_associated_data_tup):
+        # Remove from the unverified map and add to the verified map
+        with self.lock:
+            self.unverified_asset_metadata.pop(asset, None)
+            self.db.add_verified_asset_metadata(asset, metadata, source_tup, source_divisions_tup, source_associated_data_tup)
+        util.trigger_callback('adb_added_verified_asset_metadata', self, asset)
+
+
     def remove_unverified_tx(self, tx_hash, tx_height):
         with self.lock:
             new_height = self.unverified_tx.get(tx_hash)
@@ -663,7 +718,22 @@ class AddressSynchronizer(Logger, EventListener):
     def undo_verifications(self, blockchain: Blockchain, above_height: int) -> Set[str]:
         '''Used by the verifier when a reorg has happened'''
         txs = set()
+        assets = set()
         with self.lock:
+            for asset in self.db.get_assets_verified_after_height(above_height):
+                base_txid, base_height = self.db.get_verified_asset_metadata_base_source(asset)
+                verified_info = self.db.get_verified_tx(base_txid)
+                header = blockchain.read_header(base_height)
+                if header and verified_info and hash_header(header) == verified_info.header_hash: continue
+                assets.add(asset)
+                tup = self.db.remove_verified_asset_metadata(asset)
+                self.unverified_asset_metadata[asset] = tup
+                _, (outpoint, _), div_tup, associated_data_tup = tup
+                txs.add(outpoint.txid.hex())
+                if div_tup:
+                    txs.add(div_tup[0].txid.hex())
+                if associated_data_tup:
+                    txs.add(associated_data_tup[0].txid.hex())
             for tx_hash in self.db.list_verified_tx():
                 info = self.db.get_verified_tx(tx_hash)
                 tx_height = info.height
@@ -685,6 +755,8 @@ class AddressSynchronizer(Logger, EventListener):
 
         for tx_hash in txs:
             util.trigger_callback('adb_removed_verified_tx', self, tx_hash)
+        for asset in assets:
+            util.trigger_callback('adb_removed_verified_asset', self, asset)
         return txs
 
     def get_local_height(self) -> int:
@@ -963,7 +1035,7 @@ class AddressSynchronizer(Logger, EventListener):
                         u += v - confirmed_spent_amount
 
         if asset_aware:
-            result = {}
+            result = defaultdict(lambda: (0, 0, 0))
             for asset in set(c.keys()).union(u.keys()).union(x.keys()):
                 result[asset] = c[asset], u[asset], x[asset]
             self._get_asset_balance_cache[cache_key] = result

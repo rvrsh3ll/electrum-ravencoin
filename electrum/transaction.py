@@ -247,6 +247,15 @@ class TxOutpoint(NamedTuple):
         return TxOutpoint(txid=bfh(hash_str),
                           out_idx=int(idx_str))
 
+    @classmethod
+    def from_json(cls, d) -> 'TxOutpoint':
+        assert isinstance(d, Sequence)
+        assert len(d) == 2
+        assert isinstance(d[1], int)
+        _txid = bytes.fromhex(d[0])
+        assert len(_txid) == 32, f'{_txid} should be a sha256 hash'
+        return cls(txid=_txid, out_idx=d[1])
+
     def __str__(self) -> str:
         return f"""TxOutpoint("{self.to_str()}")"""
 

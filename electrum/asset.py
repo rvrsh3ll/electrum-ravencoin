@@ -1,12 +1,15 @@
+import attr
 import re
+import hashlib
 
 from enum import Enum
 from typing import Optional, Sequence, Mapping, Union, TYPE_CHECKING
 
-from .bitcoin import address_to_script, construct_script, int_to_hex, opcodes, COIN
+from .bitcoin import address_to_script, construct_script, int_to_hex, opcodes, COIN, base_decode, base_encode
 from .i18n import _
 
-from .transaction import PartialTxOutput, MalformedBitcoinScript, script_GetOp
+from .transaction import PartialTxOutput, MalformedBitcoinScript, script_GetOp, TxOutpoint
+from .json_db import StoredObject
 
 # https://github.com/RavenProject/Ravencoin/blob/master/src/assets/assets.cpp
 
@@ -32,12 +35,12 @@ _UNIQUE_TAG_CHARACTERS = r'^[-A-Za-z0-9@$%&*()[\]{}_.?:]+$'
 _MSG_CHANNEL_TAG_CHARACTERS = r'^[A-Za-z0-9_]+$'
 _QUALIFIER_NAME_CHARACTERS = r'#[A-Z0-9._]{3,}$'
 _SUB_QUALIFIER_NAME_CHARACTERS = r'#[A-Z0-9._]+$'
-_RESTRICTED_NAME_CHARACTERS = r'\$[A-Z0-9._]{3,}$'
+_RESTRICTED_NAME_CHARACTERS = r'$[A-Z0-9._]{3,}$'
 
 _DOUBLE_PUNCTUATION = r'^.*[._]{2,}.*$'
 _LEADING_PUNCTUATION = r'^[._].*$'
 _TRAILING_PUNCTUATION = r'^.*[._]$'
-_QUALIFIER_LEADING_PUNCTUATION = r'^[#\$][._].*$'
+_QUALIFIER_LEADING_PUNCTUATION = r'^[#$][._].*$'
 
 _SUB_NAME_DELIMITER = '/'
 _UNIQUE_TAG_DELIMITER = '#'
@@ -50,7 +53,7 @@ _MSG_CHANNEL_INDICATOR = r'(^[^^~#!]+~[^~#!\/]+$)'
 _OWNER_INDICATOR = r'(^[^^~#!]+!$)'
 _QUALIFIER_INDICATOR = r'^[#][A-Z0-9._]{3,}$'
 _SUB_QUALIFIER_INDICATOR = r'^#[A-Z0-9._]+\/#[A-Z0-9._]+$'
-_RESTRICTED_INDICATOR = r'^[\$][A-Z0-9._]{3,}$'
+_RESTRICTED_INDICATOR = r'^[$][A-Z0-9._]{3,}$'
 
 _BAD_NAMES = '^RVN$|^RAVEN$|^RAVENCOIN$|^RVNS$|^RAVENS$|^RAVENCOINS$|^#RVN$|^#RAVEN$|^#RAVENCOIN$|^#RVNS$|^#RAVENS$|^#RAVENCOINS$'
 
@@ -152,7 +155,7 @@ def get_error_for_asset_typed(asset: str, asset_type: AssetType) -> Optional[str
             if len(parts) == 1:
                 return _('Not a unique tag.')
             if not _isNameValidBeforeTag(parts[0]) or not _isUniqueTagValid(parts[-1]):
-                return _('Unique name contains invalid characters (Valid characters are: A-Z a-z 0-9 @ \$ % & * ( ) [ ] { } _ . ? : -)')
+                return _('Unique name contains invalid characters (Valid characters are: A-Z a-z 0-9 @ $ % & * ( ) [ ] { } _ . ? : -)')
         elif asset_type == AssetType.MSG_CHANNEL:
             parts = asset.split(_MSG_CHANNEL_DELIMITER)
             if len(parts) == 1:
@@ -169,7 +172,7 @@ def get_error_for_asset_typed(asset: str, asset_type: AssetType) -> Optional[str
                 return _('Qualifier name contains invalid characters (Valid characters are: A-Z 0-9 _ .) (# must be the first character, _ . special characters can\'t be the first or last characters)')
         elif asset_type == AssetType.RESTRICTED:
             if not _isRestrictedNameValid(asset):
-                return _('Restricted name contains invalid characters (Valid characters are: A-Z 0-9 _ .) (\$ must be the first character, _ . special characters can\'t be the first or last characters)')
+                return _('Restricted name contains invalid characters (Valid characters are: A-Z 0-9 _ .) ($ must be the first character, _ . special characters can\'t be the first or last characters)')
         else:
             return _('Unknown asset type.')
         return None
@@ -217,6 +220,48 @@ def generate_owner_script(address: str, asset: str) -> 'PartialTxOutput':
     base_script = address_to_script(address)
     return base_script + asset_script
 
+def _associated_data_converter(input):
+    if not input:
+        return None
+    if isinstance(input, bytes):
+        if len(input) != 34:
+            raise ValueError(f'{input=} is not 34 bytes')
+        return input
+    result = base_decode(input, base=58)
+    if len(result) != 34:
+        raise ValueError(f'{input=} decoded is not 34 bytes')
+    return result
+
+def _validate_sats(instance, attribute, value):
+    if value <= 0:
+        raise ValueError('sats must be greater than 0!')
+
+def _validate_divisions(instance, attribute, value):
+    if value < 0 or value > 8:
+        raise ValueError('divisions must be 0-8!')
+
+@attr.s
+class AssetMetadata(StoredObject):
+    sats_in_circulation = attr.ib(type=int, validator=_validate_sats)
+    divisions = attr.ib(type=int, validator=_validate_divisions)
+    reissuable = attr.ib(type=bool)
+    associated_data = attr.ib(default=None, type=bytes, converter=_associated_data_converter)
+
+    def associated_data_as_ipfs(self) -> Optional[str]:
+        if not self.associated_data:
+            return None
+        return base_encode(self.associated_data, base=58)
+    
+    def status(self) -> Optional[str]:
+        """ Returns the asset status as a hex string """
+        h = ''.join([str(self.sats_in_circulation), 
+                     str(self.divisions),
+                     str(self.reissuable),
+                     str(self.associated_data is not None)])
+        if self.associated_data is not None:
+            h += self.associated_data_as_ipfs()
+
+        return hashlib.sha256(h.encode('ascii')).digest().hex()
 
 class AssetVoutType(Enum):
     NONE = 1
@@ -237,6 +282,9 @@ class BaseAssetVoutInformation():
     
     def is_transferable(self):
         return self._type in (AssetVoutType.CREATE, AssetVoutType.OWNER, AssetVoutType.TRANSFER, AssetVoutType.REISSUE)
+
+    def is_deterministic(self):
+        return False
 
 class NoAssetVoutInformation(BaseAssetVoutInformation):
     def __init__(self):
