@@ -411,6 +411,11 @@ class SimpleConfig(Logger):
         path = os.path.join(self.path, "wallets", "default_wallet")
         return path
 
+    def get_ipfs_data_path(self):
+        util.assert_datadir_available(self.path)
+        path = os.path.join(self.path, 'ipfs_metadata')
+        return path
+
     def remove_from_recently_open(self, filename):
         recent = self.RECENTLY_OPEN_WALLET_FILES or []
         if filename in recent:

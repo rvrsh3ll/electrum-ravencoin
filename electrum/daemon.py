@@ -48,6 +48,7 @@ from .util import EventListener, event_listener
 from .wallet import Wallet, Abstract_Wallet
 from .storage import WalletStorage
 from .wallet_db import WalletDB
+from .ipfs_db import IPFSDB
 from .commands import known_commands, Commands
 from .simple_config import SimpleConfig
 from .exchange_rate import FxThread
@@ -569,6 +570,8 @@ class Daemon(Logger):
                     if self.network:
                         await group.spawn(self.network.stop(full_shutdown=True))
                     await group.spawn(self.taskgroup.cancel_remaining())
+            self.logger.info('saving IPFS metadata')
+            IPFSDB.get_instance().write()
         finally:
             if self.listen_jsonrpc:
                 self.logger.info("removing lockfile")

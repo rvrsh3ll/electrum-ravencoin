@@ -1,12 +1,13 @@
 import asyncio
 import enum
 import math
+import hashlib
 from decimal import Decimal
 from typing import Optional, TYPE_CHECKING, Sequence, List, Callable, Any
 from urllib.parse import urlparse
 
 from PyQt5.QtGui import QFontMetrics, QFont, QStandardItemModel, QStandardItem
-from PyQt5.QtCore import pyqtSignal, QPoint, Qt
+from PyQt5.QtCore import pyqtSignal, QPoint, Qt, QItemSelectionModel
 from PyQt5.QtWidgets import (QLabel, QVBoxLayout, QGridLayout, QSizePolicy, QLineEdit, QCheckBox, QSplitter, QScrollArea,
                              QHBoxLayout, QCompleter, QWidget, QFrame, QPushButton, QTabWidget, QAbstractItemView,
                              QTextEdit)
@@ -28,9 +29,11 @@ from electrum.logging import Logger
 from electrum.lnaddr import lndecode, LnInvoiceException
 from electrum.lnurl import decode_lnurl, request_lnurl, callback_lnurl, LNURLError, LNURL6Data
 
+from electrum.ipfs_db import IPFSDB
+
 from .amountedit import AmountEdit, BTCAmountEdit, SizedFreezableLineEdit
 from .util import WaitingDialog, HelpLabel, MessageBoxMixin, char_width_in_lineedit, GenericInputHandler, EnterButton, ColorScheme, HelpButton
-from .util import get_iconname_camera, get_iconname_qrcode, read_QIcon, MONOSPACE_FONT, ChoicesLayout, ValidatedDelayedCallbackEditor, font_height
+from .util import QHSeperationLine, get_iconname_qrcode, read_QIcon, MONOSPACE_FONT, ChoicesLayout, ValidatedDelayedCallbackEditor, font_height
 from .confirm_tx_dialog import ConfirmTxDialog
 from .my_treeview import MyTreeView
 
@@ -113,14 +116,15 @@ class AssetList(MyTreeView):
         self.setModel(self.std_model)
         self.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.setSortingEnabled(True)
+        self.last_selected_asset = None
     
     @profiler(min_threshold=0.05)
     def update(self):
         # not calling maybe_defer_update() as it interferes with coincontrol status bar
-        assets = self.wallet.get_assets_to_watch()
+        watching_assets = self.wallet.get_assets_to_watch()
         self.model().clear()
         self.update_headers(self.__class__.headers)
-        for idx, asset in enumerate(assets):
+        for idx, asset in enumerate(watching_assets):
             labels = [""] * len(self.Columns)
             labels[self.Columns.ASSET] = asset
             if self.wallet.do_we_own_this_asset(asset):
@@ -135,6 +139,8 @@ class AssetList(MyTreeView):
             asset_item[self.Columns.BALANCE].setFont(QFont(MONOSPACE_FONT))
             self.model().insertRow(idx, asset_item)
             self.refresh_row(asset, idx)
+            if asset == self.last_selected_asset:
+                self.selectionModel().select(self.model().createIndex(idx, 0), QItemSelectionModel.Rows | QItemSelectionModel.SelectCurrent)
         self.filter()
 
     def refresh_row(self, key, row):
@@ -168,7 +174,7 @@ class AssetList(MyTreeView):
         idx = self.indexAt(e.pos())
         if not idx.isValid():
             return
-        asset = self.model().index(idx.row(), self.Columns.ASSET).data(self.ROLE_ASSET_STR)
+        self.last_selected_asset = asset = self.model().index(idx.row(), self.Columns.ASSET).data(self.ROLE_ASSET_STR)
         self.parent.metadata_viewer.update_asset_trigger.emit(asset)
         super().mousePressEvent(e)
 
@@ -230,6 +236,11 @@ class MetadataInfo(QWidget):
         self.associated_data_text.setFixedHeight(math.floor(font_height() * 1.7))
         self.associated_data_text.setAlignment(Qt.AlignVCenter)
 
+        associated_data_info_layout = QVBoxLayout()
+        associated_data_info_layout.addLayout(associated_data_type_layout)
+        associated_data_info_layout.addWidget(self.associated_data_text)
+
+        self.associated_data_view_seperator = QHSeperationLine()
         predicted_mime_type_layout = QHBoxLayout()
         self.predicted_mime_type_label = QLabel(_('Predicted MIME Type: '))
         self.predicted_mime_type_text = QLabel()
@@ -241,20 +252,24 @@ class MetadataInfo(QWidget):
         predicted_size_layout.addWidget(self.predicted_size_label)
         predicted_size_layout.addWidget(self.predicted_size_text, 1, Qt.AlignLeft)
 
-        associated_data_info_layout = QVBoxLayout()
-        associated_data_info_layout.addLayout(associated_data_type_layout)
-        associated_data_info_layout.addWidget(self.associated_data_text)
-        associated_data_info_layout.addLayout(predicted_mime_type_layout)
-        associated_data_info_layout.addLayout(predicted_size_layout)
+        associated_data_view_layout = QVBoxLayout()
+        associated_data_view_layout.addWidget(self.associated_data_view_seperator)
+        associated_data_view_layout.addLayout(predicted_mime_type_layout)
+        associated_data_view_layout.addLayout(predicted_size_layout)
 
         vbox.addLayout(header_layout)
         vbox.addLayout(asset_layout)
         vbox.addLayout(type_layout)
         vbox.addLayout(basic_info_layout)
         vbox.addLayout(associated_data_info_layout)
+        vbox.addLayout(associated_data_view_layout)
+        vbox.addWidget(QWidget(), 1)
         self.clear()
 
+        self.current_asset = None
+
     def update(self, asset: str, type_text: Optional[str], metadata: AssetMetadata):
+        self.current_asset = asset
         if type_text:
             header_text = '<h3>{} ({})</h3>'.format(_('Asset Metadata'), type_text)
         else:
@@ -282,11 +297,11 @@ class MetadataInfo(QWidget):
         if metadata.associated_data is None:
             self.associated_data_type_text.setText('None')
             self.associated_data_text.setVisible(False)
-            for x in [self.predicted_mime_type_label, self.predicted_size_label, self.predicted_mime_type_text, self.predicted_size_text]:
+            for x in [self.predicted_mime_type_label, self.predicted_size_label, self.predicted_mime_type_text, self.predicted_size_text, self.associated_data_view_seperator]:
                 x.setVisible(False)
         else:
             self.associated_data_text.setVisible(True)
-            for x in [self.predicted_mime_type_label, self.predicted_size_label, self.predicted_mime_type_text, self.predicted_size_text]:
+            for x in [self.predicted_mime_type_label, self.predicted_size_label, self.predicted_mime_type_text, self.predicted_size_text, self.associated_data_view_seperator]:
                 x.setVisible(self.window.config.DOWNLOAD_IPFS)
             if metadata.associated_data[:2] == b'\x54\x20':
                 self.associated_data_type_text.setText('TXID')
@@ -298,7 +313,12 @@ class MetadataInfo(QWidget):
                 if self.window.config.DOWNLOAD_IPFS:
                     for x in [self.predicted_mime_type_text, self.predicted_size_text]:
                         x.setText(_('Loading...'))
-                    self.window.run_coroutine_from_thread(self.download_ipfs(ipfs_str), ipfs_str)
+                    saved_mime_type, saved_bytes = IPFSDB.get_instance().get_metadata(ipfs_str) or (None, None)
+                    if saved_mime_type is None or saved_bytes is None:
+                        self.window.run_coroutine_from_thread(self.maybe_download_ipfs(asset, ipfs_str, saved_mime_type, saved_bytes), ipfs_str)
+                    else:
+                        self.predicted_mime_type_text.setText(saved_mime_type)
+                        self.predicted_size_text.setText(human_readable_size(saved_bytes))
 
     def clear(self):
         self.header.setText('<h3>{}</h3>'.format(_('Asset Metadata')))
@@ -310,37 +330,50 @@ class MetadataInfo(QWidget):
         for x in [self.predicted_size_label, self.predicted_mime_type_label, self.predicted_mime_type_text, self.predicted_size_text, self.associated_data_text]:
             x.setVisible(True)
 
-        for x in [self.predicted_mime_type_label, self.predicted_size_label, self.predicted_mime_type_text, self.predicted_size_text]:
+        for x in [self.predicted_mime_type_label, self.predicted_size_label, self.predicted_mime_type_text, self.predicted_size_text, self.associated_data_view_seperator]:
             x.setVisible(self.window.config.DOWNLOAD_IPFS)
 
         for x in [self.predicted_mime_type_text, self.predicted_size_text]:
             x.setText(_('N/A'))
 
     def update_no_change(self):
-        for x in [self.predicted_mime_type_label, self.predicted_size_label, self.predicted_mime_type_text, self.predicted_size_text]:
+        for x in [self.predicted_mime_type_label, self.predicted_size_label, self.predicted_mime_type_text, self.predicted_size_text, self.associated_data_view_seperator]:
             x.setVisible(self.window.config.DOWNLOAD_IPFS)
 
-    async def download_ipfs(self, ipfs: str):
+    async def maybe_download_ipfs(self, asset: str, ipfs: str, saved_bytes, saved_mime_type):
+        if saved_bytes is not None and asset == self.current_asset:
+            self.predicted_size_text.setText(human_readable_size(saved_bytes))
+        if saved_mime_type:
+            if asset == self.current_asset:
+                self.predicted_mime_type_text.setText(saved_mime_type)
+            return
         ipfs_url = ipfs_explorer_URL(self.window.config, 'ipfs', ipfs)
         async def on_finish(resp: 'ClientResponse'):
             resp.raise_for_status()
-            self.predicted_mime_type_text.setText(resp.content_type or _('Unknown'))
-            if resp.content_length:
-                self.predicted_size_text.setText(human_readable_size(resp.content_length))
+            if asset == self.current_asset:
+                self.predicted_mime_type_text.setText(resp.content_type or _('Unknown'))
+            if saved_bytes:
+                IPFSDB.get_instance().add_metadata(ipfs, resp.content_type or None, saved_bytes)
                 return
-            total_downloaded = 0
-            while True:
-                chunk = await resp.content.read(1024)
-                if not chunk:
-                    break
-                total_downloaded += len(chunk)
-            self.predicted_size_text.setText(human_readable_size(total_downloaded))
+            if resp.content_length:
+                content_length = resp.content_length
+            else:
+                content_length = 0
+                while True:
+                    chunk = await resp.content.read(1024)
+                    if not chunk:
+                        break
+                    content_length += len(chunk)
+            if asset == self.current_asset:
+                self.predicted_size_text.setText(human_readable_size(content_length))
+            IPFSDB.get_instance().add_metadata(ipfs, resp.content_type or None, content_length)
         try:
-            result = await self.window.network.async_send_http_on_proxy('get', ipfs_url, on_finish=on_finish)
+            await self.window.network.async_send_http_on_proxy('get', ipfs_url, on_finish=on_finish)
         except Exception as e:
             self.window.logger.error(f'failed to download {ipfs_url=}: {repr(e)}')
-            for x in [self.predicted_mime_type_text, self.predicted_size_text]:
-                x.setText(_('Unknown'))
+            if asset == self.current_asset:
+                for x in [self.predicted_mime_type_text, self.predicted_size_text]:
+                    x.setText(_('Unknown'))
 
 class MetadataViewer(QFrame):
     update_asset_trigger = pyqtSignal(str)

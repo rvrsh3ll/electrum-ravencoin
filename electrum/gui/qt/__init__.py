@@ -61,6 +61,7 @@ from electrum.util import (UserCancelled, profiler, send_exception_to_crash_repo
                            WalletFileException, BitcoinException, get_new_wallet_name)
 from electrum.wallet import Wallet, Abstract_Wallet
 from electrum.wallet_db import WalletDB
+from electrum.ipfs_db import IPFSDB
 from electrum.logging import Logger
 from electrum.gui import BaseElectrumGui
 from electrum.simple_config import SimpleConfig
@@ -463,6 +464,7 @@ class ElectrumGui(BaseElectrumGui, Logger):
             return
         # start wizard to select/create wallet
         self.timer.start()
+        IPFSDB.initialize(self.config.get_ipfs_data_path())
         path = self.config.get_wallet_path(use_gui_last_wallet=True)
         try:
             if not self.start_new_window(path, self.config.get('url'), app_is_starting=True):
