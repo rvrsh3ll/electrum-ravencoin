@@ -1,5 +1,6 @@
 import asyncio
 import enum
+import math
 from decimal import Decimal
 from typing import Optional, TYPE_CHECKING, Sequence, List, Callable, Any
 from urllib.parse import urlparse
@@ -7,17 +8,18 @@ from urllib.parse import urlparse
 from PyQt5.QtGui import QFontMetrics, QFont, QStandardItemModel, QStandardItem
 from PyQt5.QtCore import pyqtSignal, QPoint, Qt
 from PyQt5.QtWidgets import (QLabel, QVBoxLayout, QGridLayout, QSizePolicy, QLineEdit, QCheckBox, QSplitter, QScrollArea,
-                             QHBoxLayout, QCompleter, QWidget, QFrame, QPushButton, QTabWidget, QAbstractItemView)
+                             QHBoxLayout, QCompleter, QWidget, QFrame, QPushButton, QTabWidget, QAbstractItemView,
+                             QTextEdit)
 
 from electrum import util, paymentrequest, constants
 from electrum import lnutil
-from electrum.asset import get_error_for_asset_typed, AssetType, DEFAULT_ASSET_AMOUNT_MAX, generate_create_script, generate_owner_script
-from electrum.bitcoin import base_decode, BaseDecodeError, COIN, is_address
+from electrum.asset import get_error_for_asset_typed, AssetType, DEFAULT_ASSET_AMOUNT_MAX, generate_create_script, generate_owner_script, AssetMetadata
+from electrum.bitcoin import base_decode, BaseDecodeError, COIN, is_address, base_encode
 from electrum.plugin import run_hook
 from electrum.i18n import _
 from electrum.util import (get_asyncio_loop, FailedToParsePaymentIdentifier, format_satoshis_plain, profiler,
                            InvalidBitcoinURI, maybe_extract_lightning_payment_identifier, NotEnoughFunds,
-                           NoDynamicFeeEstimates, InvoiceError, parse_max_spend, DECIMAL_POINT)
+                           NoDynamicFeeEstimates, InvoiceError, parse_max_spend, DECIMAL_POINT, ipfs_explorer_URL)
 from electrum.address_synchronizer import METADATA_UNCONFIRMED, METADATA_UNVERIFIED
 from electrum.invoices import PR_PAID, Invoice, PR_BROADCASTING, PR_BROADCAST
 from electrum.transaction import Transaction, PartialTxInput, PartialTransaction, PartialTxOutput
@@ -27,14 +29,27 @@ from electrum.lnaddr import lndecode, LnInvoiceException
 from electrum.lnurl import decode_lnurl, request_lnurl, callback_lnurl, LNURLError, LNURL6Data
 
 from .amountedit import AmountEdit, BTCAmountEdit, SizedFreezableLineEdit
-from .util import WaitingDialog, HelpLabel, MessageBoxMixin, char_width_in_lineedit, GenericInputHandler, EnterButton, ColorScheme
-from .util import get_iconname_camera, get_iconname_qrcode, read_QIcon, MONOSPACE_FONT, ChoicesLayout, ValidatedDelayedCallbackEditor
+from .util import WaitingDialog, HelpLabel, MessageBoxMixin, char_width_in_lineedit, GenericInputHandler, EnterButton, ColorScheme, HelpButton
+from .util import get_iconname_camera, get_iconname_qrcode, read_QIcon, MONOSPACE_FONT, ChoicesLayout, ValidatedDelayedCallbackEditor, font_height
 from .confirm_tx_dialog import ConfirmTxDialog
 from .my_treeview import MyTreeView
 
 if TYPE_CHECKING:
     from .main_window import ElectrumWindow
+    from aiohttp import ClientResponse
 
+
+_VIEWABLE_MIMES = ('image/jpeg', 'image/png', 'image/gif', 'image/tiff', 'image/webp', 'image/avif',
+                    'text/plain', 'application/json')
+
+def human_readable_size(size, decimal_places=3):
+    if not isinstance(size, int):
+        return _('Unknown')
+    for unit in ['Bytes','KiB','MiB','GiB','TiB']:
+        if size < 1024.0:
+            break
+        size /= 1024.0
+    return f"{size:.{decimal_places}g} {unit}"
 
 class OnlyNumberAmountEdit(AmountEdit):
     def __init__(self, asset_name: Callable[[], str], divisions: int, max_amount: int, *, parent=None, min_amount=0, callback=None):
@@ -70,7 +85,6 @@ class AssetAmountEdit(OnlyNumberAmountEdit):
     def _get_text_from_amount(self, amount_sat):
         text = format_satoshis_plain(amount_sat, decimal_point=self.max_precision())
         text = text.replace('.', DECIMAL_POINT)
-        print(text)
         return text
         
 class AssetList(MyTreeView):
@@ -111,8 +125,10 @@ class AssetList(MyTreeView):
             labels[self.Columns.ASSET] = asset
             if self.wallet.do_we_own_this_asset(asset):
                 amount = sum(self.wallet.get_balance(asset_aware=True)[asset])
-                labels[self.Columns.BALANCE] = self.main_window.config.format_amount(amount, whitespaces=True, precision=8)
+                labels[self.Columns.BALANCE] = self.main_window.config.format_amount(amount, whitespaces=True, precision=8)                
             asset_item = [QStandardItem(x) for x in labels]
+            if not self.wallet.do_we_own_this_asset(asset):
+                asset_item[self.Columns.BALANCE] = QStandardItem(read_QIcon('eye1.png'), labels[self.Columns.BALANCE])
             self.set_editability(asset_item)
             asset_item[self.Columns.ASSET].setData(asset, self.ROLE_ASSET_STR)
             asset_item[self.Columns.ASSET].setFont(QFont(MONOSPACE_FONT))
@@ -125,22 +141,22 @@ class AssetList(MyTreeView):
         assert row is not None
         asset_item = [self.std_model.item(row, col) for col in self.Columns]
         
+        color = self._default_bg_brush
+
         result = self.wallet.get_asset_metadata(key)
         if result is None:
             tooltip = _('No asset metadata avaliable')
+            color = ColorScheme.RED.as_color(True)
         else:
             metadata, kind = result
-            tooltip = _('{} total coins of this asset are circulating').format(format_satoshis_plain(metadata.sats_in_circulation, decimal_point=8))
+            tooltip = _('{} total coins of this asset exist').format(format_satoshis_plain(metadata.sats_in_circulation, decimal_point=8))
             if kind == METADATA_UNCONFIRMED:
                 tooltip += ' ' + _('(this metadata is not yet confirmed)')
             elif kind == METADATA_UNVERIFIED:
                 tooltip += ' ' + _('(this metadata was not able to be verified)')
 
-        if self.wallet.do_we_own_this_asset(key):
-            color = self._default_bg_brush
-        else:
-            color = ColorScheme.GRAY.as_color(True)
-            tooltip += ' ' + _('(we do not own this asset)')
+        if not self.wallet.do_we_own_this_asset(key):
+            tooltip += ' ' + _('(This is a watch-only asset)')            
 
         for col in asset_item:
             col.setBackground(color)
@@ -156,15 +172,212 @@ class AssetList(MyTreeView):
         self.parent.metadata_viewer.update_asset_trigger.emit(asset)
         super().mousePressEvent(e)
 
+class MetadataInfo(QWidget):
+    def __init__(self, window: 'ElectrumWindow'):
+        QWidget.__init__(self)
+
+        self.window = window
+
+        vbox = QVBoxLayout(self)
+
+        self.header = QLabel()
+        self.header.setAlignment(Qt.AlignCenter)
+        header_help = HelpButton(_('Asset metadata is validated client-side, however, servers may broadcast old data or make-up data in the mempool.' +
+                                   ' Additionally, the total created supply cannot be completely validated client-side.'))
+
+        header_layout = QHBoxLayout()
+        header_layout.addWidget(self.header)
+        header_layout.addWidget(header_help)
+
+        asset_label = QLabel(_('Asset: '))
+        self.asset_text = QLabel()
+        type_label = QLabel(_('Type: '))
+        self.type_text = QLabel()
+
+        asset_layout = QHBoxLayout()
+        type_layout = QHBoxLayout()
+        asset_layout.addWidget(asset_label)
+        asset_layout.addWidget(self.asset_text, 1, Qt.AlignLeft)
+        type_layout.addWidget(type_label)
+        type_layout.addWidget(self.type_text, 1, Qt.AlignLeft)
+
+        divisions_message = _('Asset Divisions') + '\n\n' \
+                            + _('Asset divisions are a number from 0 to 8 and denote how many digits past the decimal point can be used. Once an asset is issued, you cannot decrease this number.')
+        divisions_label = HelpLabel(_('Divisions: '), divisions_message)
+
+        self.divisions_text = QLabel()
+
+        reissuable_message = _('Asset Divisions') + '\n\n' \
+                            + _('Asset divisions are a number from 0 to 8 and denote how many digits past the decimal point can be used. Once an asset is issued, you cannot decrease this number.')
+        reissuable_label = HelpLabel(_('Reissuable: '), reissuable_message)
+        self.reissuable_text = QLabel()
+
+        basic_info_layout = QHBoxLayout()
+        basic_info_layout.addWidget(divisions_label)
+        basic_info_layout.addWidget(self.divisions_text, 1, Qt.AlignLeft)
+        basic_info_layout.addWidget(reissuable_label)
+        basic_info_layout.addWidget(self.reissuable_text, 1, Qt.AlignLeft)
+        basic_info_layout.setSpacing(5)
+
+        associated_data_type_label = QLabel(_('Associated Data: '))
+        self.associated_data_type_text = QLabel()
+        associated_data_type_layout = QHBoxLayout()
+        associated_data_type_layout.addWidget(associated_data_type_label)
+        associated_data_type_layout.addWidget(self.associated_data_type_text, 1, Qt.AlignLeft)
+
+        self.associated_data_text = QTextEdit()
+        self.associated_data_text.setReadOnly(True)
+        self.associated_data_text.setFixedHeight(math.floor(font_height() * 1.7))
+        self.associated_data_text.setAlignment(Qt.AlignVCenter)
+
+        predicted_mime_type_layout = QHBoxLayout()
+        self.predicted_mime_type_label = QLabel(_('Predicted MIME Type: '))
+        self.predicted_mime_type_text = QLabel()
+        predicted_size_layout = QHBoxLayout()
+        self.predicted_size_label = QLabel(_('Predicted Size: '))
+        self.predicted_size_text = QLabel()
+        predicted_mime_type_layout.addWidget(self.predicted_mime_type_label)
+        predicted_mime_type_layout.addWidget(self.predicted_mime_type_text, 1, Qt.AlignLeft)
+        predicted_size_layout.addWidget(self.predicted_size_label)
+        predicted_size_layout.addWidget(self.predicted_size_text, 1, Qt.AlignLeft)
+
+        associated_data_info_layout = QVBoxLayout()
+        associated_data_info_layout.addLayout(associated_data_type_layout)
+        associated_data_info_layout.addWidget(self.associated_data_text)
+        associated_data_info_layout.addLayout(predicted_mime_type_layout)
+        associated_data_info_layout.addLayout(predicted_size_layout)
+
+        vbox.addLayout(header_layout)
+        vbox.addLayout(asset_layout)
+        vbox.addLayout(type_layout)
+        vbox.addLayout(basic_info_layout)
+        vbox.addLayout(associated_data_info_layout)
+        self.clear()
+
+    def update(self, asset: str, type_text: Optional[str], metadata: AssetMetadata):
+        if type_text:
+            header_text = '<h3>{} ({})</h3>'.format(_('Asset Metadata'), type_text)
+        else:
+            header_text = '<h3>{}</h3>'.format(_('Asset Metadata'))
+        self.header.setText(header_text)
+        self.asset_text.setText(asset)
+        
+        if asset[-1] == '!':
+            type_text = 'Owner'
+        elif '~' in asset:
+            type_text = 'Message'
+        elif asset[0] == '#':
+            type_text = 'Qualifier'
+        elif asset[0] == '$':
+            type_text = 'Restricted'
+        elif '#' in asset:
+            type_text = 'Unique'
+        else:
+            type_text = 'Standard'
+        self.type_text.setText(type_text)
+
+        self.divisions_text.setText(str(metadata.divisions))
+        self.reissuable_text.setText(str(metadata.reissuable))
+
+        if metadata.associated_data is None:
+            self.associated_data_type_text.setText('None')
+            self.associated_data_text.setVisible(False)
+            for x in [self.predicted_mime_type_label, self.predicted_size_label, self.predicted_mime_type_text, self.predicted_size_text]:
+                x.setVisible(False)
+        else:
+            self.associated_data_text.setVisible(True)
+            for x in [self.predicted_mime_type_label, self.predicted_size_label, self.predicted_mime_type_text, self.predicted_size_text]:
+                x.setVisible(self.window.config.DOWNLOAD_IPFS)
+            if metadata.associated_data[:2] == b'\x54\x20':
+                self.associated_data_type_text.setText('TXID')
+                self.associated_data_text.setText(metadata.associated_data.hex())
+            else:
+                self.associated_data_type_text.setText('IPFS')
+                ipfs_str = base_encode(metadata.associated_data, base=58)
+                self.associated_data_text.setText(ipfs_str)
+                if self.window.config.DOWNLOAD_IPFS:
+                    for x in [self.predicted_mime_type_text, self.predicted_size_text]:
+                        x.setText(_('Loading...'))
+                    self.window.run_coroutine_from_thread(self.download_ipfs(ipfs_str), ipfs_str)
+
+    def clear(self):
+        self.header.setText('<h3>{}</h3>'.format(_('Asset Metadata')))
+        for x in [self.asset_text, self.type_text, self.divisions_text, self.reissuable_text, self.associated_data_type_text]:
+            x.setText(_('N/A'))
+
+        self.associated_data_text.setText('')
+
+        for x in [self.predicted_size_label, self.predicted_mime_type_label, self.predicted_mime_type_text, self.predicted_size_text, self.associated_data_text]:
+            x.setVisible(True)
+
+        for x in [self.predicted_mime_type_label, self.predicted_size_label, self.predicted_mime_type_text, self.predicted_size_text]:
+            x.setVisible(self.window.config.DOWNLOAD_IPFS)
+
+        for x in [self.predicted_mime_type_text, self.predicted_size_text]:
+            x.setText(_('N/A'))
+
+    def update_no_change(self):
+        for x in [self.predicted_mime_type_label, self.predicted_size_label, self.predicted_mime_type_text, self.predicted_size_text]:
+            x.setVisible(self.window.config.DOWNLOAD_IPFS)
+
+    async def download_ipfs(self, ipfs: str):
+        ipfs_url = ipfs_explorer_URL(self.window.config, 'ipfs', ipfs)
+        async def on_finish(resp: 'ClientResponse'):
+            resp.raise_for_status()
+            self.predicted_mime_type_text.setText(resp.content_type or _('Unknown'))
+            if resp.content_length:
+                self.predicted_size_text.setText(human_readable_size(resp.content_length))
+                return
+            total_downloaded = 0
+            while True:
+                chunk = await resp.content.read(1024)
+                if not chunk:
+                    break
+                total_downloaded += len(chunk)
+            self.predicted_size_text.setText(human_readable_size(total_downloaded))
+        try:
+            result = await self.window.network.async_send_http_on_proxy('get', ipfs_url, on_finish=on_finish)
+        except Exception as e:
+            self.window.logger.error(f'failed to download {ipfs_url=}: {repr(e)}')
+            for x in [self.predicted_mime_type_text, self.predicted_size_text]:
+                x.setText(_('Unknown'))
+
 class MetadataViewer(QFrame):
     update_asset_trigger = pyqtSignal(str)
 
     def __init__(self, parent: 'ViewAssetPanel'):
         QFrame.__init__(self)
         self.parent = parent
-        self.update_asset_trigger.connect(lambda x: print(x))
+        self.update_asset_trigger.connect(lambda asset: self.update_info(asset))
 
-        scroll_layout = QScrollArea(self)
+        self.metadata_info = MetadataInfo(parent.parent.window)
+
+        scroll = QScrollArea()
+        scroll.setWidget(self.metadata_info)
+        scroll.setWidgetResizable(True)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(scroll)
+
+    def update_info(self, asset: str):
+        if asset is None:
+            self.metadata_info.clear()
+            return
+        metadata_tup = self.parent.parent.wallet.get_asset_metadata(asset)
+        if metadata_tup is None:
+            self.metadata_info.clear()
+            return
+        metadata, metadata_source = metadata_tup
+        type_text = None
+        if metadata_source == METADATA_UNCONFIRMED:
+            type_text = _('UNCONFIRMED')
+        elif metadata_source == METADATA_UNVERIFIED:
+            type_text = _('NOT VERIFIED!')
+        self.metadata_info.update(asset, type_text, metadata)
+
+    def update(self):
+        self.metadata_info.update_no_change()
+        super().update()
 
 class ViewAssetPanel(QSplitter, Logger):
     def __init__(self, parent: 'AssetTab'):
@@ -185,6 +398,7 @@ class ViewAssetPanel(QSplitter, Logger):
 
     def update(self):
         self.asset_list.update()
+        self.metadata_viewer.update()
         super().update()
 
 class CreateAssetPanel(QWidget, Logger):

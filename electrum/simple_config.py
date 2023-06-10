@@ -969,6 +969,8 @@ class SimpleConfig(Logger):
 
     PLUGIN_TRUSTEDCOIN_NUM_PREPAY = ConfigVar('trustedcoin_prepay', default=20, type_=int)
 
+    DOWNLOAD_IPFS = ConfigVar('download_ipfs_preview', default=False, type_=bool)
+    SHOW_IPFS = ConfigVar('show_ipfs_preview', default=False, type_=bool)
 
 def read_user_config(path: Optional[str]) -> Dict[str, Any]:
     """Parse and store the user config settings in electrum.conf into user_config[]."""

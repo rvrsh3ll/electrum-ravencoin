@@ -124,6 +124,29 @@ class SPV(NetworkJobOnDefaultServer):
             divisions_source: Tuple[TxOutpoint, int] | None, 
             associated_data_source: Tuple[TxOutpoint, int] | None):
         
+        verified_metadata = self.wallet.db.get_verified_asset_metadata(asset)
+        if verified_metadata:
+            if metadata.sats_in_circulation < verified_metadata.sats_in_circulation:
+                self.wallet.remove_unverified_asset_metadata(asset, source[1])
+                raise GracefulDisconnect('Sats are less than verified sats')
+        
+        verified_metadata_source = self.wallet.db.get_verified_asset_metadata_base_source(asset)
+        if verified_metadata_source:
+            _, verified_height = verified_metadata_source
+            if source[1] < verified_height:
+                self.wallet.remove_unverified_asset_metadata(asset, source[1])
+                raise GracefulDisconnect('New base height is less than verified base height')
+
+        if divisions_source:
+            if divisions_source[1] > source[1]:
+                self.wallet.remove_unverified_asset_metadata(asset, source[1])
+                raise GracefulDisconnect('Divisions source is over base source')
+            
+        if associated_data_source:
+            if associated_data_source[1] > source[1]:
+                self.wallet.remove_unverified_asset_metadata(asset, source[1])
+                raise GracefulDisconnect('Associated data source is over base source')
+
         if divisions_source:
             source_txid = divisions_source[0].txid.hex()
             source_idx = divisions_source[0].out_idx

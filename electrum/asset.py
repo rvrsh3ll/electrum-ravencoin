@@ -223,6 +223,8 @@ def generate_owner_script(address: str, asset: str) -> 'PartialTxOutput':
 def _associated_data_converter(input):
     if not input:
         return None
+    if isinstance(input, str) and len(input) == 68:
+        input = bytes.fromhex(input)
     if isinstance(input, bytes):
         if len(input) != 34:
             raise ValueError(f'{input=} is not 34 bytes')
