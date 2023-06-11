@@ -89,7 +89,6 @@ class SPV(NetworkJobOnDefaultServer):
                 await self.taskgroup.spawn(self.interface.request_chunk(tx_height, None, can_return_early=True))
             return True
         # request now
-        self.logger.info(f'requested merkle {tx_hash}')
         self.requested_merkle.add(tx_hash)
         return False
 
@@ -254,6 +253,7 @@ class SPV(NetworkJobOnDefaultServer):
 
 
     async def _request_and_verify_single_proof(self, tx_hash, tx_height):
+        self.logger.info(f'requesting merkle {tx_hash}')
         try:
             self._requests_sent += 1
             async with self._network_request_semaphore:

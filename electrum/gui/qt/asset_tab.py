@@ -155,7 +155,7 @@ class AssetList(MyTreeView):
             color = ColorScheme.RED.as_color(True)
         else:
             metadata, kind = result
-            tooltip = _('{} total coins of this asset exist').format(format_satoshis_plain(metadata.sats_in_circulation, decimal_point=8))
+            tooltip = _('{} total coins of {} exist').format(format_satoshis_plain(metadata.sats_in_circulation, decimal_point=8), key)
             if kind == METADATA_UNCONFIRMED:
                 tooltip += ' ' + _('(this metadata is not yet confirmed)')
             elif kind == METADATA_UNVERIFIED:
@@ -305,7 +305,7 @@ class MetadataInfo(QWidget):
                 x.setVisible(self.window.config.DOWNLOAD_IPFS)
             if metadata.associated_data[:2] == b'\x54\x20':
                 self.associated_data_type_text.setText('TXID')
-                self.associated_data_text.setText(metadata.associated_data.hex())
+                self.associated_data_text.setText(metadata.associated_data[2:].hex())
             else:
                 self.associated_data_type_text.setText('IPFS')
                 ipfs_str = base_encode(metadata.associated_data, base=58)
@@ -500,6 +500,11 @@ class CreateAssetPanel(QWidget, Logger):
                 self.send_button.setEnabled(self.associated_data_is_ok and self.address_is_ok)
 
         def asset_name_fast_fail(asset: str):
+            selected_index = clayout.selected_index()
+            if asset_types[selected_index][1] in (AssetType.ROOT, AssetType.SUB, AssetType.QUALIFIER, AssetType.SUB_QUALIFIER):
+                asset = asset.upper()
+                self.asset_checker.line_edit.setText(asset)
+
             self.amount_e.update()
             # Disable the button no matter what
             self.asset_is_ok = False
@@ -760,4 +765,9 @@ class AssetTab(QWidget, MessageBoxMixin, Logger):
 
     def update(self):
         self.view_asset_tab.update()
+        # TODO: update create tab
         super().update()
+
+    def refresh_all(self):
+        self.view_asset_tab.asset_list.update()
+        # TODO: refresh create tab

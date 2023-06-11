@@ -130,7 +130,7 @@ class AddressSynchronizer(Logger, EventListener):
         return sorted(self.db.get_history())
 
     def get_assets(self):
-        return sorted(self.db.get_assets())
+        return sorted(self.db.get_assets_to_watch())
 
     def get_address_history(self, addr: str) -> Dict[str, int]:
         """Returns the history for the address, as a txid->height dict.
@@ -360,6 +360,8 @@ class AddressSynchronizer(Logger, EventListener):
                 v = txo.value
                 ser = tx_hash + ':%d'%n
                 asset_data = get_asset_info_from_script(txo.scriptpubkey)
+                if asset_data.asset:
+                    self.db.add_asset_to_watch(asset_data.asset)
                 scripthash = bitcoin.script_to_scripthash(txo.scriptpubkey.hex())
                 self.db.add_prevout_by_scripthash(scripthash, prevout=TxOutpoint.from_str(ser), value=asset_data.amount or v, asset=asset_data.asset)
                 addr = txo.address

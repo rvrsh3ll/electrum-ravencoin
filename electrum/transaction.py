@@ -154,9 +154,15 @@ class TxOutput:
         return self._asset_value
 
     @classmethod
-    def from_address_and_value(cls, address: str, value: Union[int, str]) -> Union['TxOutput', 'PartialTxOutput']:
-        return cls(scriptpubkey=bfh(bitcoin.address_to_script(address)),
-                   value=value)
+    def from_address_and_value(cls, address: str, value: Union[int, str], *, asset: str = None) -> Union['TxOutput', 'PartialTxOutput']:
+        if asset:
+            from .asset import generate_transfer_script
+            assert isinstance(value, int)
+            return cls(scriptpubkey=bfh(generate_transfer_script(asset, value, bitcoin.address_to_script(address))),
+                       value=0)
+        else:
+            return cls(scriptpubkey=bfh(bitcoin.address_to_script(address)),
+                    value=value)
 
     def serialize_to_network(self) -> bytes:
         buf = int.to_bytes(self.value, 8, byteorder="little", signed=False)
@@ -1225,8 +1231,8 @@ class Transaction:
 
     def input_value(self, *, asset_aware=False) -> Union[int, Mapping[Optional[str], int]]:
         if asset_aware:
-            input_values = [((txin.asset, txin.value_sats(asset_aware=True)) for txin in self.inputs())]
-            if any([(asset is None or val is None) for asset, val in input_values]):
+            input_values = ((txin.asset, txin.value_sats(asset_aware=True)) for txin in self.inputs())
+            if any(((val is None) for asset, val in input_values)):
                 raise MissingTxInputAmount()
         
             ret_val = defaultdict(int)

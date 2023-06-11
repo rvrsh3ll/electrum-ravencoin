@@ -8,7 +8,7 @@ from typing import Optional, Sequence, Mapping, Union, TYPE_CHECKING
 from .bitcoin import address_to_script, construct_script, int_to_hex, opcodes, COIN, base_decode, base_encode
 from .i18n import _
 
-from .transaction import PartialTxOutput, MalformedBitcoinScript, script_GetOp, TxOutpoint
+from .transaction import PartialTxOutput, MalformedBitcoinScript, script_GetOp
 from .json_db import StoredObject
 
 # https://github.com/RavenProject/Ravencoin/blob/master/src/assets/assets.cpp
@@ -26,6 +26,8 @@ RVN_ASSET_TYPE_CREATE = b'q'
 RVN_ASSET_TYPE_CREATE_INT = RVN_ASSET_TYPE_CREATE[0]
 RVN_ASSET_TYPE_OWNER = b'o'
 RVN_ASSET_TYPE_OWNER_INT = RVN_ASSET_TYPE_OWNER[0]
+RVN_ASSET_TYPE_TRANSFER = b't'
+RVN_ASSET_TYPE_TRANSFER_INT = RVN_ASSET_TYPE_TRANSFER[0]
 
 ASSET_OWNER_IDENTIFIER = '!'
 
@@ -234,6 +236,28 @@ def _associated_data_converter(input):
         raise ValueError(f'{input=} decoded is not 34 bytes')
     return result
 
+
+@attr.s
+class AssetMemo:
+    data = attr.ib(type=bytes, converter=_associated_data_converter)
+    timestamp = attr.ib(default=None, type=int)
+
+    def hex(self) -> str:
+        return f'{self.data.hex()}{int_to_hex(self.timestamp, 8) if self.timestamp else ""}'
+
+def _asset_portion_of_transfer_script(asset: str, amount: int, *, memo: AssetMemo = None) -> str:
+    asset_data = (f'{RVN_ASSET_PREFIX.hex()}{RVN_ASSET_TYPE_TRANSFER.hex()}'
+                  f'{int_to_hex(len(asset))}{asset.encode().hex()}'
+                  f'{int_to_hex(amount, 8)}{memo.hex() if memo else ""}')
+    asset_script = construct_script([opcodes.OP_ASSET, asset_data, opcodes.OP_DROP])
+    return asset_script
+
+def extra_size_for_asset_transfer(asset: str):
+    return len(_asset_portion_of_transfer_script(asset, 0)) // 2
+
+def generate_transfer_script(asset: str, amount: int, base_script: str):
+    return base_script + _asset_portion_of_transfer_script(asset, amount)
+    
 def _validate_sats(instance, attribute, value):
     if value <= 0:
         raise ValueError('sats must be greater than 0!')

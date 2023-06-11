@@ -36,7 +36,7 @@ import time
 import attr
 
 from . import util, bitcoin
-from .asset import AssetMetadata
+from .asset import AssetMetadata, get_error_for_asset_name
 from .util import profiler, WalletFileException, multisig_type, TxMinedInfo, bfh
 from .invoices import Invoice, Request
 from .keystore import bip44_derivation
@@ -391,7 +391,7 @@ class WalletDB(JsonDB):
     def get_transaction(self, tx_hash: Optional[str]) -> Optional[Transaction]:
         if tx_hash is None:
             return None
-        assert isinstance(tx_hash, str)
+        assert isinstance(tx_hash, str), tx_hash
         return self.transactions.get(tx_hash)
 
     @locked
@@ -594,9 +594,15 @@ class WalletDB(JsonDB):
         self.verified_asset_metadata = self.get_dict('verified_asset_metadata')  # type: Dict[str, Tuple[AssetMetadata, Tuple[TxOutpoint, int], Tuple[TxOutpoint, int] | None, Tuple[TxOutpoint, int] | None]]       
 
     @locked
-    def get_assets(self) -> Sequence[str]:
+    def get_assets_to_watch(self) -> Sequence[str]:
         return list(sorted(self.assets_to_watch))
     
+    @modifier
+    def add_asset_to_watch(self, asset: str):
+        assert isinstance(asset, str)
+        assert (error := get_error_for_asset_name(asset) is None), error
+        self.assets_to_watch.add(asset)
+
     @locked
     def get_asset_metadata(self, asset) -> Optional[AssetMetadata]:
         assert isinstance(asset, str)

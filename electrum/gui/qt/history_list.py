@@ -175,6 +175,10 @@ class HistoryNode(CustomNode):
                     else:
                         msg = str(conf) + _(" confirmation" + ("s" if conf != 1 else ""))
                 return QVariant(msg)
+            elif col == HistoryColumns.ASSET and role == Qt.ToolTipRole:
+                asset = tx_item.get('asset', None)
+                if asset:
+                    return QVariant(asset)
             elif col > HistoryColumns.DESCRIPTION and role == Qt.TextAlignmentRole:
                 return QVariant(int(Qt.AlignRight | Qt.AlignVCenter))
             elif col > HistoryColumns.DESCRIPTION and role == Qt.FontRole:
@@ -297,6 +301,13 @@ class HistoryModel(CustomModel, Logger):
         )
         if transactions == self.transactions:
             return
+        
+        #for transaction in transactions.values():
+        #    print(transaction['txid'])
+        #    print(transaction['asset'])
+        #    print(transaction['bc_value'])
+        #    print('==========')
+        
         old_length = self._root.childCount()
         if old_length != 0:
             self.beginRemoveRows(QModelIndex(), 0, old_length)
@@ -368,7 +379,7 @@ class HistoryModel(CustomModel, Logger):
                 tx_mined_info = self._tx_mined_info_from_tx_item(tx_item)
                 self.tx_status_cache[txid] = self.window.wallet.get_tx_status(txid, tx_mined_info)
         # update counter
-        num_tx = len(self.transactions)
+        num_tx = len(set(v['txid'] for v in self.transactions.values()))
         if self.view:
             self.view.num_tx_label.setText(_("{} transactions").format(num_tx))
 

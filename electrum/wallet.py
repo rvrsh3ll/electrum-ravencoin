@@ -696,7 +696,7 @@ class Abstract_Wallet(ABC, Logger, EventListener):
         pass
 
     def get_assets_to_watch(self) -> Sequence[str]:
-        return self.db.get_assets()
+        return self.db.get_assets_to_watch()
 
     def do_we_own_this_asset(self, asset: str) -> bool:
         balances = self.get_balance(asset_aware=True)
