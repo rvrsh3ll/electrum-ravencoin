@@ -467,6 +467,7 @@ def create_htlctx_that_spends_from_our_ctx(
         ctx_output_idx=ctx_output_idx,
         name=f'our_ctx_{ctx_output_idx}_htlc_tx_{htlc.payment_hash.hex()}')
     remote_htlc_sig = chan.get_remote_htlc_sig_for_htlc(htlc_relative_idx=htlc_relative_idx)
+    raise NotImplementedError('wallet insert')
     local_htlc_sig = bfh(htlc_tx.sign_txin(0, local_htlc_privkey))
     txin = htlc_tx.inputs()[0]
     witness_program = bfh(Transaction.get_preimage_script(txin))
@@ -495,6 +496,7 @@ def create_sweeptx_their_ctx_htlc(
     if outvalue <= dust_threshold(): return None
     sweep_outputs = [PartialTxOutput.from_address_and_value(sweep_address, outvalue)]
     tx = PartialTransaction.from_io(sweep_inputs, sweep_outputs, version=2, locktime=cltv_expiry)
+    raise NotImplementedError('wallet insert')
     sig = bfh(tx.sign_txin(0, privkey))
     if not is_revocation:
         witness = construct_witness([sig, preimage, witness_script])
@@ -526,6 +528,7 @@ def create_sweeptx_their_ctx_to_remote(
     sweep_outputs = [PartialTxOutput.from_address_and_value(sweep_address, outvalue)]
     sweep_tx = PartialTransaction.from_io(sweep_inputs, sweep_outputs)
     sweep_tx.set_rbf(True)
+    raise NotImplementedError('wallet insert')
     sweep_tx.sign({our_payment_pubkey: (our_payment_privkey.get_secret_bytes(), True)})
     if not sweep_tx.is_complete():
         raise Exception('channel close sweep tx is not complete')
@@ -560,6 +563,7 @@ def create_sweeptx_ctx_to_local(
         return None
     sweep_outputs = [PartialTxOutput.from_address_and_value(sweep_address, outvalue)]
     sweep_tx = PartialTransaction.from_io(sweep_inputs, sweep_outputs, version=2)
+    raise NotImplementedError('wallet insert')
     sig = sweep_tx.sign_txin(0, privkey)
     witness = construct_witness([sig, int(is_revocation), witness_script])
     sweep_tx.inputs()[0].witness = bfh(witness)

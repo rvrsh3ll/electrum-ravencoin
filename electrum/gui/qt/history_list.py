@@ -53,7 +53,7 @@ from electrum.simple_config import SimpleConfig
 from .custom_model import CustomNode, CustomModel
 from .util import (read_QIcon, MONOSPACE_FONT, Buttons, CancelButton, OkButton,
                    filename_field, AcceptFileDragDrop, WindowModalDialog,
-                   CloseButton, webopen, WWLabel)
+                   CloseButton, webopen, WWLabel, ColorScheme)
 from .my_treeview import MyTreeView
 
 if TYPE_CHECKING:
@@ -157,10 +157,17 @@ class HistoryNode(CustomNode):
                 HistoryColumns.SHORT_ID: short_id,
             }
             return QVariant(d[col])
+        if role == Qt.BackgroundRole:
+            color = tx_item.get('offcolor', False)
+            if not color: return
+            offcolor_brush = QBrush(ColorScheme.LIGHT_GRAY.as_color(True))
+            return QVariant(offcolor_brush)
         if role == MyTreeView.ROLE_EDIT_KEY:
             return QVariant(get_item_key(tx_item))
         if role not in (Qt.DisplayRole, Qt.EditRole):
             if col == HistoryColumns.STATUS and role == Qt.DecorationRole:
+                if tx_item.get('hide_status', False):
+                    return QVariant()
                 icon = "lightning" if is_lightning else TX_ICONS[status]
                 return QVariant(read_QIcon(icon))
             elif col == HistoryColumns.STATUS and role == Qt.ToolTipRole:
@@ -197,8 +204,12 @@ class HistoryNode(CustomNode):
                 return QVariant(blue_brush)
             return QVariant()
         if col == HistoryColumns.STATUS:
+            if tx_item.get('hide_status', False):
+                return QVariant()
             return QVariant(status_str)
         elif col == HistoryColumns.DESCRIPTION and 'label' in tx_item:
+            if tx_item.get('hide_status', False):
+                return QVariant()
             return QVariant(tx_item['label'])
         elif col == HistoryColumns.AMOUNT:
             bc_value = tx_item['bc_value'].value if 'bc_value' in tx_item else 0
@@ -299,6 +310,7 @@ class HistoryModel(CustomModel, Logger):
             include_lightning=self.should_include_lightning_payments(),
             include_fiat=self.should_show_fiat(),
         )
+        
         if transactions == self.transactions:
             return
         
@@ -374,10 +386,10 @@ class HistoryModel(CustomModel, Logger):
             self.view.period_combo.insertItems(1, self.view.years)
         # update tx_status_cache
         self.tx_status_cache.clear()
-        for txid, tx_item in self.transactions.items():
+        for (txid, asset), tx_item in self.transactions.items():
             if not tx_item.get('lightning', False):
                 tx_mined_info = self._tx_mined_info_from_tx_item(tx_item)
-                self.tx_status_cache[txid] = self.window.wallet.get_tx_status(txid, tx_mined_info)
+                self.tx_status_cache[(txid, asset)] = self.window.wallet.get_tx_status(txid, tx_mined_info)
         # update counter
         num_tx = len(set(v['txid'] for v in self.transactions.values()))
         if self.view:
@@ -424,7 +436,7 @@ class HistoryModel(CustomModel, Logger):
         self.dataChanged.emit(topLeft, bottomRight)
 
     def on_fee_histogram(self):
-        for tx_hash, tx_item in list(self.transactions.items()):
+        for (tx_hash, asset), tx_item in list(self.transactions.items()):
             if tx_item.get('lightning'):
                 continue
             tx_mined_info = self._tx_mined_info_from_tx_item(tx_item)

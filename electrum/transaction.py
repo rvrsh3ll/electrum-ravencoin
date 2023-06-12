@@ -156,9 +156,9 @@ class TxOutput:
     @classmethod
     def from_address_and_value(cls, address: str, value: Union[int, str], *, asset: str = None) -> Union['TxOutput', 'PartialTxOutput']:
         if asset:
-            from .asset import generate_transfer_script
+            from .asset import generate_transfer_script_from_base
             assert isinstance(value, int)
-            return cls(scriptpubkey=bfh(generate_transfer_script(asset, value, bitcoin.address_to_script(address))),
+            return cls(scriptpubkey=bfh(generate_transfer_script_from_base(asset, value, bitcoin.address_to_script(address))),
                        value=0)
         else:
             return cls(scriptpubkey=bfh(bitcoin.address_to_script(address)),
@@ -937,7 +937,12 @@ class Transaction:
         raise UnknownTxinType("cannot construct scriptSig")
 
     @classmethod
-    def get_preimage_script(cls, txin: 'PartialTxInput') -> str:
+    def get_preimage_script(cls, txin: 'PartialTxInput', wallet: 'Abstract_Wallet') -> str:
+        if wallet is not None:
+            lockingscript = wallet.db.get_non_deterministic_txo_lockingscript(txin.prevout)
+            if lockingscript is not None:
+                get_logger('get_preimage_script').info(f'non deterministic script found: {txin.prevout.to_str()}')
+                return lockingscript.hex()
         if txin.witness_script:
             if opcodes.OP_CODESEPARATOR in [x[0] for x in script_GetOp(txin.witness_script)]:
                 raise Exception('OP_CODESEPARATOR black magic is not supported')
@@ -950,6 +955,19 @@ class Transaction:
         if desc := txin.script_descriptor:
             sc = desc.expand()
             if script := sc.scriptcode_for_sighash:
+                if txin.asset is not None:
+                    if txin.asset[-1] == '!':
+                        asset_source_outpoint = wallet.get_asset_metadata_outpoint(txin.asset)
+                        print(f'{asset_source_outpoint=} {txin.prevout=}')
+                        if asset_source_outpoint is not None:
+                            if txin.prevout == asset_source_outpoint:
+                                get_logger('get_preimage_script').info(f'ownership creation script identified: {txin.prevout.to_str()}')
+                                from .asset import generate_owner_script_from_base
+                                asset_script = generate_owner_script_from_base(txin.asset, script.hex())
+                                return asset_script
+                    from .asset import generate_transfer_script_from_base
+                    asset_script = generate_transfer_script_from_base(txin.asset, txin.value_sats(asset_aware=True), script.hex())
+                    return asset_script
                 return script.hex()
             raise Exception(f"don't know scriptcode for descriptor: {desc.to_string()}")
         raise UnknownTxinType(f'cannot construct preimage_script')
@@ -2130,7 +2148,7 @@ class PartialTransaction(Transaction):
             self._outputs.sort(key = lambda o: (o.value, o.scriptpubkey))
         self.invalidate_ser_cache()
 
-    def serialize_preimage(self, txin_index: int, *,
+    def serialize_preimage(self, txin_index: int, wallet: 'Abstract_Wallet', *,
                            bip143_shared_txdigest_fields: BIP143SharedTxDigestFields = None) -> str:
         nVersion = int_to_hex(self.version, 4)
         nLocktime = int_to_hex(self.locktime, 4)
@@ -2141,7 +2159,7 @@ class PartialTransaction(Transaction):
         if not Sighash.is_valid(sighash):
             raise Exception(f"SIGHASH_FLAG ({sighash}) not supported!")
         nHashType = int_to_hex(sighash, 4)
-        preimage_script = self.get_preimage_script(txin)
+        preimage_script = self.get_preimage_script(txin, wallet)
         if txin.is_segwit():
             if bip143_shared_txdigest_fields is None:
                 bip143_shared_txdigest_fields = self._calc_bip143_shared_txdigest_fields()
@@ -2173,7 +2191,7 @@ class PartialTransaction(Transaction):
             preimage = nVersion + txins + txouts + nLocktime + nHashType
         return preimage
 
-    def sign(self, keypairs) -> None:
+    def sign(self, keypairs, wallet: 'Abstract_Wallet') -> None:
         # keypairs:  pubkey_hex -> (secret_bytes, is_compressed)
         bip143_shared_txdigest_fields = self._calc_bip143_shared_txdigest_fields()
         for i, txin in enumerate(self.inputs()):
@@ -2185,17 +2203,17 @@ class PartialTransaction(Transaction):
                     continue
                 _logger.info(f"adding signature for {pubkey}. spending utxo {txin.prevout.to_str()}")
                 sec, compressed = keypairs[pubkey]
-                sig = self.sign_txin(i, sec, bip143_shared_txdigest_fields=bip143_shared_txdigest_fields)
+                sig = self.sign_txin(i, sec, wallet, bip143_shared_txdigest_fields=bip143_shared_txdigest_fields)
                 self.add_signature_to_txin(txin_idx=i, signing_pubkey=pubkey, sig=sig)
 
         _logger.debug(f"is_complete {self.is_complete()}")
         self.invalidate_ser_cache()
 
-    def sign_txin(self, txin_index, privkey_bytes, *, bip143_shared_txdigest_fields=None) -> str:
+    def sign_txin(self, txin_index, privkey_bytes, wallet: 'Abstract_Wallet', *, bip143_shared_txdigest_fields=None) -> str:
         txin = self.inputs()[txin_index]
         txin.validate_data(for_signing=True)
         sighash = txin.sighash if txin.sighash is not None else Sighash.ALL
-        pre_hash = sha256d(bfh(self.serialize_preimage(txin_index,
+        pre_hash = sha256d(bfh(self.serialize_preimage(txin_index, wallet,
                                                        bip143_shared_txdigest_fields=bip143_shared_txdigest_fields)))
         privkey = ecc.ECPrivkey(privkey_bytes)
         sig = privkey.sign_transaction(pre_hash)
@@ -2234,7 +2252,7 @@ class PartialTransaction(Transaction):
         raw_bytes = self.serialize_as_bytes()
         return base64.b64encode(raw_bytes).decode('ascii')
 
-    def update_signatures(self, signatures: Sequence[str]):
+    def update_signatures(self, signatures: Sequence[str], wallet: 'Abstract_Wallet'):
         """Add new signatures to a transaction
 
         `signatures` is expected to be a list of sigs with signatures[i]
@@ -2250,7 +2268,7 @@ class PartialTransaction(Transaction):
             sig = signatures[i]
             if bfh(sig) in list(txin.part_sigs.values()):
                 continue
-            pre_hash = sha256d(bfh(self.serialize_preimage(i)))
+            pre_hash = sha256d(bfh(self.serialize_preimage(i, wallet)))
             sig_string = ecc.sig_string_from_der_sig(bfh(sig[:-2]))
             for recid in range(4):
                 try:

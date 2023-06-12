@@ -1038,6 +1038,7 @@ class Channel(AbstractChannel):
                                                               commit=pending_remote_commitment,
                                                               ctx_output_idx=ctx_output_idx,
                                                               htlc=htlc)
+            raise NotImplementedError('wallet insert')
             sig = bfh(htlc_tx.sign_txin(0, their_remote_htlc_privkey))
             htlc_sig = ecc.sig_string_from_der_sig(sig[:-1])
             htlcsigs.append((ctx_output_idx, htlc_sig))
@@ -1561,6 +1562,7 @@ class Channel(AbstractChannel):
                                      funding_sat=self.constraints.capacity,
                                      outputs=outputs)
 
+        raise NotImplementedError('wallet insert')
         der_sig = bfh(closing_tx.sign_txin(0, self.config[LOCAL].multisig_key.privkey))
         sig = ecc.sig_string_from_der_sig(der_sig[:-1])
         return sig, closing_tx
@@ -1576,6 +1578,7 @@ class Channel(AbstractChannel):
     def force_close_tx(self) -> PartialTransaction:
         tx = self.get_latest_commitment(LOCAL)
         assert self.signature_fits(tx)
+        raise NotImplementedError('wallet insert')
         tx.sign({self.config[LOCAL].multisig_key.pubkey.hex(): (self.config[LOCAL].multisig_key.privkey, True)})
         remote_sig = self.config[LOCAL].current_commitment_signature
         remote_sig = ecc.der_sig_from_sig_string(remote_sig) + Sighash.to_sigbytes(Sighash.ALL)

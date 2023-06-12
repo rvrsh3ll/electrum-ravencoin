@@ -1005,6 +1005,7 @@ def make_commitment_output_to_remote_address(remote_payment_pubkey: bytes) -> st
     return bitcoin.pubkey_to_address('p2wpkh', remote_payment_pubkey.hex())
 
 def sign_and_get_sig_string(tx: PartialTransaction, local_config, remote_config):
+    raise NotImplementedError('wallet insert')
     tx.sign({local_config.multisig_key.pubkey.hex(): (local_config.multisig_key.privkey, True)})
     sig = tx.inputs()[0].part_sigs[local_config.multisig_key.pubkey]
     sig_64 = sig_string_from_der_sig(sig[:-1])

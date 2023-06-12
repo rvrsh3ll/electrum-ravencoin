@@ -590,13 +590,32 @@ class WalletDB(JsonDB):
 
     def load_assets(self):
         """ called from Abstract_Wallet.__init__ """
-        self.assets_to_watch = self.get('assets_to_watch', set())  # type: Set[str]
+        if 'assets_to_watch' not in self.data:
+            self.data['assets_to_watch'] = set()
+        self.assets_to_watch = self.get('assets_to_watch')  # type: Set[str]
         self.verified_asset_metadata = self.get_dict('verified_asset_metadata')  # type: Dict[str, Tuple[AssetMetadata, Tuple[TxOutpoint, int], Tuple[TxOutpoint, int] | None, Tuple[TxOutpoint, int] | None]]       
+        self.non_deterministic_vouts = self.get_dict('non_deterministic_txo_scriptpubkey')
+
+    @locked
+    def get_non_deterministic_txo_lockingscript(self, outpoint: TxOutpoint) -> Optional[bytes]:
+        assert isinstance(outpoint, TxOutpoint)
+        return self.non_deterministic_vouts.get(outpoint.to_str(), None)
+
+    @modifier
+    def add_non_deterministic_txo_lockingscript(self, outpoint: TxOutpoint, script: bytes):
+        assert isinstance(outpoint, TxOutpoint)
+        assert isinstance(script, bytes)
+        self.non_deterministic_vouts[outpoint.to_str()] = script
 
     @locked
     def get_assets_to_watch(self) -> Sequence[str]:
         return list(sorted(self.assets_to_watch))
     
+    @locked
+    def is_watching_asset(self, asset: str) -> bool:
+        assert isinstance(asset, str)
+        return asset in self.assets_to_watch
+
     @modifier
     def add_asset_to_watch(self, asset: str):
         assert isinstance(asset, str)
@@ -639,11 +658,11 @@ class WalletDB(JsonDB):
         return result[0]
     
     @locked
-    def get_verified_asset_metadata_base_source(self, asset: str) -> Optional[Tuple[str, int]]:
+    def get_verified_asset_metadata_base_source(self, asset: str) -> Optional[Tuple[TxOutpoint, int]]:
         assert isinstance(asset, str)
         result = self.verified_asset_metadata.get(asset, None)
         if not result: return None
-        return result[1][0].txid.hex(), result[1][1]
+        return result[1][0], result[1][1]
     
     @locked
     def get_assets_verified_after_height(self, height: int) -> Sequence[str]:
@@ -725,8 +744,6 @@ class WalletDB(JsonDB):
             v = dict((k, ShachainElement(bfh(x[0]), int(x[1]))) for k, x in v.items())
         elif key == 'data_loss_protect_remote_pcp':
             v = dict((k, bfh(x)) for k, x in v.items())
-        elif key == 'assets_to_watch':
-            v = set(v)
         elif key == 'verified_asset_metadata':
             v = dict((k, (
                 AssetMetadata(**metadata),
@@ -734,6 +751,8 @@ class WalletDB(JsonDB):
                 (TxOutpoint.from_json(tup2[0]), tup2[1]) if tup2 else None,
                 (TxOutpoint.from_json(tup3[0]), tup3[1]) if tup3 else None,
             )) for k, (metadata, tup1, tup2, tup3) in v.items())
+        elif key == 'non_deterministic_txo_scriptpubkey':
+            v = dict((k, bytes.fromhex(x)) for k, x in v.items())
         # convert htlc_id keys to int
         if key in ['adds', 'locked_in', 'settles', 'fails', 'fee_updates', 'buckets',
                    'unacked_updates', 'unfulfilled_htlcs', 'fail_htlc_reasons', 'onion_keys']:
@@ -758,6 +777,8 @@ class WalletDB(JsonDB):
             v = ChannelType(v)
         elif key == 'db_metadata':
             v = DBMetadata(**v)
+        elif key == 'assets_to_watch':
+            v = set(v)
         return v
 
     def _should_convert_to_stored_dict(self, key) -> bool:

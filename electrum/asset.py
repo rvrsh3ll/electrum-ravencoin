@@ -5,7 +5,7 @@ import hashlib
 from enum import Enum
 from typing import Optional, Sequence, Mapping, Union, TYPE_CHECKING
 
-from .bitcoin import address_to_script, construct_script, int_to_hex, opcodes, COIN, base_decode, base_encode
+from .bitcoin import address_to_script, construct_script, int_to_hex, opcodes, COIN, base_decode, base_encode, _op_push
 from .i18n import _
 
 from .transaction import PartialTxOutput, MalformedBitcoinScript, script_GetOp
@@ -33,16 +33,16 @@ ASSET_OWNER_IDENTIFIER = '!'
 
 _ROOT_NAME_CHARACTERS = r'^[A-Z0-9._]{3,}$'
 _SUB_NAME_CHARACTERS = r'^[A-Z0-9._]+$'
-_UNIQUE_TAG_CHARACTERS = r'^[-A-Za-z0-9@$%&*()[\]{}_.?:]+$'
+_UNIQUE_TAG_CHARACTERS = r'^[-A-Za-z0-9@\$%&*()[\\]{}_.?:]+$'
 _MSG_CHANNEL_TAG_CHARACTERS = r'^[A-Za-z0-9_]+$'
 _QUALIFIER_NAME_CHARACTERS = r'#[A-Z0-9._]{3,}$'
 _SUB_QUALIFIER_NAME_CHARACTERS = r'#[A-Z0-9._]+$'
-_RESTRICTED_NAME_CHARACTERS = r'$[A-Z0-9._]{3,}$'
+_RESTRICTED_NAME_CHARACTERS = r'\$[A-Z0-9._]{3,}$'
 
 _DOUBLE_PUNCTUATION = r'^.*[._]{2,}.*$'
 _LEADING_PUNCTUATION = r'^[._].*$'
 _TRAILING_PUNCTUATION = r'^.*[._]$'
-_QUALIFIER_LEADING_PUNCTUATION = r'^[#$][._].*$'
+_QUALIFIER_LEADING_PUNCTUATION = r'^[#\$][._].*$'
 
 _SUB_NAME_DELIMITER = '/'
 _UNIQUE_TAG_DELIMITER = '#'
@@ -55,7 +55,7 @@ _MSG_CHANNEL_INDICATOR = r'(^[^^~#!]+~[^~#!\/]+$)'
 _OWNER_INDICATOR = r'(^[^^~#!]+!$)'
 _QUALIFIER_INDICATOR = r'^[#][A-Z0-9._]{3,}$'
 _SUB_QUALIFIER_INDICATOR = r'^#[A-Z0-9._]+\/#[A-Z0-9._]+$'
-_RESTRICTED_INDICATOR = r'^[$][A-Z0-9._]{3,}$'
+_RESTRICTED_INDICATOR = r'^[\$][A-Z0-9._]{3,}$'
 
 _BAD_NAMES = '^RVN$|^RAVEN$|^RAVENCOIN$|^RVNS$|^RAVENS$|^RAVENCOINS$|^#RVN$|^#RAVEN$|^#RAVENCOIN$|^#RVNS$|^#RAVENS$|^#RAVENCOINS$'
 
@@ -190,7 +190,7 @@ def get_error_for_asset_name(asset: str) -> Optional[str]:
     elif re.match(_RESTRICTED_INDICATOR, asset): return get_error_for_asset_typed(asset, AssetType.RESTRICTED)
     else: return get_error_for_asset_typed(asset, AssetType.SUB if _isAssetNameASubAsset(asset) else AssetType.ROOT)
 
-def generate_create_script(address: str, asset: str, amount: int, divisions: int, reissuable: bool, associated_data: Optional[bytes]) -> 'PartialTxOutput':
+def generate_create_script(address: str, asset: str, amount: int, divisions: int, reissuable: bool, associated_data: Optional[bytes]) -> 'str':
     if get_error_for_asset_name(asset):
         raise AssetException('Bad asset')
     if not amount > 0 or amount > DEFAULT_ASSET_AMOUNT_MAX * COIN:
@@ -209,7 +209,11 @@ def generate_create_script(address: str, asset: str, amount: int, divisions: int
     base_script = address_to_script(address)
     return base_script + asset_script
 
-def generate_owner_script(address: str, asset: str) -> 'PartialTxOutput':
+def generate_owner_script(address: str, asset: str) -> 'str':
+    base_script = address_to_script(address)
+    return generate_owner_script_from_base(asset, base_script)
+
+def generate_owner_script_from_base(asset: str, base_script: str) -> 'str':
     if asset[-1] != ASSET_OWNER_IDENTIFIER:
         asset += ASSET_OWNER_IDENTIFIER
     if get_error_for_asset_name(asset):
@@ -219,8 +223,20 @@ def generate_owner_script(address: str, asset: str) -> 'PartialTxOutput':
                   f'{int_to_hex(len(asset))}{asset.encode().hex()}')
     
     asset_script = construct_script([opcodes.OP_ASSET, asset_data, opcodes.OP_DROP])
-    base_script = address_to_script(address)
     return base_script + asset_script
+
+def _asset_portion_of_transfer_script(asset: str, amount: int, *, memo: 'AssetMemo' = None) -> str:
+    asset_data = (f'{RVN_ASSET_PREFIX.hex()}{RVN_ASSET_TYPE_TRANSFER.hex()}'
+                  f'{int_to_hex(len(asset))}{asset.encode().hex()}'
+                  f'{int_to_hex(amount, 8)}{memo.hex() if memo else ""}')
+    asset_script = construct_script([opcodes.OP_ASSET, asset_data, opcodes.OP_DROP])
+    return asset_script
+
+def extra_size_for_asset_transfer(asset: str):
+    return len(_asset_portion_of_transfer_script(asset, 0)) // 2
+
+def generate_transfer_script_from_base(asset: str, amount: int, base_script: str):
+    return base_script + _asset_portion_of_transfer_script(asset, amount)
 
 def _associated_data_converter(input):
     if not input:
@@ -245,19 +261,6 @@ class AssetMemo:
     def hex(self) -> str:
         return f'{self.data.hex()}{int_to_hex(self.timestamp, 8) if self.timestamp else ""}'
 
-def _asset_portion_of_transfer_script(asset: str, amount: int, *, memo: AssetMemo = None) -> str:
-    asset_data = (f'{RVN_ASSET_PREFIX.hex()}{RVN_ASSET_TYPE_TRANSFER.hex()}'
-                  f'{int_to_hex(len(asset))}{asset.encode().hex()}'
-                  f'{int_to_hex(amount, 8)}{memo.hex() if memo else ""}')
-    asset_script = construct_script([opcodes.OP_ASSET, asset_data, opcodes.OP_DROP])
-    return asset_script
-
-def extra_size_for_asset_transfer(asset: str):
-    return len(_asset_portion_of_transfer_script(asset, 0)) // 2
-
-def generate_transfer_script(asset: str, amount: int, base_script: str):
-    return base_script + _asset_portion_of_transfer_script(asset, amount)
-    
 def _validate_sats(instance, attribute, value):
     if value <= 0:
         raise ValueError('sats must be greater than 0!')
@@ -300,8 +303,9 @@ class BaseAssetVoutInformation():
     asset = None
     amount: Optional[int] = None
 
-    def __init__(self, type_: AssetVoutType):
+    def __init__(self, type_: AssetVoutType, well_formed):
         self._type = type_
+        self.well_formed_script = well_formed
 
     def get_type(self):
         return self._type
@@ -310,15 +314,15 @@ class BaseAssetVoutInformation():
         return self._type in (AssetVoutType.CREATE, AssetVoutType.OWNER, AssetVoutType.TRANSFER, AssetVoutType.REISSUE)
 
     def is_deterministic(self):
-        return False
+        return self._type in (AssetVoutType.TRANSFER, AssetVoutType.OWNER, AssetVoutType.NONE) and self.well_formed_script
 
 class NoAssetVoutInformation(BaseAssetVoutInformation):
     def __init__(self):
-        BaseAssetVoutInformation.__init__(self, AssetVoutType.NONE)
+        BaseAssetVoutInformation.__init__(self, AssetVoutType.NONE, True)
 
 class MetadataAssetVoutInformation(BaseAssetVoutInformation):
-    def __init__(self, type_: AssetVoutType, asset: str, amount: int, divisions: int, reissuable: bool, associated_data: Optional[bytes]):
-        BaseAssetVoutInformation.__init__(self, type_)
+    def __init__(self, type_: AssetVoutType, well_formed, asset: str, amount: int, divisions: int, reissuable: bool, associated_data: Optional[bytes]):
+        BaseAssetVoutInformation.__init__(self, type_, well_formed)
         self.asset = asset
         self.amount = amount
         self.divisions = divisions
@@ -326,10 +330,21 @@ class MetadataAssetVoutInformation(BaseAssetVoutInformation):
         self.associated_data = associated_data
 
 class OwnerAssetVoutInformation(BaseAssetVoutInformation):
-    def __init__(self, asset: str):
-        BaseAssetVoutInformation.__init__(self, AssetVoutType.OWNER)
+    def __init__(self, well_formed, asset: str):
+        BaseAssetVoutInformation.__init__(self, AssetVoutType.OWNER, well_formed)
         self.asset = asset
         self.amount = COIN
+
+class TransferAssetVoutInformation(BaseAssetVoutInformation):
+    def __init__(self, well_formed, asset: str, amount: int, asset_memo: Optional[bytes], asset_memo_timestamp: Optional[int]):
+        BaseAssetVoutInformation.__init__(self, AssetVoutType.TRANSFER, well_formed)
+        self.asset = asset
+        self.amount = amount
+        self.asset_memo = asset_memo
+        self.asset_memo_timestamp = asset_memo_timestamp
+
+    def is_deterministic(self):
+        return self.asset_memo is None and self.asset_memo_timestamp is None and super().is_deterministic()
 
 def get_asset_info_from_script(script: bytes) -> BaseAssetVoutInformation:
     try:
@@ -343,6 +358,17 @@ def get_asset_info_from_script(script: bytes) -> BaseAssetVoutInformation:
                 pass
             else:
                 asset_portion = script[index:]
+
+                decoded_has_good_length = len(decoded) > i + 1
+                next_op_is_a_push = False
+                remaining_matches = False
+                if decoded_has_good_length:
+                    next_op_is_a_push = decoded[i+1][1] is not None
+                    if next_op_is_a_push:
+                        op_push_prefix = bytes.fromhex(_op_push(len(decoded[i+1][1])))
+                        remaining_matches = (op_push_prefix + decoded[i+1][1] + b'\x75') == asset_portion
+                well_formed = decoded_has_good_length and next_op_is_a_push and remaining_matches
+                
                 asset_prefix_position = asset_portion.find(RVN_ASSET_PREFIX)
                 if asset_prefix_position < 0: break
                 if len(asset_portion) < len(RVN_ASSET_PREFIX) + 3: break
@@ -351,6 +377,8 @@ def get_asset_info_from_script(script: bytes) -> BaseAssetVoutInformation:
                     asset_vout_type = AssetVoutType.CREATE
                 elif vout_type == RVN_ASSET_TYPE_OWNER_INT:
                     asset_vout_type = AssetVoutType.OWNER
+                elif vout_type == RVN_ASSET_TYPE_TRANSFER_INT:
+                    asset_vout_type = AssetVoutType.TRANSFER
                 else: break
 
                 asset_length = asset_portion[len(RVN_ASSET_PREFIX) + 2]
@@ -358,25 +386,33 @@ def get_asset_info_from_script(script: bytes) -> BaseAssetVoutInformation:
 
                 asset = asset_portion[len(RVN_ASSET_PREFIX) + 3:len(RVN_ASSET_PREFIX) + 3 + asset_length].decode()
                 if asset_vout_type == AssetVoutType.OWNER:
-                    return OwnerAssetVoutInformation(asset)
+                    return OwnerAssetVoutInformation(well_formed, asset)
 
                 if len(asset_portion) < len(RVN_ASSET_PREFIX) + 3 + 8 + asset_length: break
                 asset_amount = int.from_bytes(asset_portion[len(RVN_ASSET_PREFIX) + 3 + asset_length:len(RVN_ASSET_PREFIX) + 3 + 8 + asset_length], 'little')
 
+                if asset_vout_type == AssetVoutType.TRANSFER:
+                    memo = None
+                    timestamp = None
+                    if len(asset_portion) >= len(RVN_ASSET_PREFIX) + 3 + 8 + 2 + 34 + asset_length:
+                        memo = asset_portion[len(RVN_ASSET_PREFIX) + 3 + 8 + 2 + asset_length:len(RVN_ASSET_PREFIX) + 3 + 8 + 2 + 34 + asset_length]
+                        if len(asset_portion) >= len(RVN_ASSET_PREFIX) + 3 + 8 + 2 + 34 + 8 + asset_length:
+                            timestamp = int.from_bytes(asset_portion[len(RVN_ASSET_PREFIX) + 3 + 8 + 2 + 34 + asset_length:len(RVN_ASSET_PREFIX) + 3 + 8 + 2 + 34 + 8 + asset_length], 'little')
+                    return TransferAssetVoutInformation(well_formed, asset, asset_amount, memo, timestamp)
+                
                 if len(asset_portion) < len(RVN_ASSET_PREFIX) + 3 + 8 + 2 + asset_length: break
                 divisions = asset_portion[len(RVN_ASSET_PREFIX) + 3 + 8 + asset_length]
                 reissuable = bool(asset_portion[len(RVN_ASSET_PREFIX) + 3 + 8 + 1 + asset_length])
 
                 if asset_vout_type == AssetVoutType.CREATE:
-                    if len(asset_portion) < len(RVN_ASSET_PREFIX) + 3 + 8 + 3 + asset_length: break
+                    if len(asset_portion) < len(RVN_ASSET_PREFIX) + 3 + 8 + 2 + asset_length: break
                     has_associated_data = asset_portion[len(RVN_ASSET_PREFIX) + 3 + 8 + 2 + asset_length]
                     if has_associated_data:
-                        if len(asset_portion) < len(RVN_ASSET_PREFIX) + 3 + 8 + 4 + 34 + asset_length: break
+                        if len(asset_portion) < len(RVN_ASSET_PREFIX) + 3 + 8 + 3 + 34 + asset_length: break
                         associated_data = asset_portion[len(RVN_ASSET_PREFIX) + 3 + 8 + 3 + asset_length:len(RVN_ASSET_PREFIX) + 3 + 8 + 3 + 34 + asset_length]
-                        return MetadataAssetVoutInformation(asset_vout_type, asset, asset_amount, divisions, reissuable, associated_data)
+                        return MetadataAssetVoutInformation(asset_vout_type, well_formed, asset, asset_amount, divisions, reissuable, associated_data)
                     else:
-                        return MetadataAssetVoutInformation(asset_vout_type, asset, asset_amount, divisions, reissuable, None)
-
+                        return MetadataAssetVoutInformation(asset_vout_type, well_formed, asset, asset_amount, divisions, reissuable, None)
                 break
 
     return NoAssetVoutInformation()

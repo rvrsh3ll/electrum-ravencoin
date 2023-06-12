@@ -643,6 +643,7 @@ class SwapManager(Logger):
         assert txin.prevout.txid.hex() == swap.funding_txid
         txin.script_sig = b''
         txin.witness_script = witness_script
+        raise NotImplementedError('wallet insert')
         sig = bytes.fromhex(tx.sign_txin(0, swap.privkey))
         witness = [sig, preimage, witness_script]
         txin.witness = bytes.fromhex(construct_witness(witness))

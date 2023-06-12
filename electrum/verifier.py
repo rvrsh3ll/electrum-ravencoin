@@ -28,7 +28,7 @@ import aiorpcx
 
 from .util import TxMinedInfo, NetworkJobOnDefaultServer
 from .crypto import sha256d
-from .asset import get_asset_info_from_script, AssetMetadata, AssetException, MetadataAssetVoutInformation
+from .asset import get_asset_info_from_script, AssetMetadata, AssetException, MetadataAssetVoutInformation, OwnerAssetVoutInformation
 from .bitcoin import hash_decode, hash_encode
 from .transaction import Transaction, TxOutpoint
 from .blockchain import hash_header
@@ -219,15 +219,25 @@ class SPV(NetworkJobOnDefaultServer):
                 self._requests_answered += 1
             asset_info = get_asset_info_from_script(tx.outputs()[source_idx].scriptpubkey)
             if not isinstance(asset_info, MetadataAssetVoutInformation):
-                raise AssetException('No metadata at this outpoint!(3)')
-            if asset_info.asset != asset:
-                raise AssetException('Not our asset!(3)')
-            if asset_info.divisions != metadata.divisions and not divisions_source:
-                raise AssetException('Bad divisions! (2)')
-            if asset_info.associated_data != metadata.associated_data and not associated_data_source:
-                raise AssetException('Bad associated data! (2)')
-            if asset_info.reissuable != metadata.reissuable:
-                raise AssetException('Bad reissuable')
+                if not isinstance(asset_info, OwnerAssetVoutInformation):
+                    raise AssetException('No metadata at this outpoint!(3)')
+                if asset_info.asset != asset:
+                    raise AssetException('Not our asset!(4)')
+                if metadata.divisions != 0:
+                    raise AssetException('Bad divisions! (3)')
+                if metadata.associated_data is not None:
+                    raise AssetException('Bad associated data! (3)')
+                if metadata.reissuable:
+                    raise AssetException('Bad reissuable (2)')
+            else:
+                if asset_info.asset != asset:
+                    raise AssetException('Not our asset!(3)')
+                if asset_info.divisions != metadata.divisions and not divisions_source:
+                    raise AssetException('Bad divisions! (2)')
+                if asset_info.associated_data != metadata.associated_data and not associated_data_source:
+                    raise AssetException('Bad associated data! (2)')
+                if asset_info.reissuable != metadata.reissuable:
+                    raise AssetException('Bad reissuable')
         except (aiorpcx.jsonrpc.RPCError, RequestCorrupted, AssetException, IndexError) as e:
             self.logger.info(f'bad asset metadata for {asset} (3): {repr(e)}')
             self.wallet.remove_unverified_asset_metadata(asset, source[1])

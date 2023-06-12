@@ -367,6 +367,8 @@ class Synchronizer(SynchronizerBase):
             await asyncio.sleep(0.1)
             for addr in self._adding_addrs.copy(): # copy set to ensure iterator stability
                 await self._add_address(addr)
+            for asset in self._adding_assets.copy():
+                await self._add_asset(asset)
             up_to_date = self.adb.is_up_to_date()
             # see if status changed
             if (up_to_date != prev_uptodate

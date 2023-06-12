@@ -425,6 +425,7 @@ class Commands:
             outputs.append(txout)
 
         tx = PartialTransaction.from_io(inputs, outputs, locktime=locktime)
+        raise NotImplementedError('wallet insert')
         tx.sign(keypairs)
         return tx.serialize()
 
@@ -448,6 +449,7 @@ class Commands:
             if address in txins_dict.keys():
                 for txin in txins_dict[address]:
                     txin.script_descriptor = desc
+                raise NotImplementedError('wallet insert')
                 tx.sign({pubkey.hex(): (priv2, compressed)})
 
         return tx.serialize()

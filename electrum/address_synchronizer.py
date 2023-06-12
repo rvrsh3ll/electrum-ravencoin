@@ -259,7 +259,7 @@ class AddressSynchronizer(Logger, EventListener):
                     continue
                 # this outpoint has already been spent, by spending_tx
                 # annoying assert that has revealed several bugs over time:
-                assert self.db.get_transaction(spending_tx_hash), "spending tx not in wallet db"
+                assert self.db.get_transaction(spending_tx_hash), f"spending tx {spending_tx_hash} not in wallet db"
                 conflicting_txns |= {spending_tx_hash}
             if tx_hash in conflicting_txns:
                 # this tx is already in history, so it conflicts with itself
@@ -361,7 +361,14 @@ class AddressSynchronizer(Logger, EventListener):
                 ser = tx_hash + ':%d'%n
                 asset_data = get_asset_info_from_script(txo.scriptpubkey)
                 if asset_data.asset:
-                    self.db.add_asset_to_watch(asset_data.asset)
+                    self.watch_asset(asset_data.asset)
+                if not asset_data.is_deterministic():
+                    outpoint = TxOutpoint(txid=bytes.fromhex(tx.txid()), out_idx=n)
+                    if asset_data.well_formed_script:
+                        self.logger.info(f'{outpoint.to_str()} is non-deterministic; saving scriptpubkey')
+                    else:
+                        self.logger.info(f'{outpoint.to_str()} is not well-formed; saving scriptpubkey')
+                    self.db.add_non_deterministic_txo_lockingscript(outpoint, txo.scriptpubkey)
                 scripthash = bitcoin.script_to_scripthash(txo.scriptpubkey.hex())
                 self.db.add_prevout_by_scripthash(scripthash, prevout=TxOutpoint.from_str(ser), value=asset_data.amount or v, asset=asset_data.asset)
                 addr = txo.address
@@ -382,6 +389,11 @@ class AddressSynchronizer(Logger, EventListener):
             if is_new:
                 util.trigger_callback('adb_added_tx', self, tx_hash, tx)
             return True
+
+    def watch_asset(self, asset: str):
+        if not self.db.is_watching_asset(asset):
+            self.db.add_asset_to_watch(asset)
+            self.synchronizer.add_asset(asset)
 
     def remove_transaction(self, tx_hash: str) -> None:
         """Removes a transaction AND all its dependents/children
@@ -729,8 +741,8 @@ class AddressSynchronizer(Logger, EventListener):
         assets = set()
         with self.lock:
             for asset in self.db.get_assets_verified_after_height(above_height):
-                base_txid, base_height = self.db.get_verified_asset_metadata_base_source(asset)
-                verified_info = self.db.get_verified_tx(base_txid)
+                base_outpoint, base_height = self.db.get_verified_asset_metadata_base_source(asset)
+                verified_info = self.db.get_verified_tx(base_outpoint.txid.hex())
                 header = blockchain.read_header(base_height)
                 if header and verified_info and hash_header(header) == verified_info.header_hash: continue
                 assets.add(asset)

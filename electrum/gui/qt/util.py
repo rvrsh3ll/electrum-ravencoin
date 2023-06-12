@@ -1015,6 +1015,7 @@ class ColorScheme:
     BLUE = ColorSchemeItem("#123b7c", "#8cb3f2")
     DEFAULT = ColorSchemeItem("black", "white")
     GRAY = ColorSchemeItem("gray", "gray")
+    LIGHT_GRAY = ColorSchemeItem("#303044", "#f0f0f0")
 
     @staticmethod
     def has_dark_background(widget):

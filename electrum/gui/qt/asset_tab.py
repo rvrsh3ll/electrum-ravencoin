@@ -3,18 +3,19 @@ import enum
 import math
 import hashlib
 from decimal import Decimal
-from typing import Optional, TYPE_CHECKING, Sequence, List, Callable, Any
+from typing import Optional, TYPE_CHECKING, Sequence, List, Callable, Any, Mapping, Tuple
 from urllib.parse import urlparse
 
 from PyQt5.QtGui import QFontMetrics, QFont, QStandardItemModel, QStandardItem
 from PyQt5.QtCore import pyqtSignal, QPoint, Qt, QItemSelectionModel
 from PyQt5.QtWidgets import (QLabel, QVBoxLayout, QGridLayout, QSizePolicy, QLineEdit, QCheckBox, QSplitter, QScrollArea,
                              QHBoxLayout, QCompleter, QWidget, QFrame, QPushButton, QTabWidget, QAbstractItemView,
-                             QTextEdit)
+                             QTextEdit, QComboBox)
 
 from electrum import util, paymentrequest, constants
 from electrum import lnutil
-from electrum.asset import get_error_for_asset_typed, AssetType, DEFAULT_ASSET_AMOUNT_MAX, generate_create_script, generate_owner_script, AssetMetadata
+from electrum.asset import (get_error_for_asset_typed, AssetType, DEFAULT_ASSET_AMOUNT_MAX, QUALIFIER_ASSET_AMOUNT_MAX, generate_create_script, generate_owner_script, AssetMetadata,
+                            )
 from electrum.bitcoin import base_decode, BaseDecodeError, COIN, is_address, base_encode
 from electrum.plugin import run_hook
 from electrum.i18n import _
@@ -117,14 +118,29 @@ class AssetList(MyTreeView):
         self.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.setSortingEnabled(True)
         self.last_selected_asset = None
+        self.current_assets = []
+
+        def selectionChange(new, old):
+            rows = [x.row() for x in new.indexes()]
+            if not rows:
+                self.parent.metadata_viewer.update_asset_trigger.emit(None)
+                return
+            first_row = min(rows)
+            self.last_selected_asset = asset = self.model().index(first_row, self.Columns.ASSET).data(self.ROLE_ASSET_STR)
+            self.parent.metadata_viewer.update_asset_trigger.emit(asset)
+
+        self.selectionModel().selectionChanged.connect(selectionChange)
     
     @profiler(min_threshold=0.05)
     def update(self):
         # not calling maybe_defer_update() as it interferes with coincontrol status bar
         watching_assets = self.wallet.get_assets_to_watch()
+        new_assets = [(asset, (metadata[0].sats_in_circulation, metadata[1]) if ((metadata := self.wallet.get_asset_metadata(asset)) is not None) else None) for asset in watching_assets]
+        if self.current_assets == new_assets:
+            return
         self.model().clear()
         self.update_headers(self.__class__.headers)
-        for idx, asset in enumerate(watching_assets):
+        for idx, (asset, data) in enumerate(new_assets):
             labels = [""] * len(self.Columns)
             labels[self.Columns.ASSET] = asset
             if self.wallet.do_we_own_this_asset(asset):
@@ -138,24 +154,24 @@ class AssetList(MyTreeView):
             asset_item[self.Columns.ASSET].setFont(QFont(MONOSPACE_FONT))
             asset_item[self.Columns.BALANCE].setFont(QFont(MONOSPACE_FONT))
             self.model().insertRow(idx, asset_item)
-            self.refresh_row(asset, idx)
+            self.refresh_row(asset, data, idx)
             if asset == self.last_selected_asset:
                 self.selectionModel().select(self.model().createIndex(idx, 0), QItemSelectionModel.Rows | QItemSelectionModel.SelectCurrent)
+        self.current_assets = new_assets
         self.filter()
 
-    def refresh_row(self, key, row):
+    def refresh_row(self, key, data, row):
         assert row is not None
         asset_item = [self.std_model.item(row, col) for col in self.Columns]
         
         color = self._default_bg_brush
 
-        result = self.wallet.get_asset_metadata(key)
-        if result is None:
+        if data is None:
             tooltip = _('No asset metadata avaliable')
             color = ColorScheme.RED.as_color(True)
         else:
-            metadata, kind = result
-            tooltip = _('{} total coins of {} exist').format(format_satoshis_plain(metadata.sats_in_circulation, decimal_point=8), key)
+            total_sats, kind = data
+            tooltip = _('{} total coins of {} exist').format(format_satoshis_plain(total_sats, decimal_point=8), key)
             if kind == METADATA_UNCONFIRMED:
                 tooltip += ' ' + _('(this metadata is not yet confirmed)')
             elif kind == METADATA_UNVERIFIED:
@@ -168,16 +184,6 @@ class AssetList(MyTreeView):
             col.setBackground(color)
             col.setToolTip(tooltip)
         
-    def mousePressEvent(self, e):
-        if e.button() != Qt.MouseButton.LeftButton:
-            return super().mousePressEvent(e)
-        idx = self.indexAt(e.pos())
-        if not idx.isValid():
-            return
-        self.last_selected_asset = asset = self.model().index(idx.row(), self.Columns.ASSET).data(self.ROLE_ASSET_STR)
-        self.parent.metadata_viewer.update_asset_trigger.emit(asset)
-        super().mousePressEvent(e)
-
 class MetadataInfo(QWidget):
     def __init__(self, window: 'ElectrumWindow'):
         QWidget.__init__(self)
@@ -327,18 +333,17 @@ class MetadataInfo(QWidget):
 
         self.associated_data_text.setText('')
 
-        for x in [self.predicted_size_label, self.predicted_mime_type_label, self.predicted_mime_type_text, self.predicted_size_text, self.associated_data_text]:
+        for x in [self.associated_data_text]:
             x.setVisible(True)
-
-        for x in [self.predicted_mime_type_label, self.predicted_size_label, self.predicted_mime_type_text, self.predicted_size_text, self.associated_data_view_seperator]:
-            x.setVisible(self.window.config.DOWNLOAD_IPFS)
 
         for x in [self.predicted_mime_type_text, self.predicted_size_text]:
             x.setText(_('N/A'))
 
+        self.update_no_change()
+
     def update_no_change(self):
         for x in [self.predicted_mime_type_label, self.predicted_size_label, self.predicted_mime_type_text, self.predicted_size_text, self.associated_data_view_seperator]:
-            x.setVisible(self.window.config.DOWNLOAD_IPFS)
+            x.setVisible(self.window.config.DOWNLOAD_IPFS and bool(self.associated_data_text.toPlainText()))
 
     async def maybe_download_ipfs(self, asset: str, ipfs: str, saved_bytes, saved_mime_type):
         if saved_bytes is not None and asset == self.current_asset:
@@ -435,6 +440,16 @@ class ViewAssetPanel(QSplitter, Logger):
         super().update()
 
 class CreateAssetPanel(QWidget, Logger):
+    asset_types = (
+            ('Main', AssetType.ROOT, constants.net.BURN_ADDRESSES.IssueAssetBurnAddress, constants.net.BURN_AMOUNTS.IssueAssetBurnAmount),
+            ('Sub', AssetType.SUB, constants.net.BURN_ADDRESSES.IssueSubAssetBurnAddress, constants.net.BURN_AMOUNTS.IssueSubAssetBurnAmount),
+            ('Unique', AssetType.UNIQUE, constants.net.BURN_ADDRESSES.IssueUniqueAssetBurnAddress, constants.net.BURN_AMOUNTS.IssueUniqueAssetBurnAmount),
+            ('Message', AssetType.MSG_CHANNEL, constants.net.BURN_ADDRESSES.IssueMsgChannelAssetBurnAddress, constants.net.BURN_AMOUNTS.IssueMsgChannelAssetBurnAmount),
+            ('Qualifier', AssetType.QUALIFIER, constants.net.BURN_ADDRESSES.IssueQualifierAssetBurnAddress, constants.net.BURN_AMOUNTS.IssueQualifierAssetBurnAmount),
+            ('Sub Qualifier', AssetType.SUB_QUALIFIER, constants.net.BURN_ADDRESSES.IssueSubQualifierAssetBurnAddress, constants.net.BURN_AMOUNTS.IssueSubQualifierAssetBurnAmount),
+            ('Restricted', AssetType.RESTRICTED, constants.net.BURN_ADDRESSES.IssueRestrictedAssetBurnAddress, constants.net.BURN_AMOUNTS.IssueRestrictedAssetBurnAmount),
+        )
+    
     def __init__(self, parent: 'AssetTab'):
         QWidget.__init__(self)
         Logger.__init__(self)
@@ -449,30 +464,130 @@ class CreateAssetPanel(QWidget, Logger):
         self.asset_is_ok = False
         self.associated_data_is_ok = True
         self.address_is_ok = True
-
-        asset_types = (
-            ('Main', AssetType.ROOT, constants.net.BURN_ADDRESSES.IssueAssetBurnAddress, constants.net.BURN_AMOUNTS.IssueAssetBurnAmount),
-            ('Sub', AssetType.SUB, constants.net.BURN_ADDRESSES.IssueSubAssetBurnAddress, constants.net.BURN_AMOUNTS.IssueSubAssetBurnAmount),
-            ('Unique', AssetType.UNIQUE, constants.net.BURN_ADDRESSES.IssueUniqueAssetBurnAddress, constants.net.BURN_AMOUNTS.IssueUniqueAssetBurnAmount),
-            ('Message', AssetType.MSG_CHANNEL, constants.net.BURN_ADDRESSES.IssueMsgChannelAssetBurnAddress, constants.net.BURN_AMOUNTS.IssueMsgChannelAssetBurnAmount),
-            ('Qualifier', AssetType.QUALIFIER, constants.net.BURN_ADDRESSES.IssueQualifierAssetBurnAddress, constants.net.BURN_AMOUNTS.IssueQualifierAssetBurnAmount),
-            ('Sub Qualifier', AssetType.SUB_QUALIFIER, constants.net.BURN_ADDRESSES.IssueSubQualifierAssetBurnAddress, constants.net.BURN_AMOUNTS.IssueSubQualifierAssetBurnAmount),
-            ('Restricted', AssetType.RESTRICTED, constants.net.BURN_ADDRESSES.IssueRestrictedAssetBurnAddress, constants.net.BURN_AMOUNTS.IssueRestrictedAssetBurnAmount),
-        )
+        self.parent_is_ok = True
+        self.parent_assets = None
 
         def clayout_on_edit(clayout: ChoicesLayout):
-            self.asset_checker.validate_text()
-            self.burn_address = asset_types[clayout.selected_index()][2]
-            self.burn_amount = asset_types[clayout.selected_index()][3]
+            self.burn_address = self.asset_types[clayout.selected_index()][2]
+            self.burn_amount = self.asset_types[clayout.selected_index()][3]
             self.send_button.setText(_("Pay") + f" {self.burn_amount} RVN...")
 
-        clayout = ChoicesLayout(_('Asset type'), [x[0] for x in asset_types], on_clicked=clayout_on_edit, checked_index=0)
-        self.burn_address = asset_types[clayout.selected_index()][2]
-        self.burn_amount = asset_types[clayout.selected_index()][3]
+            self.amount_e.setAmount(COIN)
+            self.divisions_e.setAmount(0)
+            self._on_divisions_change(0)
+            self.reissuable.setChecked(True)
 
-        grid.addLayout(clayout.layout(), 0, 0, 6, 1)
+            asset_type = self.asset_types[clayout.selected_index()]
+            if asset_type[1] in (AssetType.ROOT, AssetType.SUB, AssetType.RESTRICTED):
+                self.amount_e.max_amount = DEFAULT_ASSET_AMOUNT_MAX * COIN
+                self.divisions_e.max_amount = 8
+                self.amount_e.setEnabled(True)
+                self.divisions_e.setEnabled(True)
+                self.reissuable.setEnabled(True)
+            elif asset_type[1] in (AssetType.UNIQUE, AssetType.MSG_CHANNEL, AssetType.QUALIFIER, AssetType.SUB_QUALIFIER):
+                self.amount_e.setEnabled(False)
+                self.divisions_e.setEnabled(False)
+                self.reissuable.setEnabled(False)
+                self.reissuable.setChecked(False)
 
-        grid.addWidget(QLabel('PLACEHOLDER'), 0, 1)
+            if asset_type[1] in (AssetType.QUALIFIER, AssetType.SUB_QUALIFIER):
+                self.amount_e.setEnabled(True)
+                self.amount_e.max_amount = QUALIFIER_ASSET_AMOUNT_MAX * COIN
+
+            if asset_type[1] in (AssetType.MSG_CHANNEL, ):
+                self.associated_data_e.line_edit.setText('')
+                self.associated_data_e.line_edit.setEnabled(False)
+            else:
+                self.associated_data_e.line_edit.setEnabled(True)
+
+            self.parent_asset_selector_combo.setVisible(asset_type[1] not in (AssetType.ROOT, AssetType.QUALIFIER))
+            if asset_type[1] in (AssetType.SUB, AssetType.UNIQUE, AssetType.MSG_CHANNEL):
+                self.update_parent_assets([AssetType.ROOT, AssetType.SUB])
+            elif asset_type[1] in (AssetType.SUB_QUALIFIER, ):
+                self.update_parent_assets([AssetType.QUALIFIER])
+            elif asset_type[1] in (AssetType.RESTRICTED, ):
+                self.update_parent_assets([AssetType.ROOT])
+
+            if asset_type[1] in (AssetType.ROOT, AssetType.QUALIFIER):
+                self.asset_checker.line_edit.setEnabled(True)
+                self.parent_is_ok = True
+            else:
+                selected_index = self.parent_asset_selector_combo.currentIndex()
+                self.parent_is_ok = selected_index > 0 and self.parent_assets[selected_index][1]
+                if asset_type[1] == AssetType.RESTRICTED:
+                    self.asset_checker.line_edit.setEnabled(False)
+                    if selected_index > 0:
+                        selected_asset = self.parent_assets[selected_index - 1][0]
+                        self.asset_checker.line_edit.setText(f'${selected_asset[:-1]}')
+                    else:
+                        self.asset_checker.line_edit.setText('')
+                else:
+                    self.asset_checker.line_edit.setText('')
+                    self.asset_checker.line_edit.setEnabled(selected_index > 0)
+            self.asset_checker.validate_text()
+
+        self.clayout = ChoicesLayout(_('Asset type'), [x[0] for x in self.asset_types], on_clicked=clayout_on_edit, checked_index=0)
+        self.burn_address = self.asset_types[self.clayout.selected_index()][2]
+        self.burn_amount = self.asset_types[self.clayout.selected_index()][3]
+
+        grid.addLayout(self.clayout.layout(), 0, 0, 6, 1)
+
+        self.parent_asset_selector_combo = QComboBox()
+        self.parent_asset_selector_combo.setVisible(False)
+        no_resize = self.parent_asset_selector_combo.sizePolicy()
+        no_resize.setRetainSizeWhenHidden(True)
+        self.parent_asset_selector_combo.setSizePolicy(no_resize)
+
+        def parent_asset_selector_on_change():
+            selected_parent_index = self.parent_asset_selector_combo.currentIndex()
+            if selected_parent_index == 0:
+                self.asset_checker.line_edit.setEnabled(False)
+                self.asset_checker.line_edit.setText('')
+                parent_is_valid = False
+            else:
+                parent_is_valid = self.parent_assets[selected_parent_index - 1][1]
+            self.parent_is_ok = parent_is_valid
+            self.asset_checker.line_edit.setEnabled(selected_parent_index > 0)
+            selected_asset_type_index = self.clayout.selected_index()
+            asset_type = self.asset_types[selected_asset_type_index][1]
+            current_text = self.asset_checker.line_edit.text()
+            if asset_type == AssetType.ROOT:
+                user_text = ''
+            elif asset_type == AssetType.SUB:
+                split = current_text.split('/')
+                if len(split) > 1:
+                    user_text = split[-1]
+                else:
+                    user_text = ''
+            elif asset_type == AssetType.UNIQUE:
+                split = current_text.split('#')
+                if len(split) > 1:
+                    user_text = split[-1]
+                else:
+                    user_text = ''
+            elif asset_type == AssetType.MSG_CHANNEL:
+                split = current_text.split('~')
+                if len(split) > 1:
+                    user_text = split[-1]
+                else:
+                    user_text = ''
+            elif asset_type == AssetType.QUALIFIER:
+                user_text = current_text[1:]
+            elif asset_type == AssetType.SUB_QUALIFIER:
+                split = current_text.split('#')
+                if len(split) > 1:
+                    user_text = split[-1]
+                else:
+                    user_text = ''
+            else:
+                user_text = ''
+            prefix = self.get_prefix(asset_type)
+            self.asset_checker.line_edit.setText(prefix + user_text)
+            self.asset_checker.validate_text()
+
+        self.parent_asset_selector_combo.currentIndexChanged.connect(parent_asset_selector_on_change)
+
+        grid.addWidget(self.parent_asset_selector_combo, 0, 2, 1, 9)
 
         # We don't want to query the server every click
         async def check_if_asset_exists():
@@ -497,19 +612,24 @@ class CreateAssetPanel(QWidget, Logger):
                 pass
             else:
                 self.asset_is_ok = True
-                self.send_button.setEnabled(self.associated_data_is_ok and self.address_is_ok)
+                self._maybe_enable_pay_button()
 
         def asset_name_fast_fail(asset: str):
-            selected_index = clayout.selected_index()
-            if asset_types[selected_index][1] in (AssetType.ROOT, AssetType.SUB, AssetType.QUALIFIER, AssetType.SUB_QUALIFIER):
+            selected_index = self.clayout.selected_index()
+            if self.asset_types[selected_index][1] in (AssetType.ROOT, AssetType.SUB, AssetType.QUALIFIER, AssetType.SUB_QUALIFIER):
                 asset = asset.upper()
-                self.asset_checker.line_edit.setText(asset)
+
+            prefix = self.get_prefix(self.asset_types[selected_index][1])
+            if asset[:len(prefix)] != prefix:
+                asset = prefix + asset[len(prefix):]
+
+            self.asset_checker.line_edit.setText(asset)
 
             self.amount_e.update()
             # Disable the button no matter what
             self.asset_is_ok = False
             self.send_button.setEnabled(False)
-            error = get_error_for_asset_typed(asset, asset_types[clayout.selected_index()][1])
+            error = get_error_for_asset_typed(asset, self.asset_types[self.clayout.selected_index()][1])
             return error
 
         self.asset_checker = ValidatedDelayedCallbackEditor(get_asyncio_loop, asset_name_fast_fail, 0.5, check_if_asset_exists)
@@ -520,7 +640,7 @@ class CreateAssetPanel(QWidget, Logger):
         grid.addWidget(self.asset_checker.error_button, 1, 11)
 
         amount_label = QLabel(_('Amount'))
-        self.amount_e = AssetAmountEdit(lambda: self.asset_checker.line_edit.text()[:4], 0, DEFAULT_ASSET_AMOUNT_MAX * COIN, parent=self, min_amount=1)
+        self.amount_e = AssetAmountEdit(lambda: self.asset_checker.line_edit.text()[:4], 0, DEFAULT_ASSET_AMOUNT_MAX * COIN, parent=self, min_amount=COIN)
         self.amount_e.setText('1')
         grid.addWidget(amount_label, 2, 1)
         grid.addWidget(self.amount_e, 2, 2)
@@ -529,17 +649,7 @@ class CreateAssetPanel(QWidget, Logger):
                             + _('Asset divisions are a number from 0 to 8 and denote how many digits past the decimal point can be used. Once an asset is issued, you cannot decrease this number.')
         divisions_label = HelpLabel(_('Divisions'), divisions_message)
 
-        def on_divisions_change(amount):
-            if amount is None:
-                return
-            assert isinstance(amount, int)
-            self.amount_e.divisions = amount
-            self.amount_e.is_int = amount == 0
-            self.amount_e.min_amount = Decimal('1' if amount == 0 else f'0.{"".join("0" for i in range(amount - 1))}1')
-            self.amount_e.numbify()
-            self.amount_e.update()
-
-        self.divisions_e = OnlyNumberAmountEdit(None, 0, 8, parent=self, callback=on_divisions_change)
+        self.divisions_e = OnlyNumberAmountEdit(None, 0, 8, parent=self, callback=self._on_divisions_change)
         divisions_width = char_width_in_lineedit() * 3
         self.divisions_e._width = divisions_width
         self.divisions_e.setMaximumWidth(divisions_width)
@@ -564,7 +674,7 @@ class CreateAssetPanel(QWidget, Logger):
             self.send_button.setEnabled(False)
             if len(input) == 0:
                 self.associated_data_is_ok = True
-                self.send_button.setEnabled(self.address_is_ok and self.asset_is_ok)
+                self._maybe_enable_pay_button()
                 return None
             try:
                 if len(input) % 2 == 1 and len(input) > 2 and len(input) < 64:
@@ -576,7 +686,7 @@ class CreateAssetPanel(QWidget, Logger):
                     return _('Too many bytes for a TXID')
                 else:
                     self.associated_data_is_ok = True
-                    self.send_button.setEnabled(self.address_is_ok and self.asset_is_ok)
+                    self._maybe_enable_pay_button()
                     return None
             except ValueError:
                 try:
@@ -587,7 +697,7 @@ class CreateAssetPanel(QWidget, Logger):
                         return _('Too many bytes for an IPFS hash')
                     else:
                         self.associated_data_is_ok = True
-                        self.send_button.setEnabled(self.address_is_ok and self.asset_is_ok)
+                        self._maybe_enable_pay_button()
                         return None
                 except BaseDecodeError:
                     return _('Failed to parse input')
@@ -603,7 +713,7 @@ class CreateAssetPanel(QWidget, Logger):
             if input and not is_address(input): 
                 return _('Not a valid address')
             self.address_is_ok = True
-            self.send_button.setEnabled(self.associated_data_is_ok and self.asset_is_ok)
+            self._maybe_enable_pay_button()
             return None
 
         self.payto_e = ValidatedDelayedCallbackEditor(get_asyncio_loop, address_fast_fail, 0, lambda: asyncio.sleep(0))
@@ -626,8 +736,22 @@ class CreateAssetPanel(QWidget, Logger):
         vbox = QVBoxLayout(self)
         vbox.addLayout(grid)
 
+    def _maybe_enable_pay_button(self):
+        self.send_button.setEnabled(self.associated_data_is_ok and self.address_is_ok and self.asset_is_ok and self.parent_is_ok)
+
+    def _on_divisions_change(self, amount):
+        if amount is None:
+            return
+        assert isinstance(amount, int)
+        self.amount_e.divisions = amount
+        self.amount_e.is_int = amount == 0
+        self.amount_e.min_amount = Decimal('1' if amount == 0 else f'0.{"".join("0" for i in range(amount - 1))}1') * COIN
+        self.amount_e.numbify()
+        self.amount_e.update()
+
     def create_asset(self):
         output = PartialTxOutput.from_address_and_value(self.burn_address, self.burn_amount * COIN)
+        outputs = [output]
         goto_address = self.payto_e.line_edit.text()
         
         asset = self.asset_checker.line_edit.text()
@@ -649,6 +773,20 @@ class CreateAssetPanel(QWidget, Logger):
                         self.parent.wallet.get_receiving_address() # Fallback
         else:
             asset_change_address = goto_address
+
+        output_amounts = {
+            None: self.burn_amount * COIN,
+            asset: amount,
+            f'{asset}!': COIN,
+        }
+
+        selected_asset_type_index = self.clayout.selected_index()
+        asset_type = self.asset_types[selected_asset_type_index][1]
+        if asset_type not in (AssetType.ROOT, AssetType.QUALIFIER):
+            parent_asset = self.get_owner_asset()
+            output_amounts[parent_asset] = COIN
+            # TODO: New address for this
+            outputs.append(PartialTxOutput.from_address_and_value(asset_change_address, COIN, asset=parent_asset))
 
         def make_tx(fee_est, *, confirmed_only=False):
             if not goto_address:
@@ -674,7 +812,7 @@ class CreateAssetPanel(QWidget, Logger):
 
             tx = self.parent.wallet.make_unsigned_transaction(
                 coins=self.parent.window.get_coins(nonlocal_only=False, confirmed_only=confirmed_only),
-                outputs=[output],
+                outputs=outputs,
                 fee=fee_est,
                 rbf=False,
                 fee_mixin=fee_mixin
@@ -686,12 +824,6 @@ class CreateAssetPanel(QWidget, Logger):
                 self.parent.wallet.set_reserved_state_of_address(asset_change_address, reserved=False)
             
             return tx
-
-        output_amounts = {
-            None: self.burn_amount * COIN,
-            asset: amount,
-            f'{asset}!': COIN,
-        }
 
         conf_dlg = ConfirmTxDialog(window=self.parent.window, make_tx=make_tx, output_value=output_amounts)
         if conf_dlg.not_enough_funds:
@@ -732,6 +864,65 @@ class CreateAssetPanel(QWidget, Logger):
             return None
         return self.format_amount_and_units(frozen_bal)
 
+    def update_parent_assets(self, types:Sequence[AssetType]):
+        balance: Mapping[Optional[str], Tuple[int, int, int]] = self.parent.wallet.get_balance(asset_aware=True)
+        # confirmed, unconfirmed, unmatured
+        parent_assets = set()
+        for asset, amount in balance.items():
+            if asset is None: continue
+            if asset[-1] != '!': continue
+            if sum(amount) == 0: continue
+            parent_asset_name = asset[:-1]
+            if all(get_error_for_asset_typed(parent_asset_name, asset_type) for asset_type in types): continue
+            parent_assets.add(asset)
+
+        avaliable_parent_assets = sorted(list((asset, balance[asset][1] == 0 and balance[asset][2] == 0) for asset in parent_assets), key=lambda x: x[0])
+        if avaliable_parent_assets == self.parent_assets:
+            return
+        if not avaliable_parent_assets:
+            self.parent_asset_selector_combo.clear()
+            self.parent_asset_selector_combo.addItems([_('You do not own any compatible assets')])
+            self.parent_asset_selector_combo.setCurrentIndex(0)
+            self.parent_asset_selector_combo.setEnabled(False)
+        else:
+            current_selected_asset = None
+            current_selected_asset_index = self.parent_asset_selector_combo.currentIndex()
+            if current_selected_asset_index > 0:
+                current_selected_asset = self.parent_assets[current_selected_asset_index - 1][0]
+            items = [_('Select an asset')]
+            items.extend((x[0] if x[1] else _('{} (mempool)').format(x[0])) for x in avaliable_parent_assets)
+            self.parent_asset_selector_combo.clear()
+            self.parent_asset_selector_combo.addItems(items)
+            self.parent_asset_selector_combo.model().item(0).setEnabled(False)
+            for i, (asset, valid) in enumerate(avaliable_parent_assets):
+                if not valid:
+                    self.parent_asset_selector_combo.model().item(i+1).setEnabled(False)
+                if asset == current_selected_asset:
+                    self.parent_asset_selector_combo.setCurrentIndex(i+1)
+            self.parent_asset_selector_combo.setEnabled(True)
+
+        self.parent_assets = avaliable_parent_assets
+
+    def get_owner_asset(self):
+        current_selected_asset_index = self.parent_asset_selector_combo.currentIndex()
+        if current_selected_asset_index > 0:
+            return self.parent_assets[current_selected_asset_index - 1][0]
+        return None
+
+    def get_prefix(self, type_: AssetType):
+        if type_ == AssetType.QUALIFIER:
+            return '#'
+        asset = self.get_owner_asset()
+        if asset is None: return ''
+        if type_ == AssetType.SUB:
+            return f'{asset[:-1]}/'
+        elif type_ == AssetType.UNIQUE:
+            return f'{asset[:-1]}#'
+        elif type_ == AssetType.MSG_CHANNEL:
+            return f'{asset[:-1]}~'
+        elif type_ == AssetType.SUB_QUALIFIER:
+            return f'{asset}/#'
+        return ''
 
 class AssetTab(QWidget, MessageBoxMixin, Logger):
     

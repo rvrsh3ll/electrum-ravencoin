@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     from .plugins.hw_wallet import HW_PluginBase, HardwareClientBase, HardwareHandlerBase
     from .wallet_db import WalletDB
     from .plugin import Device
+    from .wallet import Abstract_Wallet
 
 
 class CannotDerivePubkey(Exception): pass
@@ -222,7 +223,7 @@ class Software_KeyStore(KeyStore):
         decrypted = ec.decrypt_message(message)
         return decrypted
 
-    def sign_transaction(self, tx, password):
+    def sign_transaction(self, tx, password, wallet: 'Abstract_Wallet'):
         if self.is_watching_only():
             return
         # Raise if password is not correct.
@@ -233,7 +234,7 @@ class Software_KeyStore(KeyStore):
             keypairs[k] = self.get_private_key(v, password)
         # Sign
         if keypairs:
-            tx.sign(keypairs)
+            tx.sign(keypairs, wallet)
 
     @abstractmethod
     def update_password(self, old_password, new_password):

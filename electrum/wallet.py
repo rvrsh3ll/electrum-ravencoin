@@ -197,6 +197,7 @@ async def sweep(
 
     tx = PartialTransaction.from_io(inputs, outputs, locktime=locktime, version=tx_version)
     tx.set_rbf(True)
+    raise NotImplementedError('wallet insert')
     tx.sign(keypairs)
     return tx
 
@@ -712,6 +713,18 @@ class Abstract_Wallet(ABC, Logger, EventListener):
         unverified = self.adb.unverified_asset_metadata.get(asset, None)
         if unverified:
             return unverified[0], METADATA_UNVERIFIED
+        return None
+
+    def get_asset_metadata_outpoint(self, asset: str) -> Optional[TxOutpoint]:
+        base_source = self.db.get_verified_asset_metadata_base_source(asset)
+        if base_source:
+            return base_source[0]
+        unconfirmed = self.adb.unconfirmed_asset_metadata.get(asset, None)
+        if unconfirmed:
+            return unconfirmed[1][0]
+        unverified = self.adb.unverified_asset_metadata.get(asset, None)
+        if unverified:
+            return unverified[1][0]
         return None
 
     @abstractmethod
@@ -1303,25 +1316,38 @@ class Abstract_Wallet(ABC, Logger, EventListener):
         # sort on-chain and LN stuff into new dict, by timestamp
         # (we rely on this being a *stable* sort)
 
-        class StringKey(str):
+        class OptionalStringKey(str):
             def __init__(self, _str: str):
                 self._encapsulated = _str
             def __lt__(self, other):
-                if self._encapsulated is None:
-                    return False
-                if other is None:
-                    return True
+                if isinstance(other, OptionalStringKey):
+                    if self._encapsulated is None:
+                        return True
+                    if other._encapsulated is None:
+                        return False
+                    return self._encapsulated < other._encapsulated
                 return self._encapsulated < other
 
         def sort_key(x):
             (txid, asset), tx_item = x
             ts = tx_item.get('monotonic_timestamp') or tx_item.get('timestamp') or float('inf')
             height = self.adb.tx_height_to_sort_height(tx_item.get('height'))
-            return ts, height, txid, StringKey(asset)
+            return ts, height, txid, OptionalStringKey(asset)
         
         transactions = OrderedDictWithIndex()
         for k, v in sorted(list(transactions_tmp.items()), key=sort_key):
             transactions[k] = v
+
+        seen_txids = set()
+        offcolor = True
+        for k, v in reversed(transactions.items()):
+            if v['txid'] in seen_txids:
+                v['hide_status'] = True
+            else:
+                offcolor = not offcolor
+            v['offcolor'] = offcolor
+            seen_txids.add(v['txid'])
+
         now = time.time()
         balance = defaultdict(int)
         for item in transactions.values():
@@ -1336,7 +1362,7 @@ class Abstract_Wallet(ABC, Logger, EventListener):
             item['value'] = Satoshis(value)
             balance[asset] += value
             item['balance'] = Satoshis(balance[asset])
-            if include_fiat:
+            if include_fiat and asset is None:
                 txid = item.get('txid')
                 if not item.get('lightning') and txid:
                     fiat_fields = self.get_tx_item_fiat(tx_hash=txid, amount_sat=value, fx=fx, tx_fee=item['fee_sat'])
@@ -2444,7 +2470,7 @@ class Abstract_Wallet(ABC, Logger, EventListener):
         for k in sorted(self.get_keystores(), key=lambda ks: ks.ready_to_sign(), reverse=True):
             try:
                 if k.can_sign(tmp_tx):
-                    k.sign_transaction(tmp_tx, password)
+                    k.sign_transaction(tmp_tx, password, self)
             except UserCancelled:
                 continue
         # remove sensitive info; then copy back details from temporary tx
