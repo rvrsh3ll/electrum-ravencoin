@@ -2182,3 +2182,22 @@ def error_text_bytes_to_safe_str(err: bytes) -> str:
     ascii_text = err.decode("ascii", errors='backslashreplace')
     # do repr to handle ascii special chars (especially when printing/logging the str)
     return repr(ascii_text)
+
+
+class ByteReader:
+    def __init__(self, data: bytes):
+        self.data = data
+        self.cursor = 0
+
+    def read_bytes(self, length: int) -> bytes:
+        if length > len(self.data) - self.cursor: raise IndexError(f'Out of bounds {self.cursor} -> {length} ({len(self.data)})')
+        b = self.data[self.cursor: self.cursor + length]
+        self.cursor += length
+        return b
+    
+    def read_byte_as_int(self) -> int:
+        b = self.read_bytes(1)
+        return b[0]
+    
+    def can_read_amount(self, length: int) -> bool:
+        return length <= len(self.data) - self.cursor

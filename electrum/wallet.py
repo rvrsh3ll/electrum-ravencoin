@@ -1605,6 +1605,7 @@ class Abstract_Wallet(ABC, Logger, EventListener):
             is_final = tx and tx.is_final()
             fee = self.adb.get_tx_fee(tx_hash)
             if fee is not None:
+                # TODO: This is really big for some reason
                 size = tx.estimated_size()
                 fee_per_byte = fee / size
                 extra.append(format_fee_satoshis(fee_per_byte) + ' sat/b')

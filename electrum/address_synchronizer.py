@@ -167,7 +167,7 @@ class AddressSynchronizer(Logger, EventListener):
             return tx.outputs()[prevout_n].address
         return None
 
-    def get_txin_value(self, txin: TxInput, *, address: str = None) -> Optional[int]:
+    def get_txin_value(self, txin: TxInput, *, address: str = None, asset_aware = False) -> Optional[int]:
         if txin.value_sats() is not None:
             return txin.value_sats()
         prevout_hash = txin.prevout.txid.hex()
@@ -178,6 +178,8 @@ class AddressSynchronizer(Logger, EventListener):
             d = self.db.get_txo_addr(prevout_hash, address)
             try:
                 v, asset, cb = d[prevout_n]
+                if asset is not None and not asset_aware:
+                    return 0
                 return v
             except KeyError:
                 pass

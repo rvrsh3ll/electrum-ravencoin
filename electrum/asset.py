@@ -11,6 +11,8 @@ from .i18n import _
 from .transaction import PartialTxOutput, MalformedBitcoinScript, script_GetOp
 from .json_db import StoredObject
 
+from .util import ByteReader
+
 # https://github.com/RavenProject/Ravencoin/blob/master/src/assets/assets.cpp
 
 MAX_NAME_LENGTH = 32
@@ -33,7 +35,7 @@ ASSET_OWNER_IDENTIFIER = '!'
 
 _ROOT_NAME_CHARACTERS = r'^[A-Z0-9._]{3,}$'
 _SUB_NAME_CHARACTERS = r'^[A-Z0-9._]+$'
-_UNIQUE_TAG_CHARACTERS = r'^[-A-Za-z0-9@\$%&*()[\\]{}_.?:]+$'
+_UNIQUE_TAG_CHARACTERS = r'^[-A-Za-z0-9@$%&*()[\]{}_.?:]+$'
 _MSG_CHANNEL_TAG_CHARACTERS = r'^[A-Za-z0-9_]+$'
 _QUALIFIER_NAME_CHARACTERS = r'#[A-Z0-9._]{3,}$'
 _SUB_QUALIFIER_NAME_CHARACTERS = r'#[A-Z0-9._]+$'
@@ -133,6 +135,8 @@ class AssetException(Exception):
 def get_error_for_asset_typed(asset: str, asset_type: AssetType) -> Optional[str]:
     if asset_type == AssetType.SUB and _SUB_NAME_DELIMITER not in asset:
         return _('Not a sub asset.')
+    if asset_type == AssetType.ROOT and _SUB_NAME_DELIMITER in asset:
+        return _('Not a root asset.')
     if asset_type == AssetType.ROOT or asset_type == AssetType.SUB:
         if len(asset) > MAX_NAME_LENGTH - 1:
             return _('Name is greater than max length of {}.'.format(MAX_NAME_LENGTH - 1))
@@ -216,8 +220,8 @@ def generate_owner_script(address: str, asset: str) -> 'str':
 def generate_owner_script_from_base(asset: str, base_script: str) -> 'str':
     if asset[-1] != ASSET_OWNER_IDENTIFIER:
         asset += ASSET_OWNER_IDENTIFIER
-    if get_error_for_asset_name(asset):
-        raise AssetException('Bad asset')
+    if error := get_error_for_asset_name(asset):
+        raise AssetException(f'Bad asset: {asset} {error}')
     
     asset_data = (f'{RVN_ASSET_PREFIX.hex()}{RVN_ASSET_TYPE_OWNER.hex()}'
                   f'{int_to_hex(len(asset))}{asset.encode().hex()}')
@@ -352,67 +356,66 @@ def get_asset_info_from_script(script: bytes) -> BaseAssetVoutInformation:
     except MalformedBitcoinScript:
         return None
 
-    for i, (op, _, index) in enumerate(decoded):
-        if op == opcodes.OP_ASSET:
-            if i == 0:
-                pass
-            else:
-                asset_portion = script[index:]
+    try:
+        for i, (op, _, index) in enumerate(decoded):
+            if op == opcodes.OP_ASSET:
+                if i == 0:
+                    pass
+                else:
+                    asset_portion = script[index:]
 
-                decoded_has_good_length = len(decoded) > i + 1
-                next_op_is_a_push = False
-                remaining_matches = False
-                if decoded_has_good_length:
-                    next_op_is_a_push = decoded[i+1][1] is not None
-                    if next_op_is_a_push:
-                        op_push_prefix = bytes.fromhex(_op_push(len(decoded[i+1][1])))
-                        remaining_matches = (op_push_prefix + decoded[i+1][1] + b'\x75') == asset_portion
-                well_formed = decoded_has_good_length and next_op_is_a_push and remaining_matches
-                
-                asset_prefix_position = asset_portion.find(RVN_ASSET_PREFIX)
-                if asset_prefix_position < 0: break
-                if len(asset_portion) < len(RVN_ASSET_PREFIX) + 3: break
-                vout_type = asset_portion[len(RVN_ASSET_PREFIX) + 1]
-                if vout_type == RVN_ASSET_TYPE_CREATE_INT:
-                    asset_vout_type = AssetVoutType.CREATE
-                elif vout_type == RVN_ASSET_TYPE_OWNER_INT:
-                    asset_vout_type = AssetVoutType.OWNER
-                elif vout_type == RVN_ASSET_TYPE_TRANSFER_INT:
-                    asset_vout_type = AssetVoutType.TRANSFER
-                else: break
+                    decoded_has_good_length = len(decoded) > i + 1
+                    next_op_is_a_push = False
+                    remaining_matches = False
+                    if decoded_has_good_length:
+                        next_op_is_a_push = decoded[i+1][1] is not None
+                        if next_op_is_a_push:
+                            op_push_prefix = bytes.fromhex(_op_push(len(decoded[i+1][1])))
+                            remaining_matches = (op_push_prefix + decoded[i+1][1] + b'\x75') == asset_portion
+                    well_formed = decoded_has_good_length and next_op_is_a_push and remaining_matches
+                    
+                    asset_prefix_position = asset_portion.find(RVN_ASSET_PREFIX)
+                    if asset_prefix_position < 0: break
+                    if len(asset_portion) < len(RVN_ASSET_PREFIX) + 3: break
+                    reader = ByteReader(asset_portion[asset_prefix_position + len(RVN_ASSET_PREFIX):])
+                    vout_type = reader.read_bytes(1)
+                    if vout_type == RVN_ASSET_TYPE_CREATE:
+                        asset_vout_type = AssetVoutType.CREATE
+                    elif vout_type == RVN_ASSET_TYPE_OWNER:
+                        asset_vout_type = AssetVoutType.OWNER
+                    elif vout_type == RVN_ASSET_TYPE_TRANSFER:
+                        asset_vout_type = AssetVoutType.TRANSFER
+                    else: break
 
-                asset_length = asset_portion[len(RVN_ASSET_PREFIX) + 2]
-                if len(asset_portion) < len(RVN_ASSET_PREFIX) + 3 + asset_length: break
+                    asset_length = reader.read_byte_as_int()
+                    asset = reader.read_bytes(asset_length).decode()
+                    if asset_vout_type == AssetVoutType.OWNER:
+                        return OwnerAssetVoutInformation(well_formed, asset)
 
-                asset = asset_portion[len(RVN_ASSET_PREFIX) + 3:len(RVN_ASSET_PREFIX) + 3 + asset_length].decode()
-                if asset_vout_type == AssetVoutType.OWNER:
-                    return OwnerAssetVoutInformation(well_formed, asset)
+                    asset_amount_bytes = reader.read_bytes(8)
+                    asset_amount = int.from_bytes(asset_amount_bytes, 'little')
 
-                if len(asset_portion) < len(RVN_ASSET_PREFIX) + 3 + 8 + asset_length: break
-                asset_amount = int.from_bytes(asset_portion[len(RVN_ASSET_PREFIX) + 3 + asset_length:len(RVN_ASSET_PREFIX) + 3 + 8 + asset_length], 'little')
+                    if asset_vout_type == AssetVoutType.TRANSFER:
+                        memo = None
+                        timestamp = None
+                        if reader.can_read_amount(34):
+                            memo = reader.read_bytes(34)
+                            if reader.can_read_amount(8):
+                                timestamp_bytes = reader.read_bytes(8)
+                                timestamp = int.from_bytes(timestamp_bytes, 'little')
+                        return TransferAssetVoutInformation(well_formed, asset, asset_amount, memo, timestamp)
+                    
+                    divisions = reader.read_byte_as_int()
+                    reissuable = reader.read_byte_as_int() == 1
 
-                if asset_vout_type == AssetVoutType.TRANSFER:
-                    memo = None
-                    timestamp = None
-                    if len(asset_portion) >= len(RVN_ASSET_PREFIX) + 3 + 8 + 2 + 34 + asset_length:
-                        memo = asset_portion[len(RVN_ASSET_PREFIX) + 3 + 8 + 2 + asset_length:len(RVN_ASSET_PREFIX) + 3 + 8 + 2 + 34 + asset_length]
-                        if len(asset_portion) >= len(RVN_ASSET_PREFIX) + 3 + 8 + 2 + 34 + 8 + asset_length:
-                            timestamp = int.from_bytes(asset_portion[len(RVN_ASSET_PREFIX) + 3 + 8 + 2 + 34 + asset_length:len(RVN_ASSET_PREFIX) + 3 + 8 + 2 + 34 + 8 + asset_length], 'little')
-                    return TransferAssetVoutInformation(well_formed, asset, asset_amount, memo, timestamp)
-                
-                if len(asset_portion) < len(RVN_ASSET_PREFIX) + 3 + 8 + 2 + asset_length: break
-                divisions = asset_portion[len(RVN_ASSET_PREFIX) + 3 + 8 + asset_length]
-                reissuable = bool(asset_portion[len(RVN_ASSET_PREFIX) + 3 + 8 + 1 + asset_length])
-
-                if asset_vout_type == AssetVoutType.CREATE:
-                    if len(asset_portion) < len(RVN_ASSET_PREFIX) + 3 + 8 + 2 + asset_length: break
-                    has_associated_data = asset_portion[len(RVN_ASSET_PREFIX) + 3 + 8 + 2 + asset_length]
-                    if has_associated_data:
-                        if len(asset_portion) < len(RVN_ASSET_PREFIX) + 3 + 8 + 3 + 34 + asset_length: break
-                        associated_data = asset_portion[len(RVN_ASSET_PREFIX) + 3 + 8 + 3 + asset_length:len(RVN_ASSET_PREFIX) + 3 + 8 + 3 + 34 + asset_length]
-                        return MetadataAssetVoutInformation(asset_vout_type, well_formed, asset, asset_amount, divisions, reissuable, associated_data)
-                    else:
-                        return MetadataAssetVoutInformation(asset_vout_type, well_formed, asset, asset_amount, divisions, reissuable, None)
-                break
-
+                    if asset_vout_type == AssetVoutType.CREATE:
+                        has_associated_data = reader.read_byte_as_int() == 1
+                        if has_associated_data:
+                            associated_data = reader.read_bytes(34)
+                            return MetadataAssetVoutInformation(asset_vout_type, well_formed, asset, asset_amount, divisions, reissuable, associated_data)
+                        else:
+                            return MetadataAssetVoutInformation(asset_vout_type, well_formed, asset, asset_amount, divisions, reissuable, None)
+                    break
+    except IndexError:
+        pass
     return NoAssetVoutInformation()

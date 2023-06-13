@@ -293,6 +293,8 @@ class MetadataInfo(QWidget):
             type_text = 'Restricted'
         elif '#' in asset:
             type_text = 'Unique'
+        elif '/' in asset:
+            type_text = 'Sub'
         else:
             type_text = 'Standard'
         self.type_text.setText(type_text)
@@ -393,6 +395,7 @@ class MetadataViewer(QFrame):
         scroll = QScrollArea()
         scroll.setWidget(self.metadata_info)
         scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(scroll)
@@ -434,6 +437,9 @@ class ViewAssetPanel(QSplitter, Logger):
         self.addWidget(self.asset_list)
         self.addWidget(self.metadata_viewer)
 
+        self.setStretchFactor(0, 1)
+        self.setStretchFactor(1, 0)
+
     def update(self):
         self.asset_list.update()
         self.metadata_viewer.update()
@@ -465,7 +471,7 @@ class CreateAssetPanel(QWidget, Logger):
         self.associated_data_is_ok = True
         self.address_is_ok = True
         self.parent_is_ok = True
-        self.parent_assets = None
+        self.parent_assets = []
 
         def clayout_on_edit(clayout: ChoicesLayout):
             self.burn_address = self.asset_types[clayout.selected_index()][2]
@@ -513,10 +519,10 @@ class CreateAssetPanel(QWidget, Logger):
                 self.parent_is_ok = True
             else:
                 selected_index = self.parent_asset_selector_combo.currentIndex()
-                self.parent_is_ok = selected_index > 0 and self.parent_assets[selected_index][1]
+                self.parent_is_ok = selected_index > 0 and len(self.parent_assets) > (selected_index - 1) and self.parent_assets[selected_index - 1][1]
                 if asset_type[1] == AssetType.RESTRICTED:
                     self.asset_checker.line_edit.setEnabled(False)
-                    if selected_index > 0:
+                    if selected_index > 0 and len(self.parent_assets) > selected_index - 1:
                         selected_asset = self.parent_assets[selected_index - 1][0]
                         self.asset_checker.line_edit.setText(f'${selected_asset[:-1]}')
                     else:
@@ -540,7 +546,7 @@ class CreateAssetPanel(QWidget, Logger):
 
         def parent_asset_selector_on_change():
             selected_parent_index = self.parent_asset_selector_combo.currentIndex()
-            if selected_parent_index == 0:
+            if selected_parent_index <= 0 or len(self.parent_assets) <= (selected_parent_index - 1):
                 self.asset_checker.line_edit.setEnabled(False)
                 self.asset_checker.line_edit.setText('')
                 parent_is_valid = False
@@ -777,7 +783,6 @@ class CreateAssetPanel(QWidget, Logger):
         output_amounts = {
             None: self.burn_amount * COIN,
             asset: amount,
-            f'{asset}!': COIN,
         }
 
         selected_asset_type_index = self.clayout.selected_index()
@@ -788,25 +793,30 @@ class CreateAssetPanel(QWidget, Logger):
             # TODO: New address for this
             outputs.append(PartialTxOutput.from_address_and_value(asset_change_address, COIN, asset=parent_asset))
 
+        if asset_type in (AssetType.ROOT, AssetType.SUB):
+            output_amounts[f'{asset}!']: COIN
+
         def make_tx(fee_est, *, confirmed_only=False):
             if not goto_address:
                 # Freeze a change address so it is seperate from the rvn change
                 self.parent.wallet.set_reserved_state_of_address(asset_change_address, reserved=True)
 
-            owner_script = generate_owner_script(asset_change_address, asset)
-            create_script = generate_create_script(asset_change_address, asset, amount, divisions, reissuable, associated_data)
+            appended_vouts = []
+            if asset_type in (AssetType.ROOT, AssetType.SUB):
+                owner_script = generate_owner_script(asset_change_address, asset)
+                owner_vout = PartialTxOutput(scriptpubkey=bytes.fromhex(owner_script), value=0)
+                appended_vouts.append(owner_vout)
 
-            owner_vout = PartialTxOutput(scriptpubkey=bytes.fromhex(owner_script), value=0)
+            create_script = generate_create_script(asset_change_address, asset, amount, divisions, reissuable, associated_data)
             create_vout = PartialTxOutput(scriptpubkey=bytes.fromhex(create_script), value=0)
+            appended_vouts.append(create_vout)
 
             def fee_mixin(fee_est):
                 def new_fee_estimator(size):
                     # size is virtual bytes
-
                     # We shouldn't need to worry about vout size varint increasing
-                    owner_size = len(owner_vout.serialize_to_network())
-                    create_size = len(create_vout.serialize_to_network())
-                    return fee_est(size + owner_size + create_size)
+                    appended_size = sum(len(x.serialize_to_network()) for x in appended_vouts)
+                    return fee_est(size + appended_size)
             
                 return new_fee_estimator
 
@@ -818,7 +828,7 @@ class CreateAssetPanel(QWidget, Logger):
                 fee_mixin=fee_mixin
             )
 
-            tx.add_outputs([owner_vout, create_vout], do_sort=False)
+            tx.add_outputs(appended_vouts, do_sort=False)
 
             if not goto_address:
                 self.parent.wallet.set_reserved_state_of_address(asset_change_address, reserved=False)
@@ -887,7 +897,7 @@ class CreateAssetPanel(QWidget, Logger):
         else:
             current_selected_asset = None
             current_selected_asset_index = self.parent_asset_selector_combo.currentIndex()
-            if current_selected_asset_index > 0:
+            if current_selected_asset_index > 0 and len(self.parent_assets) > (current_selected_asset_index - 1):
                 current_selected_asset = self.parent_assets[current_selected_asset_index - 1][0]
             items = [_('Select an asset')]
             items.extend((x[0] if x[1] else _('{} (mempool)').format(x[0])) for x in avaliable_parent_assets)
@@ -905,7 +915,7 @@ class CreateAssetPanel(QWidget, Logger):
 
     def get_owner_asset(self):
         current_selected_asset_index = self.parent_asset_selector_combo.currentIndex()
-        if current_selected_asset_index > 0:
+        if current_selected_asset_index > 0 and len(self.parent_assets) > (current_selected_asset_index - 1):
             return self.parent_assets[current_selected_asset_index - 1][0]
         return None
 
@@ -923,6 +933,16 @@ class CreateAssetPanel(QWidget, Logger):
         elif type_ == AssetType.SUB_QUALIFIER:
             return f'{asset}/#'
         return ''
+    
+    def update(self):
+        asset_type = self.asset_types[self.clayout.selected_index()]
+        self.logger.info(f'updating parent assets for {asset_type[1]}')
+        if asset_type[1] in (AssetType.SUB, AssetType.UNIQUE, AssetType.MSG_CHANNEL):
+            self.update_parent_assets([AssetType.ROOT, AssetType.SUB])
+        elif asset_type[1] in (AssetType.SUB_QUALIFIER, ):
+            self.update_parent_assets([AssetType.QUALIFIER])
+        elif asset_type[1] in (AssetType.RESTRICTED, ):
+            self.update_parent_assets([AssetType.ROOT])
 
 class AssetTab(QWidget, MessageBoxMixin, Logger):
     
@@ -956,9 +976,5 @@ class AssetTab(QWidget, MessageBoxMixin, Logger):
 
     def update(self):
         self.view_asset_tab.update()
-        # TODO: update create tab
+        self.create_asset_tab.update()
         super().update()
-
-    def refresh_all(self):
-        self.view_asset_tab.asset_list.update()
-        # TODO: refresh create tab

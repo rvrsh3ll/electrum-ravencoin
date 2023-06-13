@@ -221,8 +221,8 @@ class HistoryNode(CustomNode):
             if asset := tx_item.get('asset'):
                 if asset[-1] != ASSET_OWNER_IDENTIFIER:
                     asset += ' '
-                if len(asset) > 11:
-                    asset = asset[:5] + '…' + asset[-5:]
+                if len(asset) > 15:
+                    asset = asset[:7] + '…' + asset[-7:]
                 return QVariant(asset)
             return QVariant()
         elif col == HistoryColumns.BALANCE:

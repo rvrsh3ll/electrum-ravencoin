@@ -44,7 +44,7 @@ from qrcode import exceptions
 
 from electrum.simple_config import SimpleConfig
 from electrum.util import quantize_feerate
-from electrum import bitcoin
+from electrum import bitcoin, constants
 
 from electrum.asset import BaseAssetVoutInformation, AssetVoutType, get_asset_info_from_script
 from electrum.bitcoin import base_encode, NLOCKTIME_BLOCKHEIGHT_MAX, opcodes
@@ -121,6 +121,8 @@ class TxInOutWidget(QWidget):
             legend=_("Wallet Address"), color=ColorScheme.GREEN, tooltip=_("Wallet receiving address"))
         self.txo_color_change = TxOutputColoring(
             legend=_("Change Address"), color=ColorScheme.YELLOW, tooltip=_("Wallet change address"))
+        self.txo_color_burn = TxOutputColoring(
+            legend=_("Burn Address"), color=ColorScheme.RED, tooltip=_("Known burn address"))
         self.txo_color_2fa = TxOutputColoring(
             legend=_("TrustedCoin (2FA) batch fee"), color=ColorScheme.BLUE, tooltip=_("TrustedCoin (2FA) fee for the next batch of transactions"))
         self.outputs_header = QLabel()
@@ -138,6 +140,7 @@ class TxInOutWidget(QWidget):
         outheader_hbox.addStretch(2)
         outheader_hbox.addWidget(self.txo_color_recv.legend_label)
         outheader_hbox.addWidget(self.txo_color_change.legend_label)
+        outheader_hbox.addWidget(self.txo_color_burn.legend_label)
         outheader_hbox.addWidget(self.txo_color_2fa.legend_label)
 
         vbox = QVBoxLayout()
@@ -164,9 +167,9 @@ class TxInOutWidget(QWidget):
         lnk.setToolTip(_('Click to open, right-click for menu'))
         lnk.setAnchor(True)
         lnk.setUnderlineStyle(QTextCharFormat.SingleUnderline)
-        tf_used_recv, tf_used_change, tf_used_2fa = False, False, False
+        tf_used_recv, tf_used_change, tf_used_2fa, tf_used_burn = False, False, False, False
         def addr_text_format(addr: str) -> QTextCharFormat:
-            nonlocal tf_used_recv, tf_used_change, tf_used_2fa
+            nonlocal tf_used_recv, tf_used_change, tf_used_2fa, tf_used_burn
             if self.wallet.is_mine(addr):
                 if self.wallet.is_change(addr):
                     tf_used_change = True
@@ -182,6 +185,9 @@ class TxInOutWidget(QWidget):
             elif self.wallet.is_billing_address(addr):
                 tf_used_2fa = True
                 return self.txo_color_2fa.text_char_format
+            elif addr in constants.net.BURN_ADDRESSES:
+                tf_used_burn = True
+                return self.txo_color_burn.text_char_format
             return ext
 
         def insert_tx_io(
@@ -317,7 +323,6 @@ class TxInOutWidget(QWidget):
             else:
                 short_id = f"unknown:{txout_idx}"
             addr = o.get_ui_address_str()
-            
             insert_tx_io(
                 cursor=cursor, is_coinbase=False, txio_idx=txout_idx,
                 short_id=str(short_id), addr=addr, value=o.value,
@@ -327,6 +332,7 @@ class TxInOutWidget(QWidget):
 
         self.txo_color_recv.legend_label.setVisible(tf_used_recv)
         self.txo_color_change.legend_label.setVisible(tf_used_change)
+        self.txo_color_burn.legend_label.setVisible(tf_used_burn)
         self.txo_color_2fa.legend_label.setVisible(tf_used_2fa)
 
     def _open_internal_link(self, target):
