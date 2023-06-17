@@ -2,7 +2,7 @@ import attr
 import re
 import hashlib
 
-from enum import Enum
+from enum import Enum, auto
 from typing import Optional, Sequence, Mapping, Union, TYPE_CHECKING
 
 from .bitcoin import address_to_script, construct_script, int_to_hex, opcodes, COIN, base_decode, base_encode, _op_push
@@ -18,6 +18,7 @@ from .util import ByteReader
 MAX_NAME_LENGTH = 32
 MAX_CHANNEL_NAME_LENGTH = 12
 MIN_ASSET_LENGTH = 3
+MAX_VERIFIER_STING_LENGTH = 75
 
 DEFAULT_ASSET_AMOUNT_MAX = 21_000_000_000
 UNIQUE_ASSET_AMOUNT_MAX = 1
@@ -174,6 +175,12 @@ def get_error_for_asset_typed(asset: str, asset_type: AssetType) -> Optional[str
             if not _isNameValidBeforeTag(asset[:-1]):
                 return _('Owner name contains invalid characters (Valid characters are: A-Z 0-9 _ .) (special characters can\'t be the first or last characters)')
         elif asset_type == AssetType.QUALIFIER or asset_type == AssetType.SUB_QUALIFIER:
+            if asset_type == AssetType.QUALIFIER:
+                if _SUB_NAME_DELIMITER in asset:
+                    return _('Not a qualifier')
+            else:
+                if _SUB_NAME_DELIMITER not in asset:
+                    return _('Not a sub qualifier')
             if not _isQualifierNameValidBeforeTag(asset):
                 return _('Qualifier name contains invalid characters (Valid characters are: A-Z 0-9 _ .) (# must be the first character, _ . special characters can\'t be the first or last characters)')
         elif asset_type == AssetType.RESTRICTED:
@@ -241,6 +248,11 @@ def extra_size_for_asset_transfer(asset: str):
 
 def generate_transfer_script_from_base(asset: str, amount: int, base_script: str):
     return base_script + _asset_portion_of_transfer_script(asset, amount)
+
+def generate_verifier_tag(verifier_string: str) -> str:
+    assert len(verifier_string) <= MAX_VERIFIER_STING_LENGTH
+    asset_data = f'{int_to_hex(len(verifier_string))}{verifier_string.encode().hex()}'
+    return construct_script([opcodes.OP_ASSET, opcodes.OP_RESERVED, asset_data])
 
 def _associated_data_converter(input):
     if not input:
@@ -419,3 +431,197 @@ def get_asset_info_from_script(script: bytes) -> BaseAssetVoutInformation:
     except IndexError:
         pass
     return NoAssetVoutInformation()
+
+'''
+The order of operations for Boolean algebra, from highest to lowest priority is NOT, then AND, then OR. 
+Expressions inside brackets are always evaluated first.
+'''
+
+class BooleanExprAST:
+
+    class OP(Enum):
+        NONE = auto()
+        AND = auto()
+        OR = auto()
+        NOT = auto()
+        VAR = auto()
+
+    def __init__(self, op, *, error: str = None):
+        self.l_chld = None
+        self.r_chld = None
+        self.op = op
+        self._error = error
+
+    def error(self) -> Optional[str]:
+        if self._error is not None: return self._error
+        if self.op == self.OP.VAR: return None
+        if self.l_chld is not None:
+            if error := self.l_chld.error(): return error
+        if self.r_chld is not None:
+            if error := self.r_chld.error(): return error
+        return None
+
+    def iterate_vars_return_first(self, callable) -> Optional[str]:
+        if self.op == self.OP.VAR:
+            return callable(self.l_chld)
+        if self.l_chld is not None:
+            if ret := self.l_chld.iterate_vars_return_first(callable): return ret
+        if self.r_chld is not None:
+            if ret := self.r_chld.iterate_vars_return_first(callable): return ret
+        return None
+
+    def __repr__(self):
+        return f'({self.op} [{self.l_chld},{self.r_chld}], {self._error=})'
+
+    def evaluate(self, bool_dict):
+        if self._error:
+            raise Exception(self._error)
+
+        if self.op == self.OP.AND:
+            assert isinstance(self.l_chld, BooleanExprAST)
+            assert isinstance(self.r_chld, BooleanExprAST)
+            return self.l_chld.evaluate(bool_dict) and self.r_chld.evaluate(bool_dict)
+        elif self.op == self.OP.OR:
+            assert isinstance(self.l_chld, BooleanExprAST)
+            assert isinstance(self.r_chld, BooleanExprAST)
+            return self.l_chld.evaluate(bool_dict) or self.r_chld.evaluate(bool_dict)
+        elif self.op == self.OP.NOT:
+            assert isinstance(self.l_chld, BooleanExprAST)
+            assert self.r_chld is None
+            return not self.l_chld.evaluate(bool_dict)
+        elif self.op == self.OP.VAR:
+            assert isinstance(self.l_chld, str)
+            assert self.r_chld is None
+            value = bool_dict.get(self.l_chld, None)
+            if value is None:
+                raise Exception(f'Key {self.l_chld} does not exist')
+            return value
+        else:
+            raise Exception(f'Unknown OP {self.op}')
+
+    @classmethod
+    def parse_string(cls, verifier) -> 'BooleanExprAST':
+        if len(verifier) == 0:
+            return cls(cls.OP.NONE, error=_('Empty string'))
+        if len(verifier) > 80:
+            return cls(cls.OP.NONE, error=_('Verifier is too long'))
+
+        last_parenthesis_index = None
+        last_name_index = None
+        l_tok = 0
+        r_tok = 0
+        top_level_parenthesized = []
+        # Transform parenthesis and variables to nodes at the top level
+        for i, ch in enumerate(verifier):
+            if last_parenthesis_index is None:
+                if re.match(r'^[A-Z0-9._]$', ch):
+                    if last_name_index is None:
+                        last_name_index = i
+                    continue
+                else:
+                    if last_name_index is not None:
+                        node = cls(cls.OP.VAR)
+                        node.l_chld = verifier[last_name_index:i]
+                        top_level_parenthesized.append(node)
+                        last_name_index = None
+
+            if ch == '(':
+                if l_tok == 0:
+                    last_parenthesis_index = i
+                l_tok += 1
+            elif ch == ')':
+                r_tok += 1
+
+            if l_tok == r_tok and last_parenthesis_index is not None:
+                top_level_parenthesized.append(
+                cls.parse_string(verifier[last_parenthesis_index + 1:i]))
+                l_tok = 0
+                r_tok = 0
+                last_parenthesis_index = None
+                continue
+
+            if last_parenthesis_index is not None: continue
+
+            if ch in ('&', '|', '!'):
+                top_level_parenthesized.append(ch)
+            else:
+                return cls(cls.OP.NONE, error=_(f'Unable to parse token {ch}'))
+
+        if re.match(r'^[A-Z0-9._]$', ch) and last_name_index is not None:
+            node = cls(cls.OP.VAR)
+            node.l_chld = verifier[last_name_index:i + 1]
+            top_level_parenthesized.append(node)
+
+        is_not = False
+        all_nots_resolved = True
+        top_level_p_n = []
+        for item in top_level_parenthesized:
+            if item == '!':
+                all_nots_resolved = False
+                is_not = not is_not
+            else:
+                all_nots_resolved = True
+                if is_not:
+                    is_not = False
+                    node = cls(cls.OP.NOT)
+                    node.l_chld = item
+                    top_level_p_n.append(node)
+                else:
+                    top_level_p_n.append(item)
+
+        if not all_nots_resolved:
+            return cls(cls.OP.NONE, error=_('Bad NOT placement'))
+
+        looking_for_right_side_of_and = False
+        top_level_p_n_a = []
+        for item in top_level_p_n:
+            if item == '&':
+                looking_for_right_side_of_and = True
+            else:
+                if looking_for_right_side_of_and:
+                    if len(top_level_p_n_a) == 0:
+                        return cls(cls.OP.NONE, error=_('No left side of AND statement'))
+                    else:
+                        item_l = top_level_p_n_a.pop()
+                        node = cls(cls.OP.AND)
+                        node.l_chld = item_l
+                        node.r_chld = item
+                        top_level_p_n_a.append(node)
+                else:
+                    top_level_p_n_a.append(item)
+                looking_for_right_side_of_and = False
+
+        if looking_for_right_side_of_and:
+            return cls(cls.OP.NONE, error=_('No right side of AND statement'))
+
+        looking_for_right_side_of_or = False
+        top_level_p_n_a_o = []
+        for item in top_level_p_n_a:
+            if item == '|':
+                looking_for_right_side_of_or = True
+            else:
+                if looking_for_right_side_of_or:
+                    if len(top_level_p_n_a_o) == 0:
+                        return cls(cls.OP.NONE, error=_('No left side of OR statement'))
+                    else:
+                        item_l = top_level_p_n_a_o.pop()
+                        node = cls(cls.OP.OR)
+                        node.l_chld = item_l
+                        node.r_chld = item
+                        top_level_p_n_a_o.append(node)
+                else:
+                    top_level_p_n_a_o.append(item)
+                looking_for_right_side_of_or = False
+
+        if looking_for_right_side_of_or:
+            return cls(cls.OP.NONE, error=_('No right side of OR statement'))
+        if len(top_level_p_n_a_o) > 1:
+            return cls(cls.OP.NONE,
+                    error=_('Variables exist with no operators between them'))
+        return top_level_p_n_a_o[0]
+
+def compress_verifier_string(verifier: str) -> str:
+    return verifier.replace(' ', '').replace(_QUALIFIER_TAG_DELIMITER, '')
+
+def parse_verifier_string(verifier: str) -> BooleanExprAST:
+    return BooleanExprAST.parse_string(compress_verifier_string(verifier))

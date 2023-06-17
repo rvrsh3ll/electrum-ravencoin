@@ -1171,6 +1171,13 @@ class Network(Logger, NetworkRetryManager[ServerAddr]):
             raise RequestTimedOut()
         return await self.interface.get_asset_metadata(asset)
 
+    @best_effort_reliable
+    @catch_server_exceptions
+    async def check_tag_for_h160(self, asset: str, h160: str) -> dict:
+        if self.interface is None:
+            raise RequestTimedOut()
+        return await self.interface.check_tag_for_h160(asset, h160)
+
     def blockchain(self) -> Blockchain:
         interface = self.interface
         if interface and interface.blockchain is not None:

@@ -8,6 +8,7 @@ import queue
 import traceback
 import os
 import webbrowser
+import itertools
 from decimal import Decimal
 from functools import partial, lru_cache, wraps
 from typing import (NamedTuple, Callable, Optional, TYPE_CHECKING, Union, List, Dict, Any,
@@ -20,8 +21,8 @@ from PyQt5.QtCore import (Qt, QPersistentModelIndex, QModelIndex, pyqtSignal,
                           QCoreApplication, QItemSelectionModel, QThread,
                           QSortFilterProxyModel, QSize, QLocale, QAbstractItemModel,
                           QEvent, QRect, QPoint, QObject)
-from PyQt5.QtWidgets import (QPushButton, QLabel, QMessageBox, QHBoxLayout,
-                             QAbstractItemView, QVBoxLayout, QLineEdit, QFrame,
+from PyQt5.QtWidgets import (QPushButton, QLabel, QMessageBox, QHBoxLayout, QGridLayout,
+                             QAbstractItemView, QVBoxLayout, QLineEdit, QFrame, QScrollArea,
                              QStyle, QDialog, QGroupBox, QButtonGroup, QRadioButton,
                              QFileDialog, QWidget, QToolButton, QTreeView, QPlainTextEdit,
                              QHeaderView, QApplication, QToolTip, QTreeWidget, QStyledItemDelegate,
@@ -39,7 +40,7 @@ if TYPE_CHECKING:
     from .main_window import ElectrumWindow
     from .installwizard import InstallWizard
     from electrum.simple_config import SimpleConfig
-
+    from electrum.asset import BooleanExprAST
 
 if platform.system() == 'Windows':
     MONOSPACE_FONT = 'Lucida Console'
@@ -1376,6 +1377,54 @@ class QHSeperationLine(QFrame):
         self.setFrameShadow(QFrame.Sunken)
         self.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Minimum)
         self.setStyleSheet(ColorScheme.GRAY.as_stylesheet(True))
+
+class BooleanExprASTTableViewer(QDialog, MessageBoxMixin):
+    def __init__(self, node: 'BooleanExprAST', window: 'ElectrumWindow'):
+        super().__init__(window)
+        grid = QGridLayout()
+        vbox = QVBoxLayout()
+        self.setLayout(vbox)
+
+        variables = set()
+        node.iterate_vars_return_first(lambda var: variables.add(var))
+        variables = sorted(list(variables))
+        b = [True, False]
+        first = True
+        for i, it in enumerate(itertools.product(b, repeat=len(variables))):
+            if not first:
+                grid.addWidget(QHSeperationLine(), i * 2 - 1, 0, 1, j + 3)
+            else:
+                first = False
+            mapping = dict()
+            for j, (variable, value) in enumerate(zip(variables, it, strict=True)):
+                mapping[variable] = value
+                label = QLabel(variable)
+                label.setStyleSheet((ColorScheme.GREEN if value else ColorScheme.RED).as_stylesheet())
+                grid.addWidget(label, i * 2, j)
+            result = node.evaluate(mapping)
+            label = QLabel(' - ')
+            grid.addWidget(label, i * 2, j + 1, Qt.AlignCenter)
+            label = QLabel(_('Can Receive') if result else _('Cannot Receive'))
+            grid.addWidget(label, i * 2, j + 2)
+
+        grid.setColumnStretch(j + 1, 1)
+
+        info_label = QLabel(_('The chart below determines whether an address can recieve this asset based on its qualifications. Green means that the address has been qualified by a Qualifier, red means that it has not.'))
+        info_label.setWordWrap(True)
+        vbox.addWidget(info_label)
+
+        scroll = QScrollArea()
+        w = QWidget()
+        w.setLayout(grid)
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(w)
+
+        vbox.addWidget(scroll)
+
+        self.setWindowTitle(_('Verifier String Checker'))
+        self.setMinimumWidth(250)
+        self.setMaximumWidth(400)
+        self.setMaximumHeight(500)
 
 if __name__ == "__main__":
     app = QApplication([])

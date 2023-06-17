@@ -1185,10 +1185,22 @@ class Interface(Logger):
 
 
     async def get_asset_metadata(self, asset: str) -> dict:
+        assert isinstance(asset, str)
         error = get_error_for_asset_name(asset)
         if error:
             raise Exception(f'bad asset: {error}')
         res = await self.session.send_request('blockchain.asset.get_meta', [asset])
+        return res
+
+    async def check_tag_for_h160(self, asset: str, h160: str) -> dict:
+        assert isinstance(h160, str)
+        assert isinstance(asset, str)
+        if asset[0] != '#':
+            raise Exception(f'{asset} is not a qualifier')
+        error = get_error_for_asset_name(asset)
+        if error:
+            raise Exception(f'bad asset: {error}')
+        res = await self.session.send_request('blockchain.asset.check_tag', [h160, asset])
         return res
 
 def _assert_header_does_not_check_against_any_chain(header: dict) -> None:

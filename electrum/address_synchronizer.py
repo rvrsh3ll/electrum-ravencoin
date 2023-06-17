@@ -101,6 +101,7 @@ class AddressSynchronizer(Logger, EventListener):
 
         self._get_balance_cache = {}
         self._get_asset_balance_cache = {}
+        self._get_assets_in_mempool_cache = {}
 
         self.load_and_cleanup()
 
@@ -219,6 +220,7 @@ class AddressSynchronizer(Logger, EventListener):
     def on_event_blockchain_updated(self, *args):
         self._get_balance_cache = {}  # invalidate cache
         self._get_asset_balance_cache = {}
+        self._get_assets_in_mempool_cache = {}
 
     async def stop(self):
         if self.network:
@@ -349,6 +351,7 @@ class AddressSynchronizer(Logger, EventListener):
                         self.db.add_txi_addr(tx_hash, addr, ser, v, asset)
                         self._get_balance_cache.clear()  # invalidate cache
                         self._get_asset_balance_cache.clear()
+                        self._get_assets_in_mempool_cache.clear()
             for txi in tx.inputs():
                 if txi.is_coinbase_input():
                     continue
@@ -378,6 +381,7 @@ class AddressSynchronizer(Logger, EventListener):
                     self.db.add_txo_addr(tx_hash, addr, n, asset_data.amount or v, asset_data.asset, is_coinbase)
                     self._get_balance_cache.clear()  # invalidate cache
                     self._get_asset_balance_cache.clear()
+                    self._get_assets_in_mempool_cache.clear()
                     # give v to txi that spends me
                     next_tx = self.db.get_spent_outpoint(tx_hash, n)
                     if next_tx is not None:
@@ -436,6 +440,7 @@ class AddressSynchronizer(Logger, EventListener):
             for addr in itertools.chain(self.db.get_txi_addresses(tx_hash), self.db.get_txo_addresses(tx_hash)):
                 self._get_balance_cache.clear()  # invalidate cache
                 self._get_asset_balance_cache.clear()
+                self._get_assets_in_mempool_cache.clear()
             self.db.remove_txi(tx_hash)
             self.db.remove_txo(tx_hash)
             self.db.remove_tx_fee(tx_hash)
@@ -528,6 +533,7 @@ class AddressSynchronizer(Logger, EventListener):
                 self._history_local.clear()
                 self._get_balance_cache.clear()  # invalidate cache
                 self._get_asset_balance_cache.clear()
+                self._get_assets_in_mempool_cache.clear()
 
     def _get_tx_sort_key(self, tx_hash: str) -> Tuple[int, int]:
         """Returns a key to be used for sorting txs."""
@@ -955,13 +961,17 @@ class AddressSynchronizer(Logger, EventListener):
                 out.pop(k)
         return out
 
-    # return the total amount ever received by an address
-    '''
-    def get_addr_received(self, address):
-        received, sent = self.get_addr_io(address)
-        return sum([value for height, pos, value, is_cb in received.values()])
-    '''
-        
+    @with_lock
+    @with_transaction_lock
+    @with_local_height_cached
+    def get_assets_in_mempool(self, domain) -> Set[str]:
+        cache_key = sha256(','.join(sorted(domain)) + ';')
+        cached_value = self._get_assets_in_mempool_cache.get(cache_key)
+        if cached_value:
+            return cached_value
+        self.get_balance(domain, asset_aware=True)
+        return set(self._get_assets_in_mempool_cache.get(cache_key) or [])
+
     @with_lock
     @with_transaction_lock
     @with_local_height_cached
@@ -997,6 +1007,7 @@ class AddressSynchronizer(Logger, EventListener):
             c = defaultdict(int)
             u = defaultdict(int)
             x = defaultdict(int)
+            assets_in_mempool = set()
         else:
             c = u = x = 0
         
@@ -1044,6 +1055,7 @@ class AddressSynchronizer(Logger, EventListener):
                 # (fixme: tx may have multiple change outputs)
 
                 if asset_aware:
+                    assets_in_mempool.add(utxo.asset)
                     if confirmed_spent_amount[utxo.asset] >= v:
                         c[utxo.asset] += v
                     else:
@@ -1061,6 +1073,7 @@ class AddressSynchronizer(Logger, EventListener):
             for asset in set(c.keys()).union(u.keys()).union(x.keys()):
                 result[asset] = c[asset], u[asset], x[asset]
             self._get_asset_balance_cache[cache_key] = result
+            self._get_assets_in_mempool_cache[cache_key] = assets_in_mempool
         else:
             result = c, u, x
             # cache result.

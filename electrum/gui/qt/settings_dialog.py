@@ -423,6 +423,13 @@ class SettingsDialog(QDialog, QtEventListener):
             self.refresh_asset_view = True
         ipfs_show_cb.stateChanged.connect(on_set_ipfs_show)
 
+        pay_to_create_cb = QCheckBox(_('Control where created assets go'))
+        pay_to_create_cb.setChecked(self.config.SHOW_CREATE_ASSET_PAY_TO)
+        def on_set_pay_to_create(v):
+            self.config.SHOW_CREATE_ASSET_PAY_TO = (v == Qt.Checked)
+            self.refresh_asset_view = True
+        pay_to_create_cb.stateChanged.connect(on_set_pay_to_create)
+
         gui_widgets = []
         gui_widgets.append((lang_label, lang_combo))
         gui_widgets.append((colortheme_label, colortheme_combo))
@@ -451,6 +458,7 @@ class SettingsDialog(QDialog, QtEventListener):
         asset_widgets = []
         asset_widgets.append((ipfs_preview_cb, None))
         asset_widgets.append((ipfs_show_cb, None))
+        asset_widgets.append((pay_to_create_cb, None))
 
         tabs_info = [
             (gui_widgets, _('Appearance')),

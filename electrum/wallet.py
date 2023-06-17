@@ -985,6 +985,10 @@ class Abstract_Wallet(ABC, Logger, EventListener):
             self._tx_parents_cache[txid] = result
             return result
 
+    def get_assets_in_mempool(self):
+        domain = self.get_addresses()
+        return self.adb.get_assets_in_mempool(domain)
+
     def get_balance(self, **kwargs):
         domain = self.get_addresses()
         return self.adb.get_balance(domain, **kwargs)
@@ -1623,7 +1627,7 @@ class Abstract_Wallet(ABC, Logger, EventListener):
             else:
                 status = 2  # not SPV verified
         else:
-            status = 3 + math.ceil(min(conf, 60) / 10)
+            status = 3 + min(conf, 6)
         time_str = format_time(timestamp) if timestamp else _("unknown")
         status_str = TX_STATUS[status] if status < 4 else time_str
         if extra:
