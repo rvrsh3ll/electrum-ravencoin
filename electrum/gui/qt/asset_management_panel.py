@@ -1,0 +1,768 @@
+import asyncio
+from decimal import Decimal
+from typing import Optional, TYPE_CHECKING, Callable, Mapping, Tuple
+
+from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import QLabel, QVBoxLayout, QGridLayout, QCheckBox, QWidget, QComboBox 
+
+from electrum import constants
+from electrum.asset import (get_error_for_asset_typed, AssetType, DEFAULT_ASSET_AMOUNT_MAX, QUALIFIER_ASSET_AMOUNT_MAX, MAX_VERIFIER_STING_LENGTH, generate_create_script, generate_owner_script,
+                            MAX_NAME_LENGTH, parse_verifier_string, compress_verifier_string, generate_verifier_tag)
+from electrum.bitcoin import base_decode, BaseDecodeError, COIN, is_address, b58_address_to_hash160
+from electrum.i18n import _
+from electrum.util import get_asyncio_loop, format_satoshis_plain, DECIMAL_POINT
+from electrum.transaction import PartialTxOutput
+from electrum.network import UntrustedServerReturnedError
+from electrum.logging import Logger
+
+from .amountedit import AmountEdit
+from .util import HelpLabel, char_width_in_lineedit, EnterButton, BooleanExprASTTableViewer
+from .util import ChoicesLayout, ValidatedDelayedCallbackEditor
+from .confirm_tx_dialog import ConfirmTxDialog
+
+if TYPE_CHECKING:
+    from .asset_tab import AssetTab
+
+
+class OnlyNumberAmountEdit(AmountEdit):
+    def __init__(self, asset_name: Callable[[], str], divisions: int, max_amount: int, *, parent=None, min_amount=0, callback=None):
+        AmountEdit.__init__(self, asset_name, True, parent, max_amount=max_amount, min_amount=min_amount, callback=callback)
+        self.divisions = divisions
+
+    def decimal_point(self):
+        return self.divisions
+    
+    def max_precision(self):
+        return 8
+
+    def numbify(self):
+        text = self.text().strip()
+        if text == '!':
+            self.setText('')
+        return super().numbify()
+
+class AssetAmountEdit(OnlyNumberAmountEdit):
+    def _get_amount_from_text(self, text):
+        # returns amt in satoshis
+        try:
+            text = text.replace(DECIMAL_POINT, '.')
+            x = Decimal(text)
+        except Exception:
+            return None
+        # scale it to max allowed precision, make it an int
+        power = pow(10, self.max_precision())
+        max_prec_amount = int(power * x)
+        # if the max precision is simply what unit conversion allows, just return
+        return max_prec_amount
+    
+    def _get_text_from_amount(self, amount_sat):
+        text = format_satoshis_plain(amount_sat, decimal_point=self.max_precision())
+        text = text.replace('.', DECIMAL_POINT)
+        return text
+        
+class CreateAssetPanel(QWidget, Logger):
+    asset_types = (
+            ('Main', AssetType.ROOT, constants.net.BURN_ADDRESSES.IssueAssetBurnAddress, constants.net.BURN_AMOUNTS.IssueAssetBurnAmount),
+            ('Sub', AssetType.SUB, constants.net.BURN_ADDRESSES.IssueSubAssetBurnAddress, constants.net.BURN_AMOUNTS.IssueSubAssetBurnAmount),
+            ('Unique', AssetType.UNIQUE, constants.net.BURN_ADDRESSES.IssueUniqueAssetBurnAddress, constants.net.BURN_AMOUNTS.IssueUniqueAssetBurnAmount),
+            ('Message', AssetType.MSG_CHANNEL, constants.net.BURN_ADDRESSES.IssueMsgChannelAssetBurnAddress, constants.net.BURN_AMOUNTS.IssueMsgChannelAssetBurnAmount),
+            ('Qualifier', AssetType.QUALIFIER, constants.net.BURN_ADDRESSES.IssueQualifierAssetBurnAddress, constants.net.BURN_AMOUNTS.IssueQualifierAssetBurnAmount),
+            ('Sub Qualifier', AssetType.SUB_QUALIFIER, constants.net.BURN_ADDRESSES.IssueSubQualifierAssetBurnAddress, constants.net.BURN_AMOUNTS.IssueSubQualifierAssetBurnAmount),
+            ('Restricted', AssetType.RESTRICTED, constants.net.BURN_ADDRESSES.IssueRestrictedAssetBurnAddress, constants.net.BURN_AMOUNTS.IssueRestrictedAssetBurnAmount),
+        )
+    
+    def __init__(self, parent: 'AssetTab'):
+        QWidget.__init__(self)
+        Logger.__init__(self)
+
+        self.parent = parent
+
+        self.send_grid = grid = QGridLayout()
+        grid.setSpacing(8)
+        #grid.setColumnStretch(10, 1)
+        #grid.setRowStretch(4, 1)
+
+        self.asset_is_ok = False
+        self.associated_data_is_ok = True
+        self.address_is_ok = True
+        self.parent_is_ok = True
+        self.verifier_is_ok = True
+        self.parent_assets = set()
+
+        def clayout_on_edit(clayout: ChoicesLayout):
+            self.burn_address = self.asset_types[clayout.selected_index()][2]
+            self.burn_amount = self.asset_types[clayout.selected_index()][3]
+            self.send_button.setText(_("Pay") + f" {self.burn_amount} RVN...")
+
+            self.amount_e.setAmount(COIN)
+            self.divisions_e.setAmount(0)
+            self._on_divisions_change(0)
+            self.reissuable.setChecked(True)
+
+            asset_type = self.asset_types[clayout.selected_index()]
+            prefix = self.get_prefix(asset_type)
+            self.asset_checker.line_edit.setText(prefix)
+            if asset_type[1] in (AssetType.ROOT, AssetType.SUB, AssetType.RESTRICTED):
+                self.amount_e.max_amount = DEFAULT_ASSET_AMOUNT_MAX * COIN
+                self.divisions_e.max_amount = 8
+                self.amount_e.setEnabled(True)
+                self.divisions_e.setEnabled(True)
+                self.reissuable.setEnabled(True)
+            elif asset_type[1] in (AssetType.UNIQUE, AssetType.MSG_CHANNEL, AssetType.QUALIFIER, AssetType.SUB_QUALIFIER):
+                self.amount_e.setEnabled(False)
+                self.divisions_e.setEnabled(False)
+                self.reissuable.setEnabled(False)
+                self.reissuable.setChecked(False)
+
+            if asset_type[1] in (AssetType.QUALIFIER, AssetType.SUB_QUALIFIER):
+                self.amount_e.setEnabled(True)
+                self.amount_e.max_amount = QUALIFIER_ASSET_AMOUNT_MAX * COIN
+
+            if asset_type[1] in (AssetType.MSG_CHANNEL, ):
+                self.associated_data_e.line_edit.setText('')
+                self.associated_data_e.line_edit.setEnabled(False)
+            else:
+                self.associated_data_e.line_edit.setEnabled(True)
+
+            if asset_type[1] in (AssetType.RESTRICTED, ):
+                self.verifier_view.setVisible(True)
+                self.verifier_e.line_edit.setVisible(True)
+                self.verifier_label.setVisible(True)
+            else:
+                self.verifier_view.setVisible(False)
+                self.verifier_e.error_button.setVisible(False)
+                self.verifier_e.line_edit.setVisible(False)
+                self.verifier_label.setVisible(False)
+                self.verifier_e.line_edit.setText('')
+
+            self.parent_asset_selector_combo.setVisible(asset_type[1] not in (AssetType.ROOT, AssetType.QUALIFIER))
+            self.update_parent_assets(asset_type[1])
+
+            if asset_type[1] in (AssetType.ROOT, AssetType.QUALIFIER):
+                self.asset_checker.line_edit.setEnabled(True)
+                self.parent_is_ok = True
+            else:
+                selected_index = self.parent_asset_selector_combo.currentIndex()
+                self.parent_is_ok = selected_index > 0 and len(self.parent_assets) > (selected_index - 1) and self.parent_assets[selected_index - 1][1]
+                if asset_type[1] == AssetType.RESTRICTED:
+                    self.asset_checker.line_edit.setEnabled(False)
+                    if selected_index > 0 and len(self.parent_assets) > selected_index - 1:
+                        selected_asset = self.parent_assets[selected_index - 1][0]
+                        self.asset_checker.line_edit.setText(f'${selected_asset[:-1]}')
+                    else:
+                        self.asset_checker.line_edit.setText('')
+                else:
+                    self.asset_checker.line_edit.setText('')
+                    self.asset_checker.line_edit.setEnabled(selected_index > 0)
+            self.asset_checker.validate_text()
+
+        self.clayout = ChoicesLayout(_('Asset type'), [x[0] for x in self.asset_types], on_clicked=clayout_on_edit, checked_index=0)
+        self.burn_address = self.asset_types[self.clayout.selected_index()][2]
+        self.burn_amount = self.asset_types[self.clayout.selected_index()][3]
+
+        grid.addLayout(self.clayout.layout(), 0, 0, 6, 1)
+
+        self.parent_asset_selector_combo = QComboBox()
+        self.parent_asset_selector_combo.setVisible(False)
+        no_resize = self.parent_asset_selector_combo.sizePolicy()
+        no_resize.setRetainSizeWhenHidden(True)
+        self.parent_asset_selector_combo.setSizePolicy(no_resize)
+
+        def parent_asset_selector_on_change():
+            selected_parent_index = self.parent_asset_selector_combo.currentIndex()
+            if selected_parent_index <= 0 or len(self.parent_assets) <= (selected_parent_index - 1):
+                self.asset_checker.line_edit.setEnabled(False)
+                self.asset_checker.line_edit.setText('')
+                parent_is_valid = False
+            else:
+                parent_is_valid = self.parent_assets[selected_parent_index - 1][1]
+            self.parent_is_ok = parent_is_valid
+            selected_asset_type_index = self.clayout.selected_index()
+            asset_type = self.asset_types[selected_asset_type_index][1]
+            self.asset_checker.line_edit.setEnabled(selected_parent_index > 0 and asset_type != AssetType.RESTRICTED)
+            current_text = self.asset_checker.line_edit.text()
+            if asset_type == AssetType.ROOT:
+                user_text = ''
+            elif asset_type == AssetType.SUB:
+                split = current_text.split('/')
+                if len(split) > 1:
+                    user_text = split[-1]
+                else:
+                    user_text = ''
+            elif asset_type == AssetType.UNIQUE:
+                split = current_text.split('#')
+                if len(split) > 1:
+                    user_text = split[-1]
+                else:
+                    user_text = ''
+            elif asset_type == AssetType.MSG_CHANNEL:
+                split = current_text.split('~')
+                if len(split) > 1:
+                    user_text = split[-1]
+                else:
+                    user_text = ''
+            elif asset_type == AssetType.QUALIFIER:
+                user_text = current_text[1:]
+            elif asset_type == AssetType.SUB_QUALIFIER:
+                split = current_text.split('#')
+                if len(split) > 1:
+                    user_text = split[-1]
+                else:
+                    user_text = ''
+            else:
+                user_text = ''
+            prefix = self.get_prefix(asset_type)
+            self.asset_checker.line_edit.setText(prefix + user_text)
+            self.asset_checker.validate_text()
+
+        self.parent_asset_selector_combo.currentIndexChanged.connect(parent_asset_selector_on_change)
+
+        grid.addWidget(self.parent_asset_selector_combo, 0, 2, 1, 9)
+
+        # We don't want to query the server every click
+        async def check_if_asset_exists():
+            if not self.parent.network:
+                self.asset_checker.error_button.setToolTip(_("You are offline."))
+                self.asset_checker.error_button.show()
+                return
+            try:
+                raw_metadata = await self.parent.network.get_asset_metadata(self.asset_checker.line_edit.text())
+            except UntrustedServerReturnedError as e:
+                self.asset_checker.error_button.setToolTip(_("Error getting asset from network") + ":\n" + e.get_message_for_gui())
+                self.asset_checker.error_button.show()
+                return
+            except Exception as e:
+                self.asset_checker.error_button.setToolTip(_("Error getting asset from network") + ":\n" + repr(e))
+                self.asset_checker.error_button.show()
+                return
+            if raw_metadata:
+                # Cannot create
+                self.asset_checker.error_button.setToolTip(_("This asset already exists!"))
+                self.asset_checker.error_button.show()
+                pass
+            else:
+                self.asset_is_ok = True
+                self._maybe_enable_pay_button()
+
+        def asset_name_fast_fail(asset: str):
+            selected_index = self.clayout.selected_index()
+            if self.asset_types[selected_index][1] in (AssetType.ROOT, AssetType.SUB, AssetType.QUALIFIER, AssetType.SUB_QUALIFIER):
+                asset = asset.upper()
+
+            prefix = self.get_prefix(self.asset_types[selected_index][1])
+            if asset[:len(prefix)] != prefix:
+                asset = prefix + asset[len(prefix):]
+
+            asset = asset[:MAX_NAME_LENGTH-1]
+
+            pos = self.asset_checker.line_edit.cursorPosition()
+            self.asset_checker.line_edit.setText(asset)
+            self.asset_checker.line_edit.setCursorPosition(pos)
+
+            self.amount_e.update()
+            # Disable the button no matter what
+            self.asset_is_ok = False
+            self.send_button.setEnabled(False)
+            error = get_error_for_asset_typed(asset, self.asset_types[self.clayout.selected_index()][1])
+            return error
+
+        self.asset_checker = ValidatedDelayedCallbackEditor(get_asyncio_loop, asset_name_fast_fail, 0.5, check_if_asset_exists)
+
+        asset_label = QLabel(_('Name'))
+        grid.addWidget(asset_label, 1, 1)
+        grid.addWidget(self.asset_checker.line_edit, 1, 2, 1, 9)
+        grid.addWidget(self.asset_checker.error_button, 1, 11)
+
+        amount_label = QLabel(_('Amount'))
+        self.amount_e = AssetAmountEdit(lambda: self.asset_checker.line_edit.text()[:4], 0, DEFAULT_ASSET_AMOUNT_MAX * COIN, parent=self, min_amount=COIN)
+        self.amount_e.setText('1')
+        grid.addWidget(amount_label, 2, 1)
+        grid.addWidget(self.amount_e, 2, 2)
+
+        divisions_message = _('Asset Divisions') + '\n\n' \
+                            + _('Asset divisions are a number from 0 to 8 and denote how many digits past the decimal point can be used. Once an asset is issued, you cannot decrease this number.')
+        divisions_label = HelpLabel(_('Divisions'), divisions_message)
+
+        self.divisions_e = OnlyNumberAmountEdit(None, 0, 8, parent=self, callback=self._on_divisions_change)
+        divisions_width = char_width_in_lineedit() * 3
+        self.divisions_e._width = divisions_width
+        self.divisions_e.setMaximumWidth(divisions_width)
+        self.divisions_e.setAlignment(Qt.AlignCenter)
+        self.divisions_e.setText('0')
+
+        grid.addWidget(divisions_label, 2, 4)
+        grid.addWidget(self.divisions_e, 2, 5)
+
+        reissue_label = QLabel(_('Reissuable'))
+        self.reissuable = QCheckBox(checked=True)
+
+        grid.addWidget(reissue_label, 2, 7)
+        grid.addWidget(self.reissuable, 2, 8)
+
+        associated_data_message = _('Associated Data') + '\n\n' \
+                            + _('Data that is associated with an asset. Typically an IPFS hash, but can be a TXID. Leave blank to associate no data.')
+        associated_data_label = HelpLabel(_('Associated Data'), associated_data_message)
+
+        def associated_data_fast_fail(input: str):
+            self.associated_data_is_ok = False
+            self.send_button.setEnabled(False)
+            if len(input) == 0:
+                self.associated_data_is_ok = True
+                self._maybe_enable_pay_button()
+                return None
+            try:
+                if len(input) % 2 == 1 and len(input) > 2 and len(input) < 64:
+                    input = input[:-1]
+                raw_bytes = bytes.fromhex(input)
+                if len(raw_bytes) < 32:
+                    return _('Too few bytes for a TXID')
+                elif len(raw_bytes) > 32:
+                    return _('Too many bytes for a TXID')
+                else:
+                    self.associated_data_is_ok = True
+                    self._maybe_enable_pay_button()
+                    return None
+            except ValueError:
+                try:
+                    raw_bytes = base_decode(input, base=58)
+                    if len(raw_bytes) < 34:
+                        return _('Too few bytes for an IPFS hash')
+                    elif len(raw_bytes) > 34:
+                        return _('Too many bytes for an IPFS hash')
+                    else:
+                        self.associated_data_is_ok = True
+                        self._maybe_enable_pay_button()
+                        return None
+                except BaseDecodeError:
+                    return _('Failed to parse input')
+
+        grid.addWidget(associated_data_label, 3, 1)
+        self.associated_data_e = ValidatedDelayedCallbackEditor(get_asyncio_loop, associated_data_fast_fail, 0, lambda: asyncio.sleep(0))
+        grid.addWidget(self.associated_data_e.line_edit, 3, 2, 1, 9)
+        grid.addWidget(self.associated_data_e.error_button, 3, 11)
+
+        def verifier_fast_fail(input: str):
+            if not input:
+                self.payto_label.setVisible(self.parent.window.config.SHOW_CREATE_ASSET_PAY_TO)
+                self.payto_e.line_edit.setVisible(self.parent.window.config.SHOW_CREATE_ASSET_PAY_TO)
+                self.payto_e.error_button.setVisible(False)
+                if not self.parent.window.config.SHOW_CREATE_ASSET_PAY_TO:
+                    self.payto_e.line_edit.setText('')
+                self.verifier_is_ok = True
+                self.verifier_view.setEnabled(False)
+                self._maybe_enable_pay_button()
+                return None
+            self.payto_label.setVisible(True)
+            self.payto_e.line_edit.setVisible(True)
+            self.payto_e.validate_text()
+            input = input.upper()
+            pos = self.verifier_e.line_edit.cursorPosition()
+            compressed = compress_verifier_string(input)
+            while len(compressed) > MAX_VERIFIER_STING_LENGTH:
+                input = input[:-1]
+                compressed = compress_verifier_string(input)
+            self.verifier_e.line_edit.setText(input)
+            self.verifier_e.line_edit.setCursorPosition(pos)
+            self.verifier_is_ok = False
+            self.verifier_view.setEnabled(False)
+            self.send_button.setEnabled(False)
+            node = parse_verifier_string(input)
+            error = node.error()
+            if input and error:
+                return error
+            error = node.iterate_vars_return_first(lambda name: get_error_for_asset_typed(f'#{name}', AssetType.QUALIFIER))
+            if input and error: 
+                return error
+            return None
+
+        async def validate_qualifiers():
+            verifier = self.verifier_e.line_edit.text()
+            if not verifier:
+                return
+            node = parse_verifier_string(verifier)
+            qualifiers = []
+            node.iterate_vars_return_first(lambda name: qualifiers.append(f'#{name}'))
+            for qualifier in qualifiers:
+                if not self.parent.network:
+                    self.verifier_e.error_button.setToolTip(_("You are offline."))
+                    self.verifier_e.error_button.show()
+                    return
+                try:
+                    raw_metadata = await self.parent.network.get_asset_metadata(qualifier)
+                except UntrustedServerReturnedError as e:
+                    self.verifier_e.error_button.setToolTip(_("Error getting asset from network") + ":\n" + e.get_message_for_gui())
+                    self.verifier_e.error_button.show()
+                    return
+                except Exception as e:
+                    self.verifier_e.error_button.setToolTip(_("Error getting asset from network") + ":\n" + repr(e))
+                    self.verifier_e.error_button.show()
+                    return
+                if raw_metadata:
+                    # Cannot create
+                    self.verifier_is_ok = True
+                    self.verifier_view.setEnabled(True)
+                else:
+                    self.verifier_e.error_button.setToolTip(_("Qualifier {} does not exist!").format(qualifier))
+                    self.verifier_e.error_button.show()
+                    pass
+            self._maybe_enable_pay_button()
+            return None
+
+        verifier_message = _('Verifier String') + '\n\n' \
+                            + _('A boolean string to determine what addresses can recieve this asset. For instance, QUALIFIER would mean only addresses that have been tagged by the #QUALIFIER asset can receive this asset. ! means NOT, & means AND, and | means OR. Leave empty to allow all addresses to receive this asset. This can be changed in a reissue.')
+        self.verifier_label = HelpLabel(_('Verifier String'), verifier_message)
+
+        self.verifier_e = ValidatedDelayedCallbackEditor(get_asyncio_loop, verifier_fast_fail, 0.5, validate_qualifiers)
+
+        self.verifier_label.setVisible(False)
+        self.verifier_e.line_edit.setVisible(False)
+
+        grid.addWidget(self.verifier_label, 4, 1)
+        grid.addWidget(self.verifier_e.line_edit, 4, 2, 1, 7)
+        grid.addWidget(self.verifier_e.error_button, 4, 9)
+
+        def show_chart():
+            verifier = self.verifier_e.line_edit.text()
+            node = parse_verifier_string(verifier)
+            error = node.error()
+            if error: return
+            d = BooleanExprASTTableViewer(node, self.parent.window)
+            d.show()
+
+        self.verifier_view = EnterButton(_('Visualize'), show_chart)
+        self.verifier_view.setEnabled(False)
+        self.verifier_view.setVisible(False)
+        grid.addWidget(self.verifier_view, 4, 10)
+
+        def address_fast_fail(input: str):
+            self.address_is_ok = False
+            self.send_button.setEnabled(False)
+            asset_type = self.asset_types[self.clayout.selected_index()]
+            if input and not is_address(input): 
+                return _('Not a valid address')
+            if asset_type[1] == AssetType.RESTRICTED and self.verifier_e.line_edit.text():
+                if not input:
+                    return _('This asset must be sent to a qualified address')
+            else:
+                self.address_is_ok = True
+                self._maybe_enable_pay_button()
+            return None
+
+        async def validate_address():
+            asset_type = self.asset_types[self.clayout.selected_index()]
+            if asset_type[1] != AssetType.RESTRICTED or not self.verifier_e.line_edit.text():
+                return
+            address = self.payto_e.line_edit.text()
+            verifier = self.verifier_e.line_edit.text()
+            node = parse_verifier_string(verifier)
+            error = node.error()
+            if error:
+                return _('The verifier string is not valid')
+            qualifiers = set()
+            node.iterate_vars_return_first(lambda var: qualifiers.add(var))
+            is_qualified = dict()
+
+            for qualifier in qualifiers:
+                if not self.parent.network:
+                    self.payto_e.error_button.setToolTip(_("You are offline."))
+                    self.payto_e.error_button.show()
+                    return
+                try:
+                    h160 = b58_address_to_hash160(address)
+                    result = await self.parent.network.check_tag_for_h160(('#' if qualifier[0] != '#' else '') + qualifier, h160[1].hex())
+                except UntrustedServerReturnedError as e:
+                    self.payto_e.error_button.setToolTip(_("Error getting qualifier status from network") + ":\n" + e.get_message_for_gui())
+                    self.payto_e.error_button.show()
+                    return
+                except Exception as e:
+                    self.payto_e.error_button.setToolTip(_("Error getting qualifier status from network") + ":\n" + repr(e))
+                    self.payto_e.error_button.show()
+                    return
+                
+                is_qual = result.get('flag', False)
+                assert isinstance(is_qual, bool)
+                is_qualified[qualifier] = is_qual
+
+            can_receive = node.evaluate(is_qualified)
+            if not can_receive:
+                self.payto_e.error_button.setToolTip(_('This address cannot receive this asset based on the verifier string'))
+                self.payto_e.error_button.show()
+                return
+
+            self.address_is_ok = True
+            self._maybe_enable_pay_button()
+            return None
+
+        self.payto_e = ValidatedDelayedCallbackEditor(get_asyncio_loop, address_fast_fail, 0.5, validate_address)
+
+        pay_to_msg = (_("The recipient of the new asset.") + "\n\n"
+               + _("If a Bitcoin address is entered, the asset (and any created ownership assets) "
+                   "will be sent to this address. "
+                   "Leave this empty to send to yourself."))
+        self.payto_label = HelpLabel(_('Recieving Address'), pay_to_msg)
+        grid.addWidget(self.payto_label, 5, 1)
+        grid.addWidget(self.payto_e.line_edit, 5, 2, 1, 9)
+        grid.addWidget(self.payto_e.error_button, 5, 11)
+
+        self.payto_label.setVisible(self.parent.window.config.SHOW_CREATE_ASSET_PAY_TO)
+        self.payto_e.line_edit.setVisible(self.parent.window.config.SHOW_CREATE_ASSET_PAY_TO)
+
+        self.send_button = EnterButton(_("Pay") + f" {self.burn_amount} RVN...", self.create_asset)
+        self.send_button.setEnabled(False)
+        self.send_button.setMinimumWidth(char_width_in_lineedit() * 16)
+
+        grid.addWidget(self.send_button, 6, 10)
+
+        vbox = QVBoxLayout(self)
+        vbox.addLayout(grid)
+
+    def _maybe_enable_pay_button(self):
+        self.send_button.setEnabled(self.verifier_is_ok and self.associated_data_is_ok and self.address_is_ok and self.asset_is_ok and self.parent_is_ok)
+
+    def _on_divisions_change(self, amount):
+        if amount is None:
+            return
+        assert isinstance(amount, int)
+        self.amount_e.divisions = amount
+        self.amount_e.is_int = amount == 0
+        self.amount_e.min_amount = Decimal('1' if amount == 0 else f'0.{"".join("0" for i in range(amount - 1))}1') * COIN
+        self.amount_e.numbify()
+        self.amount_e.update()
+
+    def create_asset(self):
+        output = PartialTxOutput.from_address_and_value(self.burn_address, self.burn_amount * COIN)
+        outputs = [output]
+        goto_address = self.payto_e.line_edit.text()
+        asset = self.asset_checker.line_edit.text()
+        amount = self.amount_e.get_amount()
+        assert isinstance(amount, int)
+        divisions = self.divisions_e.get_amount()
+        assert isinstance(divisions, int)
+        reissuable = self.reissuable.isChecked()
+        associated_data = None
+        associated_data_raw = self.associated_data_e.line_edit.text()
+        if associated_data_raw:
+            try:
+                associated_data = b'\x54\x20' + bytes.fromhex(associated_data_raw)
+            except ValueError:
+                associated_data = base_decode(associated_data_raw, base=58)
+
+        if not goto_address:
+            asset_change_address = self.parent.wallet.get_single_change_address_for_new_transaction() or \
+                        self.parent.wallet.get_receiving_address() # Fallback
+            # Lock for parent asset change
+            self.parent.wallet.set_reserved_state_of_address(asset_change_address, reserved=True)
+        else:
+            asset_change_address = goto_address
+
+        output_amounts = {
+            None: self.burn_amount * COIN,
+            asset: amount,
+        }
+
+        parent_asset_change_address = None
+        selected_asset_type_index = self.clayout.selected_index()
+        asset_type = self.asset_types[selected_asset_type_index][1]
+        if asset_type not in (AssetType.ROOT, AssetType.QUALIFIER):
+            parent_asset = self.get_owner_asset()
+            output_amounts[parent_asset] = COIN
+            parent_asset_change_address = self.parent.wallet.get_single_change_address_for_new_transaction() or \
+                        self.parent.wallet.get_receiving_address() # Fallback
+            outputs.append(PartialTxOutput.from_address_and_value(parent_asset_change_address, COIN, asset=parent_asset))
+
+        if not goto_address:
+            self.parent.wallet.set_reserved_state_of_address(asset_change_address, reserved=False)
+
+        if asset_type in (AssetType.ROOT, AssetType.SUB):
+            output_amounts[f'{asset}!']: COIN
+
+        def make_tx(fee_est, *, confirmed_only=False):
+            if not goto_address:
+                # Freeze a change address so it is seperate from the rvn change
+                self.parent.wallet.set_reserved_state_of_address(asset_change_address, reserved=True)
+
+            if parent_asset_change_address:
+                self.parent.wallet.set_reserved_state_of_address(parent_asset_change_address, reserved=True)
+
+            appended_vouts = []
+            if asset_type == AssetType.RESTRICTED:
+                # https://github.com/RavenProject/Ravencoin/blob/e48d932ec70267a62ec3541bdaf4fe022c149f0e/src/assets/assets.cpp#L4567
+                # https://github.com/RavenProject/Ravencoin/blob/e48d932ec70267a62ec3541bdaf4fe022c149f0e/src/assets/assets.cpp#L901
+                # Longest verifier string is 75 de-facto. OP_PUSH used.
+                verifier_string = self.verifier_e.line_edit.text()
+                if not verifier_string:
+                    verifier_string = 'true'
+                verifier_script = generate_verifier_tag(verifier_string)
+                verifier_vout = PartialTxOutput(scriptpubkey=bytes.fromhex(verifier_script), value=0)
+                appended_vouts.append(verifier_vout)
+
+            if asset_type in (AssetType.ROOT, AssetType.SUB):
+                owner_script = generate_owner_script(asset_change_address, asset)
+                owner_vout = PartialTxOutput(scriptpubkey=bytes.fromhex(owner_script), value=0)
+                appended_vouts.append(owner_vout)
+
+            create_script = generate_create_script(asset_change_address, asset, amount, divisions, reissuable, associated_data)
+            create_vout = PartialTxOutput(scriptpubkey=bytes.fromhex(create_script), value=0)
+            appended_vouts.append(create_vout)
+
+            def fee_mixin(fee_est):
+                def new_fee_estimator(size):
+                    # size is virtual bytes
+                    # We shouldn't need to worry about vout size varint increasing
+                    appended_size = sum(len(x.serialize_to_network()) for x in appended_vouts)
+                    return fee_est(size + appended_size)
+            
+                return new_fee_estimator
+
+            tx = self.parent.wallet.make_unsigned_transaction(
+                coins=self.parent.window.get_coins(nonlocal_only=False, confirmed_only=confirmed_only),
+                outputs=outputs,
+                fee=fee_est,
+                rbf=False,
+                fee_mixin=fee_mixin
+            )
+
+            tx.add_outputs(appended_vouts, do_sort=False)
+
+            if not goto_address:
+                self.parent.wallet.set_reserved_state_of_address(asset_change_address, reserved=False)
+            
+            if parent_asset_change_address:
+                self.parent.wallet.set_reserved_state_of_address(parent_asset_change_address, reserved=False)
+
+            return tx
+
+        conf_dlg = ConfirmTxDialog(window=self.parent.window, make_tx=make_tx, output_value=output_amounts)
+        if conf_dlg.not_enough_funds:
+            # note: use confirmed_only=False here, regardless of config setting,
+            #       as the user needs to get to ConfirmTxDialog to change the config setting
+            if not conf_dlg.can_pay_assuming_zero_fees(confirmed_only=False):
+                text = self.get_text_not_enough_funds_mentioning_frozen()
+                self.parent.show_message(text)
+                return
+        tx = conf_dlg.run()
+        if tx is None:
+            # user cancelled
+            return
+        is_preview = conf_dlg.is_preview
+        if is_preview:
+            self.parent.window.show_transaction(tx)
+            return
+        def sign_done(success):
+            if success:
+                self.parent.window.broadcast_or_show(tx)
+        self.parent.window.sign_tx(
+            tx,
+            callback=sign_done,
+            external_keypairs=None)
+        
+    def get_text_not_enough_funds_mentioning_frozen(self) -> str:
+        text = _("Not enough funds")
+        frozen_str = self.get_frozen_balance_str()
+        if frozen_str:
+            text += " ({} {})".format(
+                frozen_str, _("are frozen")
+            )
+        return text
+
+    def get_frozen_balance_str(self) -> Optional[str]:
+        frozen_bal = sum(self.wallet.get_frozen_balance())
+        if not frozen_bal:
+            return None
+        return self.format_amount_and_units(frozen_bal)
+
+    def update_parent_assets(self, _type: AssetType):
+        if _type in (AssetType.SUB, AssetType.UNIQUE, AssetType.MSG_CHANNEL):
+            types = [AssetType.ROOT, AssetType.SUB]
+        elif _type in (AssetType.SUB_QUALIFIER, ):
+            types = [AssetType.QUALIFIER]
+        elif _type in (AssetType.RESTRICTED, ):
+            types = [AssetType.ROOT]
+        else:
+            return
+        
+        balance: Mapping[Optional[str], Tuple[int, int, int]] = self.parent.wallet.get_balance(asset_aware=True)
+        # confirmed, unconfirmed, unmatured
+        parent_assets = set()
+        for asset, amount in balance.items():
+            if asset is None: continue
+            if asset[-1] == '!':
+                parent_asset_name = asset[:-1]
+            elif asset[0] == '#':
+                parent_asset_name = asset
+            else: continue
+            if sum(amount) == 0: continue
+            if all(get_error_for_asset_typed(parent_asset_name, asset_type) for asset_type in types): continue
+            parent_assets.add(asset)
+
+        avaliable_parent_assets = sorted(list((asset, asset in self.parent.wallet.get_assets_in_mempool(), f'${asset[:-1]}' in balance) for asset in parent_assets), key=lambda x: x[0])
+        if avaliable_parent_assets == self.parent_assets:
+            return
+        if not avaliable_parent_assets:
+            self.parent_asset_selector_combo.clear()
+            self.parent_asset_selector_combo.addItems([_('You do not own any compatible assets')])
+            self.parent_asset_selector_combo.setCurrentIndex(0)
+            self.parent_asset_selector_combo.setEnabled(False)
+        else:
+            current_selected_asset = None
+            current_selected_asset_index = self.parent_asset_selector_combo.currentIndex()
+            if current_selected_asset_index > 0 and len(self.parent_assets) > (current_selected_asset_index - 1):
+                current_selected_asset = self.parent_assets[current_selected_asset_index - 1][0]
+            items = [_('Select an asset')]
+
+            for asset, in_mempool, restricted_asset_exists in avaliable_parent_assets:
+                if _type == AssetType.RESTRICTED and restricted_asset_exists:
+                    items.append(_('{} (created)').format(asset))
+                elif in_mempool:
+                    items.append(_('{} (mempool)').format(asset))
+                else:
+                    items.append(asset)
+
+            self.parent_asset_selector_combo.clear()
+            self.parent_asset_selector_combo.addItems(items)
+            self.parent_asset_selector_combo.model().item(0).setEnabled(False)
+            for i, (asset, valid1, valid2) in enumerate(avaliable_parent_assets):
+                if valid1 or (_type == AssetType.RESTRICTED and valid2):
+                    self.parent_asset_selector_combo.model().item(i+1).setEnabled(False)
+                if asset == current_selected_asset:
+                    self.parent_asset_selector_combo.setCurrentIndex(i+1)
+            self.parent_asset_selector_combo.setEnabled(True)
+
+        self.parent_assets = avaliable_parent_assets
+
+    def get_owner_asset(self):
+        current_selected_asset_index = self.parent_asset_selector_combo.currentIndex()
+        if current_selected_asset_index > 0 and len(self.parent_assets) > (current_selected_asset_index - 1):
+            return self.parent_assets[current_selected_asset_index - 1][0]
+        return None
+
+    def get_prefix(self, type_: AssetType):
+        if type_ == AssetType.QUALIFIER:
+            return '#'
+        asset = self.get_owner_asset()
+        if asset is None: return ''
+        if type_ == AssetType.SUB:
+            return f'{asset[:-1]}/'
+        elif type_ == AssetType.UNIQUE:
+            return f'{asset[:-1]}#'
+        elif type_ == AssetType.MSG_CHANNEL:
+            return f'{asset[:-1]}~'
+        elif type_ == AssetType.SUB_QUALIFIER:
+            return f'{asset}/#'
+        elif type_ == AssetType.RESTRICTED:
+            return f'${asset[:-1]}'
+        return ''
+    
+    def update(self):
+        self.payto_label.setVisible(self.parent.window.config.SHOW_CREATE_ASSET_PAY_TO)
+        self.payto_e.line_edit.setVisible(self.parent.window.config.SHOW_CREATE_ASSET_PAY_TO)
+        if not self.parent.window.config.SHOW_CREATE_ASSET_PAY_TO:
+            self.payto_e.line_edit.setText('')
+
+        asset_type = self.asset_types[self.clayout.selected_index()]
+        self.logger.info(f'updating parent assets for {asset_type[1]}')
+        self.update_parent_assets(asset_type[1])
+
+
+class ReissueAssetPanel(CreateAssetPanel):
+    pass
