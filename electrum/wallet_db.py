@@ -29,7 +29,7 @@ import json
 import copy
 import threading
 from collections import defaultdict
-from typing import Dict, Optional, List, Tuple, Set, Iterable, NamedTuple, Sequence, TYPE_CHECKING, Union
+from typing import Dict, Optional, List, Tuple, Set, Iterable, NamedTuple, Sequence, TYPE_CHECKING, Union, Any
 import binascii
 import time
 
@@ -595,6 +595,7 @@ class WalletDB(JsonDB):
         self.assets_to_watch = self.get('assets_to_watch')  # type: Set[str]
         self.verified_asset_metadata = self.get_dict('verified_asset_metadata')  # type: Dict[str, Tuple[AssetMetadata, Tuple[TxOutpoint, int], Tuple[TxOutpoint, int] | None, Tuple[TxOutpoint, int] | None]]       
         self.non_deterministic_vouts = self.get_dict('non_deterministic_txo_scriptpubkey')
+        self.verified_tags_for_qualifiers = self.get_dict('verified_qualifier_tags')
 
     @locked
     def get_non_deterministic_txo_lockingscript(self, outpoint: TxOutpoint) -> Optional[bytes]:
@@ -621,13 +622,6 @@ class WalletDB(JsonDB):
         assert isinstance(asset, str)
         assert (error := get_error_for_asset_name(asset) is None), error
         self.assets_to_watch.add(asset)
-
-    @locked
-    def get_asset_metadata(self, asset) -> Optional[AssetMetadata]:
-        assert isinstance(asset, str)
-        result = self.verified_asset_metadata.get(asset)
-        if result is None: return None
-        return result[0]
 
     @modifier
     def add_verified_asset_metadata(self, asset: str, metadata: AssetMetadata, source_tup: Tuple[TxOutpoint, int], source_divisions_tup: Tuple[TxOutpoint, int] | None, source_associated_data_tup: Tuple[TxOutpoint, int] | None):
@@ -677,6 +671,47 @@ class WalletDB(JsonDB):
     def remove_verified_asset_metadata(self, asset: str):
         assert isinstance(asset, str)
         return self.verified_asset_metadata.pop(asset, None)
+
+    @locked
+    def get_verified_qualifier_tags(self, asset: str) -> Dict[str, Dict[str, Any]]:
+        assert isinstance(asset, str)
+        return self.verified_tags_for_qualifiers.get(asset, None)
+
+    @locked
+    def get_verified_qualifier_tag(self, asset: str, h160: str) -> Optional[Dict[str, Any]]:
+        assert isinstance(asset, str)
+        assert isinstance(h160, str)
+        return self.verified_tags_for_qualifiers.get(asset, dict()).get(h160)
+
+    @modifier
+    def remove_verified_qualifier_tag(self, asset: str, h160: str):
+        assert isinstance(asset, str)
+        assert isinstance(h160, str)
+        self.verified_tags_for_qualifiers.get(asset, dict()).pop(h160, None)
+        if not self.verified_tags_for_qualifiers.get(asset):
+            self.verified_tags_for_qualifiers.pop(asset, None)
+
+    @modifier
+    def add_verified_qualifier_tag(self, asset: str, h160: str, d):
+        assert isinstance(asset, str)
+        assert isinstance(h160, str)
+        assert isinstance(d['tx_hash'], str)
+        assert isinstance(d['tx_pos'], int)
+        assert isinstance(d['height'], int)
+        assert isinstance(d['flag'], bool)
+        if self.verified_tags_for_qualifiers.get(asset) is None:
+            self.verified_tags_for_qualifiers[asset] = dict()
+        self.verified_tags_for_qualifiers[asset][h160] = d
+
+    @locked
+    def get_verified_qualifier_tags_after_height(self, height: int) -> Dict[str, Set[str]]:
+        assert isinstance(height, int)
+        d = defaultdict(set)
+        for asset, h160_dict in self.verified_tags_for_qualifiers.items():
+            for h160, d1 in h160_dict.items():
+                if d1['height'] > height:
+                    d[asset].add(h160)
+        return d
 
     @profiler
     def _load_transactions(self):

@@ -703,30 +703,6 @@ class Abstract_Wallet(ABC, Logger, EventListener):
         balances = self.get_balance(asset_aware=True)
         return asset in balances and sum(balances[asset]) > 0
     
-    def get_asset_metadata(self, asset: str) -> Optional[Tuple[AssetMetadata, int]]:
-        verified = self.db.get_verified_asset_metadata(asset)
-        if verified:
-            return verified, METADATA_VERIFIED
-        unconfirmed = self.adb.unconfirmed_asset_metadata.get(asset, None)
-        if unconfirmed:
-            return unconfirmed[0], METADATA_UNCONFIRMED
-        unverified = self.adb.unverified_asset_metadata.get(asset, None)
-        if unverified:
-            return unverified[0], METADATA_UNVERIFIED
-        return None
-
-    def get_asset_metadata_outpoint(self, asset: str) -> Optional[TxOutpoint]:
-        base_source = self.db.get_verified_asset_metadata_base_source(asset)
-        if base_source:
-            return base_source[0]
-        unconfirmed = self.adb.unconfirmed_asset_metadata.get(asset, None)
-        if unconfirmed:
-            return unconfirmed[1][0]
-        unverified = self.adb.unverified_asset_metadata.get(asset, None)
-        if unverified:
-            return unverified[1][0]
-        return None
-
     @abstractmethod
     def get_address_index(self, address: str) -> Optional[AddressIndexGeneric]:
         pass

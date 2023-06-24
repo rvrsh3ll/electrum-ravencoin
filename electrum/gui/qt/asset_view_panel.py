@@ -85,7 +85,7 @@ class AssetList(MyTreeView):
     def update(self):
         # not calling maybe_defer_update() as it interferes with coincontrol status bar
         watching_assets = self.wallet.get_assets_to_watch()
-        new_assets = [(asset, (metadata[0].sats_in_circulation, metadata[1]) if ((metadata := self.wallet.get_asset_metadata(asset)) is not None) else None) for asset in watching_assets]
+        new_assets = [(asset, (metadata[0].sats_in_circulation, metadata[1]) if ((metadata := self.wallet.adb.get_asset_metadata(asset)) is not None) else None) for asset in watching_assets]
         if self.current_assets == new_assets:
             return
         self.model().clear()
@@ -353,7 +353,7 @@ class MetadataViewer(QFrame):
         if asset is None:
             self.metadata_info.clear()
             return
-        metadata_tup = self.parent.parent.wallet.get_asset_metadata(asset)
+        metadata_tup = self.parent.parent.wallet.adb.get_asset_metadata(asset)
         if metadata_tup is None:
             self.metadata_info.clear()
             return

@@ -99,6 +99,9 @@ class AddressSynchronizer(Logger, EventListener):
         self.unverified_asset_metadata = {}  # type: Dict[str, Tuple[AssetMetadata, Tuple[TxOutpoint, int], Optional[Tuple[TxOutpoint, int]], Optional[Tuple[TxOutpoint, int]]]]
         self.unconfirmed_asset_metadata = {}  # type: Dict[str, Tuple[AssetMetadata, Tuple[TxOutpoint, int], Optional[Tuple[TxOutpoint, int]], Optional[Tuple[TxOutpoint, int]]]]
 
+        self.unverified_tags_for_qualifier = defaultdict(dict)
+        self.unconfirmed_tags_for_qualifier = defaultdict(dict)
+
         self._get_balance_cache = {}
         self._get_asset_balance_cache = {}
         self._get_assets_in_mempool_cache = {}
@@ -724,6 +727,99 @@ class AddressSynchronizer(Logger, EventListener):
             self.db.add_verified_asset_metadata(asset, metadata, source_tup, source_divisions_tup, source_associated_data_tup)
         util.trigger_callback('adb_added_verified_asset_metadata', self, asset)
 
+    def get_metadata_for_synchronizer(self, asset: str) -> Optional[AssetMetadata]:
+        with self.lock:
+            unconfirmed = self.unconfirmed_asset_metadata.get(asset, None)
+            if unconfirmed:
+                return unconfirmed[0]
+            unverified = self.unverified_asset_metadata.get(asset, None)
+            if unverified:
+                return unverified[0]
+            verified = self.db.get_verified_asset_metadata(asset)
+            if verified:
+                return verified
+            return None
+    
+    def get_asset_metadata(self, asset: str) -> Optional[Tuple[AssetMetadata, int]]:
+        with self.lock:
+            verified = self.db.get_verified_asset_metadata(asset)
+            if verified:
+                return verified, METADATA_VERIFIED
+            unconfirmed = self.unconfirmed_asset_metadata.get(asset, None)
+            if unconfirmed:
+                return unconfirmed[0], METADATA_UNCONFIRMED
+            unverified = self.unverified_asset_metadata.get(asset, None)
+            if unverified:
+                return unverified[0], METADATA_UNVERIFIED
+            return None
+    
+    def get_asset_metadata_outpoint(self, asset: str) -> Optional[TxOutpoint]:
+        with self.lock:
+            base_source = self.db.get_verified_asset_metadata_base_source(asset)
+            if base_source:
+                return base_source[0]
+            unconfirmed = self.unconfirmed_asset_metadata.get(asset, None)
+            if unconfirmed:
+                return unconfirmed[1][0]
+            unverified = self.unverified_asset_metadata.get(asset, None)
+            if unverified:
+                return unverified[1][0]
+            return None
+
+    def add_unverified_or_unconfirmed_tags_for_qualifier(self, asset, h160_tags):
+        verified_tags = self.db.get_verified_qualifier_tags(asset)
+        if not verified_tags:
+            verified_tags = dict()
+        with self.lock:
+            for h160, d in h160_tags.items():
+                if d['height'] > 0:
+                    if h160 in verified_tags:
+                        if (verified_tags[h160]['tx_hash'], verified_tags[h160]['height']) == (d['tx_hash'], d['height']):
+                            # no change with what we know
+                            continue
+                    self.unverified_tags_for_qualifier[asset][h160] = d
+                else:
+                    self.unconfirmed_tags_for_qualifier[asset][h160] = d
+
+    def get_qualifier_tags_for_synchronizer(self, asset: str) -> Dict[str, Dict[str, object]]:
+        with self.lock:
+            tags = self.db.get_verified_qualifier_tags(asset)
+            if not tags:
+                tags = {}
+            unverified_tags = self.unverified_tags_for_qualifier.get(asset)
+            if unverified_tags:
+                for h160, d in unverified_tags.items():
+                    tags[h160] = d
+            unconfirmed_tags = self.unconfirmed_tags_for_qualifier.get(asset)
+            if unconfirmed_tags:
+                for h160, d in unconfirmed_tags.items():
+                    tags[h160] = d
+            return tags
+
+    def get_unverified_tags_for_qualifier(self) -> Dict[str, Dict[str, Dict[str, object]]]:
+        with self.lock:
+            return dict(self.unverified_tags_for_qualifier)
+
+    def remove_unverified_tag_for_qualifier(self, asset: str, h160: str, source_height: int):
+        with self.lock:
+            maybe_tags = self.unverified_tags_for_qualifier.get(asset)
+            if maybe_tags:
+                maybe_tag = maybe_tags.get(h160)
+                if maybe_tag:
+                    if maybe_tag['height'] == source_height:
+                        self.unverified_tags_for_qualifier[asset].pop(h160)
+                        if not self.unverified_tags_for_qualifier[asset]:
+                            self.unverified_tags_for_qualifier.pop(asset)
+
+    def add_verified_tag_for_qualifier(self, asset: str, h160: str, d):
+        # Remove from the unverified map and add to the verified map
+        with self.lock:
+            self.unverified_tags_for_qualifier.get(asset, dict()).pop(h160, None)
+            if not self.unverified_tags_for_qualifier.get(asset):
+                self.unverified_tags_for_qualifier.pop(asset, None)
+            self.db.add_verified_qualifier_tag(asset, h160, d)
+        util.trigger_callback('adb_added_verified_tag_for_qualifier', self, asset, h160)
+
 
     def remove_unverified_tx(self, tx_hash, tx_height):
         with self.lock:
@@ -762,6 +858,15 @@ class AddressSynchronizer(Logger, EventListener):
                     txs.add(div_tup[0].txid.hex())
                 if associated_data_tup:
                     txs.add(associated_data_tup[0].txid.hex())
+            for asset, h160s in self.db.get_verified_qualifier_tags_after_height(above_height):
+                for h160 in h160s:
+                    tag_data = self.db.get_verified_qualifier_tag(asset, h160)
+                    verified_info = self.db.get_verified_tx(tag_data['tx_hash'])
+                    header = blockchain.read_header(tag_data['height'])
+                    if header and verified_info and hash_header(header) == verified_info.header_hash: continue
+                    
+                    self.db.remove_verified_qualifier_tag(asset, h160)
+                    txs.add(tag_data['tx_hash'])
             for tx_hash in self.db.list_verified_tx():
                 info = self.db.get_verified_tx(tx_hash)
                 tx_height = info.height
@@ -836,6 +941,8 @@ class AddressSynchronizer(Logger, EventListener):
     def is_up_to_date(self):
         if not self.synchronizer or not self.verifier:
             return False
+        #print(f'{self.synchronizer.is_up_to_date()=}')
+        #print(f'{self.verifier.is_up_to_date()=}')
         return self.synchronizer.is_up_to_date() and self.verifier.is_up_to_date()
 
     def reset_netrequest_counters(self) -> None:

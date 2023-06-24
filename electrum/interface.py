@@ -1183,13 +1183,20 @@ class Interface(Logger):
             res = int(res * bitcoin.COIN)
         return res
 
-
     async def get_asset_metadata(self, asset: str) -> dict:
         assert isinstance(asset, str)
         error = get_error_for_asset_name(asset)
         if error:
             raise Exception(f'bad asset: {error}')
         res = await self.session.send_request('blockchain.asset.get_meta', [asset])
+        return res
+
+    async def get_tags_for_qualifier(self, asset: str) -> dict:
+        assert isinstance(asset, str)
+        error = get_error_for_asset_name(asset)
+        if error:
+            raise Exception(f'bad asset: {error}')
+        res = await self.session.send_request('blockchain.tag.qualifier.list', [asset])
         return res
 
     async def check_tag_for_h160(self, asset: str, h160: str) -> dict:

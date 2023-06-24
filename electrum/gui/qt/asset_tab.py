@@ -9,7 +9,7 @@ from electrum.i18n import _
 from .util import MessageBoxMixin, read_QIcon
 from .asset_view_panel import ViewAssetPanel
 from .asset_management_panel import CreateAssetPanel, ReissueAssetPanel
-from .asset_qualifier_tag import QualifierAssetPanel
+from .asset_qualifier_tag_panel import QualifierAssetPanel
 
 if TYPE_CHECKING:
     from .main_window import ElectrumWindow

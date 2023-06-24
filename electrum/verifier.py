@@ -28,7 +28,8 @@ import aiorpcx
 
 from .util import TxMinedInfo, NetworkJobOnDefaultServer
 from .crypto import sha256d
-from .asset import get_asset_info_from_script, AssetMetadata, AssetException, MetadataAssetVoutInformation, OwnerAssetVoutInformation
+from .asset import (get_asset_info_from_script, AssetMetadata, AssetException, MetadataAssetVoutInformation, OwnerAssetVoutInformation,
+                    AssetVoutType)
 from .bitcoin import hash_decode, hash_encode
 from .transaction import Transaction, TxOutpoint
 from .blockchain import hash_header
@@ -73,11 +74,15 @@ class SPV(NetworkJobOnDefaultServer):
             await self._request_proofs()
             await asyncio.sleep(0.1)
 
-    async def _maybe_defer(self, tx_hash: str, tx_height: int) -> bool:
+    async def _maybe_defer(self, tx_hash: str, tx_height: int, for_tx=False) -> bool:
         local_height = self.blockchain.height()
         # do not request merkle branch if we already requested it
-        if tx_hash in self.requested_merkle or tx_hash in self.merkle_roots:
+        if tx_hash in self.requested_merkle:
             return True
+        if tx_hash in self.merkle_roots:
+            if for_tx and self.wallet.db.get_verified_tx(tx_hash): return True
+            else:
+                return True
         # or before headers are available
         if not (0 < tx_height <= local_height):
             return True
@@ -95,7 +100,7 @@ class SPV(NetworkJobOnDefaultServer):
     async def _request_proofs(self):
         unverified = self.wallet.get_unverified_txs()
         for tx_hash, tx_height in unverified.items():
-            if await self._maybe_defer(tx_hash, tx_height): continue
+            if await self._maybe_defer(tx_hash, tx_height, True): continue
             await self.taskgroup.spawn(self._verify_unverified_transaction, tx_hash, tx_height)
 
         unverified_assets = self.wallet.get_unverified_asset_metadatas()
@@ -115,6 +120,15 @@ class SPV(NetworkJobOnDefaultServer):
             self.logger.info(f'attempting to verify {asset}')
             await self.taskgroup.spawn(self._verify_unverified_asset_metadata(asset, metadata, source_tuple, divisions_tuple, associated_data_tuple))
                 
+        unverified_tags_for_qualifier = self.wallet.get_unverified_tags_for_qualifier()
+        for asset, h160_dict in unverified_tags_for_qualifier.items():
+            for h160, d in h160_dict.items():
+                txid = d['tx_hash']
+                height = d['height']
+                if txid not in self.merkle_roots and await self._maybe_defer(txid, height): continue
+                self.logger.info(f'attempting to verify tag for {asset}, {h160}')
+                await self.taskgroup.spawn(self._verify_unverified_tags_for_qualifier(asset, h160, d))
+
     async def _verify_unverified_asset_metadata(
             self, 
             asset: str, 
@@ -246,6 +260,39 @@ class SPV(NetworkJobOnDefaultServer):
         self.logger.info(f'verified metadata for {asset}')
         self.wallet.add_verified_asset_metadata(asset, metadata, source, divisions_source, associated_data_source)
 
+    async def _verify_unverified_tags_for_qualifier(self, asset, h160, d):
+        txid = d['tx_hash']
+        height = d['height']
+        try:
+            if not self.wallet.db.get_verified_tx(txid) and txid not in self.merkle_roots:
+                await self._request_and_verify_single_proof(txid, height)
+            else:
+                self.requested_merkle.discard(txid)
+            tx = self.wallet.get_transaction(txid)
+            if not tx:
+                self._requests_sent += 1
+                async with self._network_request_semaphore:
+                    raw_tx = await self.interface.get_transaction(txid)
+                    tx = Transaction(raw_tx)
+                self._requests_answered += 1
+            idx = d['tx_pos']
+            asset_info = get_asset_info_from_script(tx.outputs()[idx].scriptpubkey)
+            if _type := asset_info.get_type() != AssetVoutType.NULL:
+                raise AssetException(f'bad asset type: {_type}')
+            if h160 != asset_info.h160:
+                raise AssetException(f'h160 mismatch: {h160} vs {asset_info.h160}')
+            if asset != asset_info.asset:
+                raise AssetException(f'asset mismatch: {asset} vs {asset_info.asset}')
+            if d['flag'] != asset_info.flag:
+                raise AssetException(f'bad flag: {asset_info.flag}')
+        except (aiorpcx.jsonrpc.RPCError, RequestCorrupted, AssetException, IndexError) as e:
+                self.logger.info(f'bad qualifier tag {asset} {h160}: {repr(e)}')
+                self.wallet.remove_unverified_tag_for_qualifier(asset, h160, height)
+                raise GracefulDisconnect(e) from e
+            
+        self.logger.info(f'verified tag for {asset} {h160}')
+        self.wallet.add_verified_tag_for_qualifier(asset, h160, d)
+
     async def _verify_unverified_transaction(self, tx_hash, tx_height):
         try:
             pos, header = await self._request_and_verify_single_proof(tx_hash, tx_height)
@@ -353,7 +400,8 @@ class SPV(NetworkJobOnDefaultServer):
     def is_up_to_date(self):
         return (not self.requested_merkle
                 and not self.wallet.unverified_tx
-                and not self.wallet.unverified_asset_metadata)
+                and not self.wallet.unverified_asset_metadata
+                and not self.wallet.unverified_tags_for_qualifier)
 
 
 def verify_tx_is_in_block(tx_hash: str, merkle_branch: Sequence[str],

@@ -34,7 +34,7 @@ from . import util
 from .transaction import Transaction, PartialTransaction
 from .util import make_aiohttp_session, NetworkJobOnDefaultServer, random_shuffled_copy, OldTaskGroup
 from .bitcoin import address_to_scripthash, is_address
-from .asset import AssetMetadata, get_error_for_asset_name
+from .asset import AssetMetadata, get_error_for_asset_name, get_error_for_asset_typed, AssetType
 from .logging import Logger
 from .interface import GracefulDisconnect, NetworkTimeout
 from .i18n import _
@@ -73,6 +73,12 @@ def asset_status(asset_data):
 
     return hashlib.sha256(h.encode('ascii')).digest().hex()
 
+def qualifier_tag_status(d):
+    if not d:
+        return None
+    status = ';'.join(f'{h160}:{d1["height"]}{d1["tx_hash"]}{d1["tx_pos"]}{d1["flag"]}' for h160, d1 in sorted(d.items(), key=lambda x: x[0]))
+    return hashlib.sha256(status.encode('ascii')).digest().hex()
+
 class SynchronizerBase(NetworkJobOnDefaultServer):
     """Subscribe over the network to a set of addresses, and monitor their statuses.
     Every time a status changes, run a coroutine provided by the subclass.
@@ -95,9 +101,15 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
         self._handling_asset_statuses = set()
         self._processed_some_asset_notifications = False
 
+        self._adding_qualifiers_for_tags = set()
+        self.requested_qualifiers_for_tags = set()
+        self._handling_qualifiers_for_tags_statuses = set()
+        self._processed_some_qualifier_for_tags_notifications = False
+
         # Queues
         self.asset_status_queue = asyncio.Queue()
         self.status_queue = asyncio.Queue()
+        self.qualifier_tags_status_queue = asyncio.Queue()
 
     async def _run_tasks(self, *, taskgroup):
         await super()._run_tasks(taskgroup=taskgroup)
@@ -105,6 +117,7 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
             async with taskgroup as group:
                 await group.spawn(self.handle_status())
                 await group.spawn(self.handle_asset_status())
+                await group.spawn(self.handle_qualifier_for_tags_status())
                 await group.spawn(self.main())
         finally:
             # we are being cancelled now
@@ -118,6 +131,10 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
     def add_asset(self, asset):
         if error := get_error_for_asset_name(asset): raise ValueError(f'invalid asset: {error}')
         self._adding_assets.add(asset)
+
+    def add_qualifier_for_tag(self, asset):
+        if error := get_error_for_asset_typed(asset, AssetType.QUALIFIER): raise ValueError(f'invalid asset: {error}')
+        self._adding_qualifiers_for_tags.add(asset)
 
     async def _add_address(self, addr: str):
         try:
@@ -137,6 +154,15 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
         finally:
             self._adding_assets.discard(asset)
 
+    async def _add_qualifier_for_tags(self, asset: str):
+        try:
+            if error := get_error_for_asset_typed(asset, AssetType.QUALIFIER): raise ValueError(f'invalid asset: {error}')
+            if asset in self.requested_qualifiers_for_tags: return
+            self.requested_qualifiers_for_tags.add(asset)
+            await self.taskgroup.spawn(self._subscribe_to_qualifier_for_tags, asset)
+        finally:
+            self._adding_qualifiers_for_tags.discard(asset)
+
     async def _on_address_status(self, addr, status):
         """Handle the change of the status of an address.
         Should remove addr from self._handling_addr_statuses when done.
@@ -144,6 +170,9 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
         raise NotImplementedError()  # implemented by subclasses
 
     async def _on_asset_status(self, asset, status):
+        raise NotImplementedError()
+
+    async def _on_qualifier_for_tags_status(self, asset, status):
         raise NotImplementedError()
 
     async def _subscribe_to_address(self, addr):
@@ -161,11 +190,14 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
 
     async def _subscribe_to_asset(self, asset):
         self._requests_sent += 1
-        try:
-            async with self._network_request_semaphore:
-                await self.session.subscribe('blockchain.asset.subscribe', [asset], self.asset_status_queue)
-        except RPCError as _:
-            raise
+        async with self._network_request_semaphore:
+            await self.session.subscribe('blockchain.asset.subscribe', [asset], self.asset_status_queue)
+        self._requests_answered += 1
+
+    async def _subscribe_to_qualifier_for_tags(self, asset):
+        self._requests_sent += 1
+        async with self._network_request_semaphore:
+            await self.session.subscribe('blockchain.tag.qualifier.subscribe', [asset], self.qualifier_tags_status_queue)
         self._requests_answered += 1
 
     async def handle_status(self):
@@ -184,6 +216,14 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
             self.requested_assets.discard(asset)
             await self.taskgroup.spawn(self._on_asset_status, asset, status)
             self._processed_some_asset_notifications = True
+
+    async def handle_qualifier_for_tags_status(self):
+        while True:
+            asset, status = await self.qualifier_tags_status_queue.get()
+            self._handling_qualifiers_for_tags_statuses.add(asset)
+            self.requested_qualifiers_for_tags.discard(asset)
+            await self.taskgroup.spawn(self._on_qualifier_for_tags_status, asset, status)
+            self._processed_some_qualifier_for_tags_notifications = True
 
     async def main(self):
         raise NotImplementedError()  # implemented by subclasses
@@ -206,9 +246,14 @@ class Synchronizer(SynchronizerBase):
         self._init_done = False
         self.requested_tx = {}
         self.requested_histories = set()
+
         self.requested_asset_metadata = set()
+        
+        self.requested_qualifiers_for_tags_results = set()
+
         self._stale_histories = dict()  # type: Dict[str, asyncio.Task]
         self._stale_asset_metadatas = dict()  # type: Dict[str, asyncio.Task]
+        self._stale_qualifiers_for_tags = dict()  # type: Dict[str, asyncio.Task]
 
     def diagnostic_name(self):
         return self.adb.diagnostic_name()
@@ -221,17 +266,64 @@ class Synchronizer(SynchronizerBase):
                 and not self.requested_histories
                 and not self.requested_tx
                 and not self._stale_histories
+
                 and not self._adding_assets
                 and not self.requested_assets
                 and not self._handling_asset_statuses
                 and not self.requested_asset_metadata
                 and not self._stale_asset_metadatas
+
+                and not self._adding_qualifiers_for_tags
+                and not self.requested_qualifiers_for_tags
+                and not self._handling_qualifiers_for_tags_statuses
+                and not self.requested_qualifiers_for_tags_results
+                and not self._stale_qualifiers_for_tags
+
                 and self.status_queue.empty()
-                and self.asset_status_queue.empty())
+                and self.asset_status_queue.empty()
+                and self.qualifier_tags_status_queue.empty())
+
+    async def _on_qualifier_for_tags_status(self, asset, status):
+        try:
+            tags = self.adb.get_qualifier_tags_for_synchronizer(asset)
+            if qualifier_tag_status(tags) == status:
+                return
+            if (asset, status) in self.requested_qualifiers_for_tags_results:
+                return
+            self.requested_qualifiers_for_tags_results.add((asset, status))
+            self._stale_qualifiers_for_tags.pop(asset, asyncio.Future()).cancel()
+        finally:
+            self._handling_qualifiers_for_tags_statuses.discard(asset)
+        self._requests_sent += 1
+        async with self._network_request_semaphore:
+            result = await self.interface.get_tags_for_qualifier(asset)
+        self._requests_answered += 1
+        self.logger.info(f'receiving tags for qualifier {asset}: {result.keys()}')
+        if qualifier_tag_status(result) != status:
+            self.logger.info(f"error: qualifier tag status mismatch: {asset}. we'll wait a bit for status update.")
+            # The server is supposed to send a new status notification, which will trigger a new
+            # get_history. We shall wait a bit for this to happen, otherwise we disconnect.
+            async def disconnect_if_still_stale():
+                timeout = self.network.get_network_timeout_seconds(NetworkTimeout.Generic)
+                await asyncio.sleep(timeout)
+                raise SynchronizerFailure(f"timeout reached waiting for qualifier {asset}: tags still stale")
+            self._stale_qualifiers_for_tags[asset] = await self.taskgroup.spawn(disconnect_if_still_stale)
+        else:
+            self._stale_qualifiers_for_tags.pop(asset, asyncio.Future()).cancel()
+            verified_tags = self.adb.db.get_verified_qualifier_tags(asset)
+            if verified_tags:
+                if any(h160 not in verified_tags.keys() for h160 in result.keys()):
+                    raise SynchronizerFailure(f'verified h160s are missing from tags for {asset}', log_level=logging.ERROR)
+                for h160, h160_d in verified_tags.items():
+                    if 0 < result[h160]['height'] < h160_d['height']:
+                        self.requested_qualifiers_for_tags_results.discard((asset, status))
+                        raise SynchronizerFailure(f'Server is trying to send old tag data for {asset} {h160}', log_level=logging.ERROR)            
+            self.adb.add_unverified_or_unconfirmed_tags_for_qualifier(asset, result)
+        self.requested_qualifiers_for_tags_results.discard((asset, status))
 
     async def _on_asset_status(self, asset, status):
         try:
-            metadata = self.adb.db.get_asset_metadata(asset)
+            metadata = self.adb.get_metadata_for_synchronizer(asset)
             if asset_status(metadata) == status:
                 return
             if (asset, status) in self.requested_asset_metadata:
@@ -257,9 +349,9 @@ class Synchronizer(SynchronizerBase):
         else:
             self._stale_asset_metadatas.pop(asset, asyncio.Future()).cancel()
             base_tup = self.adb.db.get_verified_asset_metadata_base_source(asset)
-            if base_tup is not None and result['source']['height'] < base_tup[1]:
+            if base_tup is not None and 0 < result['source']['height'] < base_tup[1]:
                 self.requested_asset_metadata.discard((asset, status))
-                raise GracefulDisconnect(_('Server is trying to send old metadata for {}').format(asset), log_level=logging.ERROR)            
+                raise SynchronizerFailure(_('Server is trying to send old metadata for {}').format(asset), log_level=logging.ERROR)            
             self.adb.add_unverified_or_unconfirmed_asset_metadata(asset, result)
         self.requested_asset_metadata.discard((asset, status))
 
@@ -360,6 +452,9 @@ class Synchronizer(SynchronizerBase):
             await self._add_address(addr)
         for asset in random_shuffled_copy(self.adb.get_assets()):
             await self._add_asset(asset)
+            if asset[0] == '#':
+                primary_qualifier = asset.split('/')[0]
+                await self._add_qualifier_for_tags(primary_qualifier)
         # main loop
         self._init_done = True
         prev_uptodate = False
@@ -369,12 +464,16 @@ class Synchronizer(SynchronizerBase):
                 await self._add_address(addr)
             for asset in self._adding_assets.copy():
                 await self._add_asset(asset)
+            for asset in self._adding_qualifiers_for_tags.copy():
+                await self._add_qualifier_for_tags(asset)
             up_to_date = self.adb.is_up_to_date()
             # see if status changed
             if (up_to_date != prev_uptodate
-                    or up_to_date and (self._processed_some_notifications or self._processed_some_asset_notifications)):
+                    or up_to_date and (self._processed_some_notifications or self._processed_some_asset_notifications or
+                                       self._processed_some_qualifier_for_tags_notifications)):
                 self._processed_some_notifications = False
                 self._processed_some_asset_notifications = False
+                self._processed_some_qualifier_for_tags_notifications = False
                 self.adb.up_to_date_changed()
             prev_uptodate = up_to_date
 

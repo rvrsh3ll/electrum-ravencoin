@@ -315,6 +315,8 @@ class AssetVoutType(Enum):
     OWNER = 4
     REISSUE = 5
 
+    NULL = 6
+
 class BaseAssetVoutInformation():
     asset = None
     amount: Optional[int] = None
@@ -362,6 +364,17 @@ class TransferAssetVoutInformation(BaseAssetVoutInformation):
     def is_deterministic(self):
         return self.asset_memo is None and self.asset_memo_timestamp is None and super().is_deterministic()
 
+class TagAssetVoutInformation(BaseAssetVoutInformation):
+    def is_deterministic(self):
+        return True
+    
+class NullTagAssetVoutInformation(TagAssetVoutInformation):
+    def __init__(self, asset: str, h160: str, flag: bool):
+        BaseAssetVoutInformation.__init__(self, AssetVoutType.NULL, True)
+        self.asset = asset
+        self.h160 = h160
+        self.flag = flag
+
 def get_asset_info_from_script(script: bytes) -> BaseAssetVoutInformation:
     try:
         decoded = [x for x in script_GetOp(script)]
@@ -371,11 +384,21 @@ def get_asset_info_from_script(script: bytes) -> BaseAssetVoutInformation:
     try:
         for i, (op, _, index) in enumerate(decoded):
             if op == opcodes.OP_ASSET:
+                asset_portion = script[index:]
                 if i == 0:
-                    pass
+                    reader = ByteReader(asset_portion)
+                    first_byte = reader.read_byte_as_int()
+                    if first_byte == opcodes.OP_RESERVED:
+                        pass
+                    else:
+                        if first_byte != 0x14: continue
+                        h160 = reader.read_bytes(0x14)
+                        internal_asset_portion_len = reader.read_byte_as_int()
+                        asset_name_len = reader.read_byte_as_int()
+                        asset_bytes = reader.read_bytes(asset_name_len)
+                        flag = reader.read_byte_as_int()
+                        return NullTagAssetVoutInformation(asset_bytes.decode(), h160.hex(), False if flag == 0 else True)
                 else:
-                    asset_portion = script[index:]
-
                     decoded_has_good_length = len(decoded) > i + 1
                     next_op_is_a_push = False
                     remaining_matches = False
