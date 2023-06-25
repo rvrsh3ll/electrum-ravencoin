@@ -102,6 +102,9 @@ class AddressSynchronizer(Logger, EventListener):
         self.unverified_tags_for_qualifier = defaultdict(dict)
         self.unconfirmed_tags_for_qualifier = defaultdict(dict)
 
+        self.unverified_tags_for_h160 = defaultdict(dict)
+        self.unconfirmed_tags_for_h160 = defaultdict(dict)
+
         self._get_balance_cache = {}
         self._get_asset_balance_cache = {}
         self._get_assets_in_mempool_cache = {}
@@ -368,19 +371,20 @@ class AddressSynchronizer(Logger, EventListener):
                 v = txo.value
                 ser = tx_hash + ':%d'%n
                 asset_data = get_asset_info_from_script(txo.scriptpubkey)
-                if asset_data.asset:
-                    self.watch_asset(asset_data.asset)
-                if not asset_data.is_deterministic():
-                    outpoint = TxOutpoint(txid=bytes.fromhex(tx.txid()), out_idx=n)
-                    if asset_data.well_formed_script:
-                        self.logger.info(f'{outpoint.to_str()} is non-deterministic; saving scriptpubkey')
-                    else:
-                        self.logger.info(f'{outpoint.to_str()} is not well-formed; saving scriptpubkey')
-                    self.db.add_non_deterministic_txo_lockingscript(outpoint, txo.scriptpubkey)
                 scripthash = bitcoin.script_to_scripthash(txo.scriptpubkey.hex())
                 self.db.add_prevout_by_scripthash(scripthash, prevout=TxOutpoint.from_str(ser), value=asset_data.amount or v, asset=asset_data.asset)
                 addr = txo.address
                 if addr and self.is_mine(addr):
+                    if asset_data.asset:
+                        self.watch_asset(asset_data.asset)
+                    if not asset_data.is_deterministic():
+                        outpoint = TxOutpoint(txid=bytes.fromhex(tx.txid()), out_idx=n)
+                        if asset_data.well_formed_script:
+                            self.logger.info(f'{outpoint.to_str()} is non-deterministic; saving scriptpubkey')
+                        else:
+                            self.logger.info(f'{outpoint.to_str()} is not well-formed; saving scriptpubkey')
+                        self.db.add_non_deterministic_txo_lockingscript(outpoint, txo.scriptpubkey)
+                    
                     self.db.add_txo_addr(tx_hash, addr, n, asset_data.amount or v, asset_data.asset, is_coinbase)
                     self._get_balance_cache.clear()  # invalidate cache
                     self._get_asset_balance_cache.clear()
@@ -582,7 +586,6 @@ class AddressSynchronizer(Logger, EventListener):
         # 1. Get the history of each address in the domain, maintain the
         #    delta of a tx as the sum of its deltas on domain addresses
         tx_deltas = defaultdict(lambda: defaultdict(int))  # type: Dict[str, Dict[Optional[str], int]]
-        balance = 0
         for addr in domain:
             h = self.get_address_history(addr).items()
             for tx_hash, height in h:
@@ -766,6 +769,65 @@ class AddressSynchronizer(Logger, EventListener):
                 return unverified[1][0]
             return None
 
+    def add_unverified_or_unconfirmed_tags_for_h160(self, h160, asset_tags):
+        verified_h160_tags = self.db.get_verified_h160_tags(h160)
+        if not verified_h160_tags:
+            verified_h160_tags = dict()
+        with self.lock:
+            for asset, d in asset_tags.items():
+                if d['height'] > 0:
+                    verified_asset_tags = self.db.get_verified_qualifier_tags(asset)
+                    if verified_asset_tags and h160 in verified_asset_tags and verified_asset_tags[h160] == d:
+                        # We have already verified this tag
+                        self.db.add_verified_h160_tag(h160, asset, d)
+                        continue
+                    if asset in verified_h160_tags:
+                        if verified_h160_tags[asset] == d:
+                            # no change with what we know
+                            continue
+                    self.unverified_tags_for_h160[h160][asset] = d
+                else:
+                    self.unconfirmed_tags_for_h160[h160][asset] = d
+
+    def get_h160_tags_for_synchronizer(self, h160: str) -> Dict[str, Dict[str, object]]:
+        with self.lock:
+            tags = self.db.get_verified_h160_tags(h160)
+            if not tags:
+                tags = {}
+            unverified_tags = self.unverified_tags_for_h160.get(h160)
+            if unverified_tags:
+                for h160, d in unverified_tags.items():
+                    tags[h160] = d
+            unconfirmed_tags = self.unconfirmed_tags_for_h160.get(h160)
+            if unconfirmed_tags:
+                for h160, d in unconfirmed_tags.items():
+                    tags[h160] = d
+            return tags
+
+    def get_unverified_tags_for_h160(self) -> Dict[str, Dict[str, Dict[str, object]]]:
+        with self.lock:
+            return dict(self.unverified_tags_for_h160)
+
+    def remove_unverified_tag_for_h160(self, h160: str, asset: str, source_height: int):
+        with self.lock:
+            maybe_tags = self.unverified_tags_for_h160.get(h160)
+            if maybe_tags:
+                maybe_tag = maybe_tags.get(asset)
+                if maybe_tag:
+                    if maybe_tag['height'] == source_height:
+                        self.unverified_tags_for_h160[h160].pop(asset)
+                        if not self.unverified_tags_for_h160[h160]:
+                            self.unverified_tags_for_h160.pop(h160)
+
+    def add_verified_tag_for_h160(self, h160: str, asset: str, d):
+        # Remove from the unverified map and add to the verified map
+        with self.lock:
+            self.unverified_tags_for_h160.get(h160, dict()).pop(asset, None)
+            if not self.unverified_tags_for_h160.get(h160):
+                self.unverified_tags_for_h160.pop(h160, None)
+            self.db.add_verified_h160_tag(h160, asset, d)
+        util.trigger_callback('adb_added_verified_tag_for_h160', self, h160, asset)
+
     def add_unverified_or_unconfirmed_tags_for_qualifier(self, asset, h160_tags):
         verified_tags = self.db.get_verified_qualifier_tags(asset)
         if not verified_tags:
@@ -773,6 +835,11 @@ class AddressSynchronizer(Logger, EventListener):
         with self.lock:
             for h160, d in h160_tags.items():
                 if d['height'] > 0:
+                    verified_h160_tags = self.db.get_verified_h160_tags(h160)
+                    if verified_h160_tags and asset in verified_h160_tags and verified_h160_tags[asset] == d:
+                        # We have already verified this tag
+                        self.db.add_verified_qualifier_tag(asset, h160, d)
+                        continue
                     if h160 in verified_tags:
                         if (verified_tags[h160]['tx_hash'], verified_tags[h160]['height']) == (d['tx_hash'], d['height']):
                             # no change with what we know
@@ -820,7 +887,6 @@ class AddressSynchronizer(Logger, EventListener):
             self.db.add_verified_qualifier_tag(asset, h160, d)
         util.trigger_callback('adb_added_verified_tag_for_qualifier', self, asset, h160)
 
-
     def remove_unverified_tx(self, tx_hash, tx_height):
         with self.lock:
             new_height = self.unverified_tx.get(tx_hash)
@@ -866,6 +932,15 @@ class AddressSynchronizer(Logger, EventListener):
                     if header and verified_info and hash_header(header) == verified_info.header_hash: continue
                     
                     self.db.remove_verified_qualifier_tag(asset, h160)
+                    txs.add(tag_data['tx_hash'])
+            for h160, assets in self.db.get_verified_h160_tags_after_height(above_height):
+                for asset in assets:
+                    tag_data = self.db.get_verified_h160_tag(h160, asset)
+                    verified_info = self.db.get_verified_tx(tag_data['tx_hash'])
+                    header = blockchain.read_header(tag_data['height'])
+                    if header and verified_info and hash_header(header) == verified_info.header_hash: continue
+                    
+                    self.db.remove_verified_h160_tag(h160, asset)
                     txs.add(tag_data['tx_hash'])
             for tx_hash in self.db.list_verified_tx():
                 info = self.db.get_verified_tx(tx_hash)

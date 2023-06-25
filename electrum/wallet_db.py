@@ -596,6 +596,7 @@ class WalletDB(JsonDB):
         self.verified_asset_metadata = self.get_dict('verified_asset_metadata')  # type: Dict[str, Tuple[AssetMetadata, Tuple[TxOutpoint, int], Tuple[TxOutpoint, int] | None, Tuple[TxOutpoint, int] | None]]       
         self.non_deterministic_vouts = self.get_dict('non_deterministic_txo_scriptpubkey')
         self.verified_tags_for_qualifiers = self.get_dict('verified_qualifier_tags')
+        self.verified_tags_for_h160s = self.get_dict('verified_h160_tags')
 
     @locked
     def get_non_deterministic_txo_lockingscript(self, outpoint: TxOutpoint) -> Optional[bytes]:
@@ -711,6 +712,47 @@ class WalletDB(JsonDB):
             for h160, d1 in h160_dict.items():
                 if d1['height'] > height:
                     d[asset].add(h160)
+        return d
+
+    @locked
+    def get_verified_h160_tags(self, h160: str) -> Dict[str, Dict[str, Any]]:
+        assert isinstance(h160, str)
+        return self.verified_tags_for_h160s.get(h160, None)
+
+    @locked
+    def get_verified_h160_tag(self, h160: str, asset: str) -> Optional[Dict[str, Any]]:
+        assert isinstance(asset, str)
+        assert isinstance(h160, str)
+        return self.verified_tags_for_h160s.get(h160, dict()).get(asset)
+
+    @modifier
+    def remove_verified_h160_tag(self, h160: str, asset: str):
+        assert isinstance(asset, str)
+        assert isinstance(h160, str)
+        self.verified_tags_for_h160s.get(h160, dict()).pop(asset, None)
+        if not self.verified_tags_for_h160s.get(h160):
+            self.verified_tags_for_h160s.pop(h160, None)
+
+    @modifier
+    def add_verified_h160_tag(self, h160: str, asset: str, d):
+        assert isinstance(asset, str)
+        assert isinstance(h160, str)
+        assert isinstance(d['tx_hash'], str)
+        assert isinstance(d['tx_pos'], int)
+        assert isinstance(d['height'], int)
+        assert isinstance(d['flag'], bool)
+        if self.verified_tags_for_h160s.get(h160) is None:
+            self.verified_tags_for_h160s[h160] = dict()
+        self.verified_tags_for_h160s[h160][asset] = d
+
+    @locked
+    def get_verified_h160_tags_after_height(self, height: int) -> Dict[str, Set[str]]:
+        assert isinstance(height, int)
+        d = defaultdict(set)
+        for h160, asset_dict in self.verified_tags_for_h160s.items():
+            for asset, d1 in asset_dict.items():
+                if d1['height'] > height:
+                    d[h160].add(asset)
         return d
 
     @profiler

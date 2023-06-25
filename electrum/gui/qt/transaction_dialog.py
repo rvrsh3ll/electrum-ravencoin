@@ -47,7 +47,7 @@ from electrum.util import quantize_feerate
 from electrum import bitcoin, constants
 
 from electrum.asset import BaseAssetVoutInformation, AssetVoutType, get_asset_info_from_script
-from electrum.bitcoin import base_encode, NLOCKTIME_BLOCKHEIGHT_MAX, opcodes
+from electrum.bitcoin import base_encode, NLOCKTIME_BLOCKHEIGHT_MAX, opcodes, hash160_to_b58_address
 from electrum.i18n import _
 from electrum.plugin import run_hook
 from electrum import simple_config
@@ -228,15 +228,24 @@ class TxInOutWidget(QWidget):
                 cursor.insertText(short_id, tcf_shortid)
                 cursor.insertText(" " * max(0, 15 - len(short_id)), tcf_ext)  # padding
                 cursor.insertText('\t', tcf_ext)
+                
                 if script:
                     # op_return
                     op_return_str = convert_bytes_to_utf8_safe(script)
                     if len(op_return_str) > 50 and not self.main_window.config.GUI_QT_TX_DIALOG_SHOW_ALL_DATA:
                         op_return_str = op_return_str[0:40] + ' … ' + op_return_str[-9:]
-                    cursor.insertText(f'OP_RETURN: {op_return_str}')
+                    cursor.insertText(f'OP RETURN: {op_return_str}')
                 else:
                     # addr
-                    if addr is None:
+                    if asset_info is not None and asset_info.is_tag():
+                        asset_vout_type = asset_info.get_type()
+                        if asset_vout_type == AssetVoutType.FREEZE:
+                            address_str = 'FREEZE'
+                        elif asset_vout_type == AssetVoutType.VERIFIER:
+                            address_str = 'VERIFIER STRING'
+                        else:
+                            address_str = 'QUALIFICATION'
+                    elif addr is None:
                         address_str = '<address unknown>'
                     elif len(addr) <= 40 or self.main_window.config.GUI_QT_TX_DIALOG_SHOW_ALL_DATA:
                         address_str = addr
@@ -262,6 +271,22 @@ class TxInOutWidget(QWidget):
                             elif asset_vout_type == AssetVoutType.REISSUE:
                                 asset_vout_type_str = _('Reissuance of:')
                             cursor.insertText(f'\t{asset_vout_type_str} {asset_info.asset}', tcf_ext)
+                        elif asset_vout_type == AssetVoutType.NULL and self.main_window.config.GUI_QT_TX_DIALOG_SHOW_ALL_DATA:
+                            cursor.insertBlock()
+                            tag_addr_str = hash160_to_b58_address(bytes.fromhex(asset_info.h160), constants.net.ADDRTYPE_P2PKH)
+                            tag_str = ('BLACKLISTED' if asset_info.flag else 'DE-BLACKLISTED') if asset_info.asset[0] == '$' else ('QUALIFIED' if asset_info.flag else 'DE-QUALIFIED')
+                            cursor.insertText(f'\t{asset_info.asset}', tcf_ext)
+                            cursor.insertText(f'\t{tag_addr_str}', tcf_ext)
+                            cursor.insertText(f'\t{tag_str}', tcf_ext)
+                        elif asset_vout_type == AssetVoutType.VERIFIER:
+                            cursor.insertBlock()
+                            if len(asset_info.verifier_string) <= 43 or self.main_window.config.GUI_QT_TX_DIALOG_SHOW_ALL_DATA:
+                                verifier_str = asset_info.verifier_string
+                            else:
+                                verifier_str = asset_info.verifier_string[0:30] + ' … ' + asset_info.verifier_string[-10:]
+                            cursor.insertText(f'\t{verifier_str}', tcf_ext)
+                        elif asset_vout_type == AssetVoutType.FREEZE:
+                            pass
 
                         if self.main_window.config.GUI_QT_TX_DIALOG_SHOW_ALL_DATA:
                             if asset_vout_type in (AssetVoutType.CREATE, AssetVoutType.REISSUE):
@@ -269,7 +294,7 @@ class TxInOutWidget(QWidget):
                                 cursor.insertText(_('\tReissuable: {}\t\tDivisibility: {}').format(asset_info.reissuable, 'No change' if asset_info.divisions == 0xff else asset_info.divisions), tcf_ext)
                                 cursor.insertBlock()
                                 raw_associated_data = asset_info.associated_data
-                                associated_data_str = 'None'
+                                associated_data_str = 'No change'
                                 if raw_associated_data:
                                     if raw_associated_data[0] == 0x54:
                                         associated_data_str = raw_associated_data[2:].hex()

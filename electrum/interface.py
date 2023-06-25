@@ -1198,6 +1198,11 @@ class Interface(Logger):
             raise Exception(f'bad asset: {error}')
         res = await self.session.send_request('blockchain.tag.qualifier.list', [asset])
         return res
+    
+    async def get_tags_for_h160(self, h160: str) -> dict:
+        assert isinstance(h160, str)
+        res = await self.session.send_request('blockchain.tag.h160.list', [h160])
+        return res
 
     async def check_tag_for_h160(self, asset: str, h160: str) -> dict:
         assert isinstance(h160, str)

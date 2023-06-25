@@ -458,6 +458,8 @@ class TxInput:
             return tx
 
         if self.utxo is None:
+            if self.prevout.txid == b'\0' * 32:
+                return False
             self.utxo = await fetch_from_network(txid=self.prevout.txid.hex())
         return self.utxo is not None
 

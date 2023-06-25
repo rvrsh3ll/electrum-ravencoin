@@ -31,6 +31,8 @@ RVN_ASSET_TYPE_OWNER = b'o'
 RVN_ASSET_TYPE_OWNER_INT = RVN_ASSET_TYPE_OWNER[0]
 RVN_ASSET_TYPE_TRANSFER = b't'
 RVN_ASSET_TYPE_TRANSFER_INT = RVN_ASSET_TYPE_TRANSFER[0]
+RVN_ASSET_TYPE_REISSUE = b'r'
+RVN_ASSET_TYPE_REISSUE_INT = RVN_ASSET_TYPE_REISSUE[0]
 
 ASSET_OWNER_IDENTIFIER = '!'
 
@@ -316,6 +318,8 @@ class AssetVoutType(Enum):
     REISSUE = 5
 
     NULL = 6
+    VERIFIER = 7
+    FREEZE = 8
 
 class BaseAssetVoutInformation():
     asset = None
@@ -333,6 +337,9 @@ class BaseAssetVoutInformation():
 
     def is_deterministic(self):
         return self._type in (AssetVoutType.TRANSFER, AssetVoutType.OWNER, AssetVoutType.NONE) and self.well_formed_script
+
+    def is_tag(self):
+        return False
 
 class NoAssetVoutInformation(BaseAssetVoutInformation):
     def __init__(self):
@@ -368,12 +375,20 @@ class TagAssetVoutInformation(BaseAssetVoutInformation):
     def is_deterministic(self):
         return True
     
+    def is_tag(self):
+        return True
+    
 class NullTagAssetVoutInformation(TagAssetVoutInformation):
     def __init__(self, asset: str, h160: str, flag: bool):
         BaseAssetVoutInformation.__init__(self, AssetVoutType.NULL, True)
         self.asset = asset
         self.h160 = h160
         self.flag = flag
+
+class VerifierTagAssetVoutInformation(TagAssetVoutInformation):
+    def __init__(self, verifier_string: str):
+        BaseAssetVoutInformation.__init__(self, AssetVoutType.VERIFIER, True)
+        self.verifier_string = verifier_string
 
 def get_asset_info_from_script(script: bytes) -> BaseAssetVoutInformation:
     try:
@@ -386,11 +401,16 @@ def get_asset_info_from_script(script: bytes) -> BaseAssetVoutInformation:
             if op == opcodes.OP_ASSET:
                 asset_portion = script[index:]
                 if i == 0:
-                    reader = ByteReader(asset_portion)
-                    first_byte = reader.read_byte_as_int()
-                    if first_byte == opcodes.OP_RESERVED:
-                        pass
+                    if decoded[i + 1][0] == opcodes.OP_RESERVED:
+                        if decoded[i + 2][0] == opcodes.OP_RESERVED:
+                            pass
+                        else:
+                            internal_data = decoded[i + 2][1]
+                            verifier_string = next(script_GetOp(internal_data))[1]
+                            return VerifierTagAssetVoutInformation(f'"{verifier_string.decode()}"')
                     else:
+                        reader = ByteReader(asset_portion)
+                        first_byte = reader.read_byte_as_int()
                         if first_byte != 0x14: continue
                         h160 = reader.read_bytes(0x14)
                         internal_asset_portion_len = reader.read_byte_as_int()
@@ -420,6 +440,8 @@ def get_asset_info_from_script(script: bytes) -> BaseAssetVoutInformation:
                         asset_vout_type = AssetVoutType.OWNER
                     elif vout_type == RVN_ASSET_TYPE_TRANSFER:
                         asset_vout_type = AssetVoutType.TRANSFER
+                    elif vout_type == RVN_ASSET_TYPE_REISSUE:
+                        asset_vout_type = AssetVoutType.REISSUE
                     else: break
 
                     asset_length = reader.read_byte_as_int()
@@ -446,6 +468,12 @@ def get_asset_info_from_script(script: bytes) -> BaseAssetVoutInformation:
                     if asset_vout_type == AssetVoutType.CREATE:
                         has_associated_data = reader.read_byte_as_int() == 1
                         if has_associated_data:
+                            associated_data = reader.read_bytes(34)
+                            return MetadataAssetVoutInformation(asset_vout_type, well_formed, asset, asset_amount, divisions, reissuable, associated_data)
+                        else:
+                            return MetadataAssetVoutInformation(asset_vout_type, well_formed, asset, asset_amount, divisions, reissuable, None)
+                    elif asset_vout_type == AssetVoutType.REISSUE:
+                        if reader.can_read_amount(34):
                             associated_data = reader.read_bytes(34)
                             return MetadataAssetVoutInformation(asset_vout_type, well_formed, asset, asset_amount, divisions, reissuable, associated_data)
                         else:

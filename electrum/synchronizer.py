@@ -30,10 +30,10 @@ import logging
 
 from aiorpcx import run_in_thread, RPCError
 
-from . import util
+from . import util, constants
 from .transaction import Transaction, PartialTransaction
 from .util import make_aiohttp_session, NetworkJobOnDefaultServer, random_shuffled_copy, OldTaskGroup
-from .bitcoin import address_to_scripthash, is_address
+from .bitcoin import address_to_scripthash, is_address, is_b58_address, b58_address_to_hash160
 from .asset import AssetMetadata, get_error_for_asset_name, get_error_for_asset_typed, AssetType
 from .logging import Logger
 from .interface import GracefulDisconnect, NetworkTimeout
@@ -79,6 +79,12 @@ def qualifier_tag_status(d):
     status = ';'.join(f'{h160}:{d1["height"]}{d1["tx_hash"]}{d1["tx_pos"]}{d1["flag"]}' for h160, d1 in sorted(d.items(), key=lambda x: x[0]))
     return hashlib.sha256(status.encode('ascii')).digest().hex()
 
+def h160_tag_status(d):
+    if not d:
+        return None
+    status = ';'.join(f'{asset}:{d["height"]}{d["tx_hash"]}{d["tx_pos"]}{d["flag"]}' for asset, d in sorted(d.items(), key=lambda x: x[0]))
+    return hashlib.sha256(status.encode('ascii')).digest().hex()
+
 class SynchronizerBase(NetworkJobOnDefaultServer):
     """Subscribe over the network to a set of addresses, and monitor their statuses.
     Every time a status changes, run a coroutine provided by the subclass.
@@ -106,10 +112,16 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
         self._handling_qualifiers_for_tags_statuses = set()
         self._processed_some_qualifier_for_tags_notifications = False
 
+        self._adding_h160s_for_tags = set()
+        self.requested_h160s_for_tags = set()
+        self._handling_h160s_for_tags_statuses = set()
+        self._processed_some_h160_for_tags_notifications = False
+
         # Queues
         self.asset_status_queue = asyncio.Queue()
         self.status_queue = asyncio.Queue()
         self.qualifier_tags_status_queue = asyncio.Queue()
+        self.h160_tags_status_queue = asyncio.Queue()
 
     async def _run_tasks(self, *, taskgroup):
         await super()._run_tasks(taskgroup=taskgroup)
@@ -118,11 +130,14 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
                 await group.spawn(self.handle_status())
                 await group.spawn(self.handle_asset_status())
                 await group.spawn(self.handle_qualifier_for_tags_status())
+                await group.spawn(self.handle_h160_for_tags_status())
                 await group.spawn(self.main())
         finally:
             # we are being cancelled now
             self.session.unsubscribe(self.status_queue)
             self.session.unsubscribe(self.asset_status_queue)
+            self.session.unsubscribe(self.qualifier_tags_status_queue)
+            self.session.unsubscribe(self.h160_tags_status_queue)
 
     def add(self, addr):
         if not is_address(addr): raise ValueError(f"invalid bitcoin address {addr}")
@@ -135,6 +150,10 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
     def add_qualifier_for_tag(self, asset):
         if error := get_error_for_asset_typed(asset, AssetType.QUALIFIER): raise ValueError(f'invalid asset: {error}')
         self._adding_qualifiers_for_tags.add(asset)
+
+    def add_h160_for_tag(self, h160: str):
+        if len(h160) != 40: raise ValueError(f'{h160} is not a valid h160 hex string')
+        self._adding_h160s_for_tags.add(h160)
 
     async def _add_address(self, addr: str):
         try:
@@ -163,6 +182,14 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
         finally:
             self._adding_qualifiers_for_tags.discard(asset)
 
+    async def _add_h160_for_tags(self, h160: str):
+        try:
+            if h160 in self.requested_h160s_for_tags: return
+            self.requested_h160s_for_tags.add(h160)
+            await self.taskgroup.spawn(self._subscribe_to_h160_for_tags, h160)
+        finally:
+            self._adding_h160s_for_tags.discard(h160)
+
     async def _on_address_status(self, addr, status):
         """Handle the change of the status of an address.
         Should remove addr from self._handling_addr_statuses when done.
@@ -173,6 +200,9 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
         raise NotImplementedError()
 
     async def _on_qualifier_for_tags_status(self, asset, status):
+        raise NotImplementedError()
+
+    async def _on_h160_for_tags_status(self, h160, status):
         raise NotImplementedError()
 
     async def _subscribe_to_address(self, addr):
@@ -200,6 +230,12 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
             await self.session.subscribe('blockchain.tag.qualifier.subscribe', [asset], self.qualifier_tags_status_queue)
         self._requests_answered += 1
 
+    async def _subscribe_to_h160_for_tags(self, h160):
+        self._requests_sent += 1
+        async with self._network_request_semaphore:
+            await self.session.subscribe('blockchain.tag.h160.subscribe', [h160], self.h160_tags_status_queue)
+        self._requests_answered += 1
+
     async def handle_status(self):
         while True:
             h, status = await self.status_queue.get()
@@ -225,6 +261,14 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
             await self.taskgroup.spawn(self._on_qualifier_for_tags_status, asset, status)
             self._processed_some_qualifier_for_tags_notifications = True
 
+    async def handle_h160_for_tags_status(self):
+        while True:
+            h160, status = await self.h160_tags_status_queue.get()
+            self._handling_h160s_for_tags_statuses.add(h160)
+            self.requested_h160s_for_tags.discard(h160)
+            await self.taskgroup.spawn(self._on_h160_for_tags_status, h160, status)
+            self._processed_some_h160_for_tags_notifications = True
+
     async def main(self):
         raise NotImplementedError()  # implemented by subclasses
 
@@ -245,15 +289,16 @@ class Synchronizer(SynchronizerBase):
         super()._reset()
         self._init_done = False
         self.requested_tx = {}
-        self.requested_histories = set()
 
+        self.requested_histories = set()
         self.requested_asset_metadata = set()
-        
         self.requested_qualifiers_for_tags_results = set()
+        self.requested_h160s_for_tags_results = set()
 
         self._stale_histories = dict()  # type: Dict[str, asyncio.Task]
         self._stale_asset_metadatas = dict()  # type: Dict[str, asyncio.Task]
         self._stale_qualifiers_for_tags = dict()  # type: Dict[str, asyncio.Task]
+        self._stale_h160s_for_tags = dict()
 
     def diagnostic_name(self):
         return self.adb.diagnostic_name()
@@ -279,9 +324,54 @@ class Synchronizer(SynchronizerBase):
                 and not self.requested_qualifiers_for_tags_results
                 and not self._stale_qualifiers_for_tags
 
+                and not self._adding_h160s_for_tags
+                and not self.requested_h160s_for_tags
+                and not self._handling_h160s_for_tags_statuses
+                and not self.requested_h160s_for_tags_results
+                and not self._stale_h160s_for_tags
+
                 and self.status_queue.empty()
                 and self.asset_status_queue.empty()
-                and self.qualifier_tags_status_queue.empty())
+                and self.qualifier_tags_status_queue.empty()
+                and self.h160_tags_status_queue.empty())
+
+    async def _on_h160_for_tags_status(self, h160, status):
+        try:
+            tags = self.adb.get_h160_tags_for_synchronizer(h160)
+            if h160_tag_status(tags) == status:
+                return
+            if (h160, status) in self.requested_h160s_for_tags_results:
+                return
+            self.requested_h160s_for_tags_results.add((h160, status))
+            self._stale_h160s_for_tags.pop(h160, asyncio.Future()).cancel()
+        finally:
+            self._handling_h160s_for_tags_statuses.discard(h160)
+        self._requests_sent += 1
+        async with self._network_request_semaphore:
+            result = await self.interface.get_tags_for_h160(h160)
+        self._requests_answered += 1
+        self.logger.info(f'receiving tags for h160 {h160}: {result.keys()}')
+        if h160_tag_status(result) != status:
+            self.logger.info(f"error: h160 tag status mismatch: {h160}. we'll wait a bit for status update.")
+            # The server is supposed to send a new status notification, which will trigger a new
+            # get_history. We shall wait a bit for this to happen, otherwise we disconnect.
+            async def disconnect_if_still_stale():
+                timeout = self.network.get_network_timeout_seconds(NetworkTimeout.Generic)
+                await asyncio.sleep(timeout)
+                raise SynchronizerFailure(f"timeout reached waiting for h160 {h160}: tags still stale")
+            self._stale_h160s_for_tags[h160] = await self.taskgroup.spawn(disconnect_if_still_stale)
+        else:
+            self._stale_h160s_for_tags.pop(h160, asyncio.Future()).cancel()
+            verified_tags = self.adb.db.get_verified_h160_tags(h160)
+            if verified_tags:
+                if any(asset not in verified_tags.keys() for asset in result.keys()):
+                    raise SynchronizerFailure(f'verified assets are missing from tags for {h160}', log_level=logging.ERROR)
+                for asset, asset_d in verified_tags.items():
+                    if 0 < result[asset]['height'] < asset_d['height']:
+                        self.requested_h160s_for_tags_results.discard((h160, status))
+                        raise SynchronizerFailure(f'Server is trying to send old tag data for {h160} {asset}', log_level=logging.ERROR)            
+            self.adb.add_unverified_or_unconfirmed_tags_for_h160(h160, result)
+        self.requested_h160s_for_tags_results.discard((h160, status))
 
     async def _on_qualifier_for_tags_status(self, asset, status):
         try:
@@ -450,6 +540,10 @@ class Synchronizer(SynchronizerBase):
         # add addresses to bootstrap
         for addr in random_shuffled_copy(self.adb.get_addresses()):
             await self._add_address(addr)
+            if is_b58_address(addr):
+                addr_type, h160 = b58_address_to_hash160(addr)
+                if addr_type == constants.net.ADDRTYPE_P2PKH:
+                    await self._add_h160_for_tags(h160.hex())
         for asset in random_shuffled_copy(self.adb.get_assets()):
             await self._add_asset(asset)
             if asset[0] == '#':
@@ -466,14 +560,17 @@ class Synchronizer(SynchronizerBase):
                 await self._add_asset(asset)
             for asset in self._adding_qualifiers_for_tags.copy():
                 await self._add_qualifier_for_tags(asset)
+            for h160 in self._adding_h160s_for_tags.copy():
+                await self._add_h160_for_tags(h160)
             up_to_date = self.adb.is_up_to_date()
             # see if status changed
             if (up_to_date != prev_uptodate
                     or up_to_date and (self._processed_some_notifications or self._processed_some_asset_notifications or
-                                       self._processed_some_qualifier_for_tags_notifications)):
+                                       self._processed_some_qualifier_for_tags_notifications or self._processed_some_h160_for_tags_notifications)):
                 self._processed_some_notifications = False
                 self._processed_some_asset_notifications = False
                 self._processed_some_qualifier_for_tags_notifications = False
+                self._processed_some_h160_for_tags_notifications = False
                 self.adb.up_to_date_changed()
             prev_uptodate = up_to_date
 
