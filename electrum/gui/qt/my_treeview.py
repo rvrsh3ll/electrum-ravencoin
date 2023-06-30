@@ -356,6 +356,7 @@ class MyTreeView(QTreeView):
         if filter_data:
             return filter_data
         txt = self.get_text_from_coordinate(row, col)
+        if not txt: return ''
         txt = txt.lower()
         return txt
 

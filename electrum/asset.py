@@ -256,6 +256,12 @@ def generate_verifier_tag(verifier_string: str) -> str:
     asset_data = f'{int_to_hex(len(verifier_string))}{verifier_string.encode().hex()}'
     return construct_script([opcodes.OP_ASSET, opcodes.OP_RESERVED, asset_data])
 
+def generate_null_tag(asset: str, h160: str, flag: bool) -> str:
+    assert (error := get_error_for_asset_name(asset)) is None, error
+    assert len(h160) == 40
+    asset_data = f'{int_to_hex(len(asset))}{asset.encode().hex()}{"01" if flag else "00"}'
+    return construct_script([opcodes.OP_ASSET, h160, asset_data])
+
 def _associated_data_converter(input):
     if not input:
         return None

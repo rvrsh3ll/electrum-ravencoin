@@ -175,7 +175,6 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
 
     async def _add_qualifier_for_tags(self, asset: str):
         try:
-            if error := get_error_for_asset_typed(asset, AssetType.QUALIFIER): raise ValueError(f'invalid asset: {error}')
             if asset in self.requested_qualifiers_for_tags: return
             self.requested_qualifiers_for_tags.add(asset)
             await self.taskgroup.spawn(self._subscribe_to_qualifier_for_tags, asset)
@@ -364,12 +363,12 @@ class Synchronizer(SynchronizerBase):
             self._stale_h160s_for_tags.pop(h160, asyncio.Future()).cancel()
             verified_tags = self.adb.db.get_verified_h160_tags(h160)
             if verified_tags:
-                if any(asset not in verified_tags.keys() for asset in result.keys()):
-                    raise SynchronizerFailure(f'verified assets are missing from tags for {h160}', log_level=logging.ERROR)
+                if any(asset not in result.keys() for asset in verified_tags.keys()):
+                    raise SynchronizerFailure(f'verified assets are missing from tags for {h160}')
                 for asset, asset_d in verified_tags.items():
                     if 0 < result[asset]['height'] < asset_d['height']:
                         self.requested_h160s_for_tags_results.discard((h160, status))
-                        raise SynchronizerFailure(f'Server is trying to send old tag data for {h160} {asset}', log_level=logging.ERROR)            
+                        raise SynchronizerFailure(f'Server is trying to send old tag data for {h160} {asset}')            
             self.adb.add_unverified_or_unconfirmed_tags_for_h160(h160, result)
         self.requested_h160s_for_tags_results.discard((h160, status))
 
@@ -402,12 +401,12 @@ class Synchronizer(SynchronizerBase):
             self._stale_qualifiers_for_tags.pop(asset, asyncio.Future()).cancel()
             verified_tags = self.adb.db.get_verified_qualifier_tags(asset)
             if verified_tags:
-                if any(h160 not in verified_tags.keys() for h160 in result.keys()):
-                    raise SynchronizerFailure(f'verified h160s are missing from tags for {asset}', log_level=logging.ERROR)
+                if any(h160 not in result.keys() for h160 in verified_tags.keys()):
+                    raise SynchronizerFailure(f'verified h160s are missing from tags for {asset}')
                 for h160, h160_d in verified_tags.items():
                     if 0 < result[h160]['height'] < h160_d['height']:
                         self.requested_qualifiers_for_tags_results.discard((asset, status))
-                        raise SynchronizerFailure(f'Server is trying to send old tag data for {asset} {h160}', log_level=logging.ERROR)            
+                        raise SynchronizerFailure(f'Server is trying to send old tag data for {asset} {h160}')            
             self.adb.add_unverified_or_unconfirmed_tags_for_qualifier(asset, result)
         self.requested_qualifiers_for_tags_results.discard((asset, status))
 
@@ -543,12 +542,21 @@ class Synchronizer(SynchronizerBase):
             if is_b58_address(addr):
                 addr_type, h160 = b58_address_to_hash160(addr)
                 if addr_type == constants.net.ADDRTYPE_P2PKH:
-                    await self._add_h160_for_tags(h160.hex())
+                    h160_h = h160.hex()
+                    if h160_h not in self.adb.db.verified_tags_for_h160s:
+                        self.adb.db.verified_tags_for_h160s[h160_h] = dict()
+                    await self._add_h160_for_tags(h160_h)
         for asset in random_shuffled_copy(self.adb.get_assets()):
             await self._add_asset(asset)
             if asset[0] == '#':
-                primary_qualifier = asset.split('/')[0]
-                await self._add_qualifier_for_tags(primary_qualifier)
+                if asset not in self.adb.db.verified_tags_for_qualifiers:
+                    self.adb.db.verified_tags_for_qualifiers[asset] = dict()
+                await self._add_qualifier_for_tags(asset)
+            if asset[0] == '$':
+                if asset not in self.adb.db.verified_tags_for_qualifiers:
+                    self.adb.db.verified_tags_for_qualifiers[asset] = dict()
+                await self._add_qualifier_for_tags(asset)
+
         # main loop
         self._init_done = True
         prev_uptodate = False

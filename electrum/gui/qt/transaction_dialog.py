@@ -271,36 +271,33 @@ class TxInOutWidget(QWidget):
                             elif asset_vout_type == AssetVoutType.REISSUE:
                                 asset_vout_type_str = _('Reissuance of:')
                             cursor.insertText(f'\t{asset_vout_type_str} {asset_info.asset}', tcf_ext)
-                        elif asset_vout_type == AssetVoutType.NULL and self.main_window.config.GUI_QT_TX_DIALOG_SHOW_ALL_DATA:
-                            cursor.insertBlock()
-                            tag_addr_str = hash160_to_b58_address(bytes.fromhex(asset_info.h160), constants.net.ADDRTYPE_P2PKH)
-                            tag_str = ('BLACKLISTED' if asset_info.flag else 'DE-BLACKLISTED') if asset_info.asset[0] == '$' else ('QUALIFIED' if asset_info.flag else 'DE-QUALIFIED')
-                            cursor.insertText(f'\t{asset_info.asset}', tcf_ext)
-                            cursor.insertText(f'\t{tag_addr_str}', tcf_ext)
-                            cursor.insertText(f'\t{tag_str}', tcf_ext)
-                        elif asset_vout_type == AssetVoutType.VERIFIER:
-                            cursor.insertBlock()
-                            if len(asset_info.verifier_string) <= 43 or self.main_window.config.GUI_QT_TX_DIALOG_SHOW_ALL_DATA:
-                                verifier_str = asset_info.verifier_string
-                            else:
-                                verifier_str = asset_info.verifier_string[0:30] + ' … ' + asset_info.verifier_string[-10:]
-                            cursor.insertText(f'\t{verifier_str}', tcf_ext)
-                        elif asset_vout_type == AssetVoutType.FREEZE:
-                            pass
-
+                        
                         if self.main_window.config.GUI_QT_TX_DIALOG_SHOW_ALL_DATA:
                             if asset_vout_type in (AssetVoutType.CREATE, AssetVoutType.REISSUE):
                                 cursor.insertBlock()
                                 cursor.insertText(_('\tReissuable: {}\t\tDivisibility: {}').format(asset_info.reissuable, 'No change' if asset_info.divisions == 0xff else asset_info.divisions), tcf_ext)
                                 cursor.insertBlock()
                                 raw_associated_data = asset_info.associated_data
-                                associated_data_str = 'No change'
+                                associated_data_str = 'No change' if asset_vout_type == AssetVoutType.REISSUE else 'None'
                                 if raw_associated_data:
                                     if raw_associated_data[0] == 0x54:
                                         associated_data_str = raw_associated_data[2:].hex()
                                     else:
                                         associated_data_str = base_encode(raw_associated_data, base=58)
                                 cursor.insertText(_('\tAssociated Data: {}').format(associated_data_str), tcf_ext)
+                            elif asset_vout_type == AssetVoutType.NULL:
+                                cursor.insertBlock()
+                                tag_addr_str = hash160_to_b58_address(bytes.fromhex(asset_info.h160), constants.net.ADDRTYPE_P2PKH)
+                                tag_str = ('BLACKLISTED' if asset_info.flag else 'DE-BLACKLISTED') if asset_info.asset[0] == '$' else ('QUALIFIED' if asset_info.flag else 'DE-QUALIFIED')
+                                cursor.insertText(f'\t{asset_info.asset}', tcf_ext)
+                                cursor.insertText(f'\t{tag_addr_str}', tcf_ext)
+                                cursor.insertText(f'\t{tag_str}', tcf_ext)
+                            elif asset_vout_type == AssetVoutType.VERIFIER:
+                                cursor.insertBlock()
+                                verifier_str = asset_info.verifier_string
+                                cursor.insertText(f'\t{verifier_str}', tcf_ext)
+                            elif asset_vout_type == AssetVoutType.FREEZE:
+                                pass
 
                     elif addr is not None:
                         cursor.insertBlock()
@@ -514,6 +511,11 @@ class TxDialog(QDialog, MessageBoxMixin):
                 'Download parent transactions from the network.\n'
                 'Allows filling in missing fee and input details.'),
             callback=self.maybe_fetch_txin_data)
+        menu.addConfig(
+            _('Advanced View'), self.config.cv.GUI_QT_TX_DIALOG_SHOW_ALL_DATA,
+            tooltip=_("Show more data when viewing transactions"),
+            callback=self.update,
+        )
         vbox.addLayout(toolbar)
 
         vbox.addWidget(QLabel(_("Transaction ID:")))

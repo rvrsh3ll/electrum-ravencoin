@@ -141,7 +141,7 @@ class HistoryNode(CustomNode):
                 HistoryColumns.DESCRIPTION:
                     tx_item['label'] if 'label' in tx_item else None,
                 HistoryColumns.ASSET:
-                    tx_item.get('asset') or '',
+                    tx_item.get('asset', ''),
                 HistoryColumns.AMOUNT:
                     (tx_item['bc_value'].value if 'bc_value' in tx_item else 0)\
                     + (tx_item['ln_value'].value if 'ln_value' in tx_item else 0),
@@ -183,9 +183,8 @@ class HistoryNode(CustomNode):
                         msg = str(conf) + _(" confirmation" + ("s" if conf != 1 else ""))
                 return QVariant(msg)
             elif col == HistoryColumns.ASSET and role == Qt.ToolTipRole:
-                asset = tx_item.get('asset', None)
-                if asset:
-                    return QVariant(asset)
+                asset = tx_item.get('asset', '')
+                return QVariant(asset)
             elif col > HistoryColumns.DESCRIPTION and role == Qt.TextAlignmentRole:
                 return QVariant(int(Qt.AlignRight | Qt.AlignVCenter))
             elif col > HistoryColumns.DESCRIPTION and role == Qt.FontRole:
@@ -205,7 +204,7 @@ class HistoryNode(CustomNode):
             return QVariant()
         if col == HistoryColumns.STATUS:
             if tx_item.get('hide_status', False):
-                return QVariant()
+                return QVariant('')
             return QVariant(status_str)
         elif col == HistoryColumns.DESCRIPTION and 'label' in tx_item:
             if tx_item.get('hide_status', False):
@@ -221,10 +220,10 @@ class HistoryNode(CustomNode):
             if asset := tx_item.get('asset'):
                 if asset[-1] != ASSET_OWNER_IDENTIFIER:
                     asset += ' '
-                if len(asset) > 15:
-                    asset = asset[:7] + '…' + asset[-7:]
+                if len(asset) > 13:
+                    asset = asset[:6] + '…' + asset[-6:]
                 return QVariant(asset)
-            return QVariant()
+            return QVariant('')
         elif col == HistoryColumns.BALANCE:
             balance = tx_item['balance'].value
             balance_str = window.format_amount(balance, whitespaces=True)

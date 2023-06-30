@@ -14,6 +14,10 @@ from .asset_qualifier_tag_panel import QualifierAssetPanel
 if TYPE_CHECKING:
     from .main_window import ElectrumWindow
 
+class DummySearchableList:
+    def filter(self, x):
+        pass
+
 class AssetTab(QWidget, MessageBoxMixin, Logger):
     
     def __init__(self, window: 'ElectrumWindow'):
@@ -59,6 +63,16 @@ class AssetTab(QWidget, MessageBoxMixin, Logger):
         vbox = QVBoxLayout(self)
         vbox.addWidget(self.info_label)
         vbox.addWidget(self.tabs)
+
+        self.searchable_list = self.view_asset_tab.asset_list
+        def on_change_tab(index):
+            if index == 0:
+                self.searchable_list = self.view_asset_tab.asset_list
+            elif index == 3 and not self.wallet.is_watching_only():
+                self.searchable_list = self.qualifiy_tab.searchable_list_grouping
+            else:
+                self.searchable_list = DummySearchableList()
+        tabs.currentChanged.connect(on_change_tab)
 
     def update(self):
         self.view_asset_tab.update()        

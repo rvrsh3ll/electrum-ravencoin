@@ -73,11 +73,11 @@ class AssetList(MyTreeView):
         def selectionChange(new, old):
             rows = [x.row() for x in new.indexes()]
             if not rows:
-                self.parent.metadata_viewer.update_asset_trigger.emit(None)
+                self.parent.update_asset_trigger.emit(None)
                 return
             first_row = min(rows)
             self.last_selected_asset = asset = self.model().index(first_row, self.Columns.ASSET).data(self.ROLE_ASSET_STR)
-            self.parent.metadata_viewer.update_asset_trigger.emit(asset)
+            self.parent.update_asset_trigger.emit(asset)
 
         self.selectionModel().selectionChanged.connect(selectionChange)
     
@@ -332,13 +332,9 @@ class MetadataInfo(QWidget):
                     x.setText(_('Unknown'))
 
 class MetadataViewer(QFrame):
-    update_asset_trigger = pyqtSignal(str)
-
     def __init__(self, parent: 'ViewAssetPanel'):
         QFrame.__init__(self)
         self.parent = parent
-        self.update_asset_trigger.connect(lambda asset: self.update_info(asset))
-
         self.metadata_info = MetadataInfo(parent.parent.window)
 
         scroll = QScrollArea()
@@ -370,6 +366,8 @@ class MetadataViewer(QFrame):
         super().update()
 
 class ViewAssetPanel(QSplitter, Logger):
+    update_asset_trigger = pyqtSignal(str)
+
     def __init__(self, parent: 'AssetTab'):
         QWidget.__init__(self)
         Logger.__init__(self)
@@ -388,6 +386,8 @@ class ViewAssetPanel(QSplitter, Logger):
 
         self.setStretchFactor(0, 1)
         self.setStretchFactor(1, 0)
+
+        self.update_asset_trigger.connect(lambda asset: self.metadata_viewer.update_info(asset))
 
     def update(self):
         self.asset_list.update()

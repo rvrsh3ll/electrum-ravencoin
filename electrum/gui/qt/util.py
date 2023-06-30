@@ -27,7 +27,8 @@ from PyQt5.QtWidgets import (QPushButton, QLabel, QMessageBox, QHBoxLayout, QGri
                              QFileDialog, QWidget, QToolButton, QTreeView, QPlainTextEdit,
                              QHeaderView, QApplication, QToolTip, QTreeWidget, QStyledItemDelegate,
                              QMenu, QStyleOptionViewItem, QLayout, QLayoutItem, QAbstractButton,
-                             QGraphicsEffect, QGraphicsScene, QGraphicsPixmapItem, QSizePolicy, QCheckBox)
+                             QGraphicsEffect, QGraphicsScene, QGraphicsPixmapItem, QSizePolicy, QCheckBox,
+                             QSpacerItem)
 
 from electrum.i18n import _, languages
 from electrum.util import FileImportFailed, FileExportFailed, make_aiohttp_session, resource_path
@@ -123,10 +124,11 @@ class AmountLabel(QLabel):
 
 
 class HelpMixin:
-    def __init__(self, help_text: str, *, help_title: str = None):
+    def __init__(self, help_text: str, *, help_title: str = None, wide = False):
         assert isinstance(self, QWidget), "HelpMixin must be a QWidget instance!"
         self.help_text = help_text
         self._help_title = help_title or _('Help')
+        self.wide = wide
         if isinstance(self, QLabel):
             self.setTextInteractionFlags(
                 (self.textInteractionFlags() | Qt.TextSelectableByMouse)
@@ -139,6 +141,7 @@ class HelpMixin:
             title=self._help_title,
             text=self.help_text,
             rich_text=True,
+            wide=self.wide
         )
 
 
@@ -167,9 +170,9 @@ class HelpLabel(HelpMixin, QLabel):
 
 
 class HelpButton(HelpMixin, QToolButton):
-    def __init__(self, text: str):
+    def __init__(self, text: str, *, wide = False):
         QToolButton.__init__(self)
-        HelpMixin.__init__(self, text)
+        HelpMixin.__init__(self, text, wide=wide)
         self.setText('?')
         self.setFocusPolicy(Qt.NoFocus)
         self.setFixedWidth(round(2.2 * char_width_in_lineedit()))
@@ -289,7 +292,7 @@ class MessageBoxMixin(object):
 
 def custom_message_box(*, icon, parent, title, text, buttons=QMessageBox.Ok,
                        defaultButton=QMessageBox.NoButton, rich_text=False,
-                       checkbox=None):
+                       checkbox=None, wide=False):
     if type(icon) is QPixmap:
         d = QMessageBox(QMessageBox.Information, title, str(text), buttons, parent)
         d.setIconPixmap(icon)
@@ -309,6 +312,8 @@ def custom_message_box(*, icon, parent, title, text, buttons=QMessageBox.Ok,
         d.setTextFormat(Qt.PlainText)
     if checkbox is not None:
         d.setCheckBox(checkbox)
+    if wide:
+        d.setStyleSheet("QLabel{min-width: 700px;}")
     return d.exec_()
 
 

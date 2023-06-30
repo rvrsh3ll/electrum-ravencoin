@@ -2201,3 +2201,11 @@ class ByteReader:
     
     def can_read_amount(self, length: int) -> bool:
         return length <= len(self.data) - self.cursor
+
+class SearchableListGrouping:
+    def __init__(self, *args):
+        self.lists = args
+    
+    def filter(self, x):
+        for _list in self.lists:
+            _list.filter(x)

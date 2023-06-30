@@ -703,8 +703,8 @@ class AddressSynchronizer(Logger, EventListener):
             source_ipfs = __source_outpoint, __source_height
 
         with self.lock:
-            if asset in self.unconfirmed_asset_metadata:
-                self.unconfirmed_asset_metadata.pop(asset, None)
+            self.unconfirmed_asset_metadata.pop(asset, None)
+            self.unverified_asset_metadata.pop(asset, None)
             if source_height > 0:
                 self.unverified_asset_metadata[asset] = metadata, source, source_divisions, source_ipfs
             else:
@@ -774,6 +774,8 @@ class AddressSynchronizer(Logger, EventListener):
         if not verified_h160_tags:
             verified_h160_tags = dict()
         with self.lock:
+            self.unconfirmed_tags_for_h160.pop(h160, None)
+            self.unverified_tags_for_h160.pop(h160, None)
             for asset, d in asset_tags.items():
                 if d['height'] > 0:
                     verified_asset_tags = self.db.get_verified_qualifier_tags(asset)
@@ -804,6 +806,32 @@ class AddressSynchronizer(Logger, EventListener):
                     tags[h160] = d
             return tags
 
+    def is_h160_tagged(self, h160: str, asset: str) -> Optional[bool]:
+        with self.lock:
+            unconfirmed_tags = self.unconfirmed_tags_for_h160.get(h160)
+            if unconfirmed_tags and asset in unconfirmed_tags:
+                return unconfirmed_tags[asset]['flag']
+            unconfirmed_tags = self.unconfirmed_tags_for_qualifier.get(asset)
+            if unconfirmed_tags and h160 in unconfirmed_tags:
+                return unconfirmed_tags[h160]['flag']
+            unverified_tags = self.unverified_tags_for_h160.get(h160)
+            if unverified_tags and asset in unverified_tags:
+                return unverified_tags[asset]['flag']
+            unverified_tags = self.unverified_tags_for_qualifier.get(asset)
+            if unverified_tags and h160 in unverified_tags:
+                return unverified_tags[h160]['flag']
+            tag = self.db.get_verified_h160_tag(h160, asset)
+            if tag:
+                return tag['flag']
+            if self.db.is_h160_checked(h160):
+                return False
+            tag = self.db.get_verified_qualifier_tag(asset, h160)
+            if tag:
+                return tag['flag']
+            if self.db.is_qualified_checked(asset):
+                return False
+        return None
+
     def get_unverified_tags_for_h160(self) -> Dict[str, Dict[str, Dict[str, object]]]:
         with self.lock:
             return dict(self.unverified_tags_for_h160)
@@ -833,6 +861,8 @@ class AddressSynchronizer(Logger, EventListener):
         if not verified_tags:
             verified_tags = dict()
         with self.lock:
+            self.unconfirmed_tags_for_qualifier.pop(asset, None)
+            self.unverified_tags_for_qualifier.pop(asset, None)
             for h160, d in h160_tags.items():
                 if d['height'] > 0:
                     verified_h160_tags = self.db.get_verified_h160_tags(h160)
@@ -886,6 +916,20 @@ class AddressSynchronizer(Logger, EventListener):
                 self.unverified_tags_for_qualifier.pop(asset, None)
             self.db.add_verified_qualifier_tag(asset, h160, d)
         util.trigger_callback('adb_added_verified_tag_for_qualifier', self, asset, h160)
+
+    def get_tags_for_qualifier(self, asset: str):
+        with self.lock:
+            d = {}
+            for h160, data in (self.db.get_verified_qualifier_tags(asset) or dict()).items():
+                data['type'] = METADATA_VERIFIED
+                d[h160] = data
+            for h160, data in self.unverified_tags_for_qualifier.get(asset, dict()).items():
+                data['type'] = METADATA_UNVERIFIED
+                d[h160] = data
+            for h160, data in self.unconfirmed_tags_for_qualifier.get(asset, dict()).items():
+                data['type'] = METADATA_UNCONFIRMED
+                d[h160] = data
+            return d
 
     def remove_unverified_tx(self, tx_hash, tx_height):
         with self.lock:

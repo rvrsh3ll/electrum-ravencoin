@@ -684,13 +684,17 @@ class WalletDB(JsonDB):
         assert isinstance(h160, str)
         return self.verified_tags_for_qualifiers.get(asset, dict()).get(h160)
 
+    @locked
+    def is_qualified_checked(self, asset: str) -> bool:
+        assert isinstance(asset, str)
+        return asset in self.verified_tags_for_qualifiers
+
     @modifier
     def remove_verified_qualifier_tag(self, asset: str, h160: str):
         assert isinstance(asset, str)
         assert isinstance(h160, str)
         self.verified_tags_for_qualifiers.get(asset, dict()).pop(h160, None)
-        if not self.verified_tags_for_qualifiers.get(asset):
-            self.verified_tags_for_qualifiers.pop(asset, None)
+        # Do not pop off top level key
 
     @modifier
     def add_verified_qualifier_tag(self, asset: str, h160: str, d):
@@ -725,13 +729,17 @@ class WalletDB(JsonDB):
         assert isinstance(h160, str)
         return self.verified_tags_for_h160s.get(h160, dict()).get(asset)
 
+    @locked
+    def is_h160_checked(self, h160: str) -> bool:
+        assert isinstance(h160, str)
+        return h160 in self.verified_tags_for_h160s
+
     @modifier
     def remove_verified_h160_tag(self, h160: str, asset: str):
         assert isinstance(asset, str)
         assert isinstance(h160, str)
         self.verified_tags_for_h160s.get(h160, dict()).pop(asset, None)
-        if not self.verified_tags_for_h160s.get(h160):
-            self.verified_tags_for_h160s.pop(h160, None)
+        # Do not pop off top level key
 
     @modifier
     def add_verified_h160_tag(self, h160: str, asset: str, d):

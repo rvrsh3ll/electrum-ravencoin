@@ -175,7 +175,7 @@ class CreateAssetPanel(QWidget, Logger):
                 self.asset_checker.line_edit.setText('')
                 parent_is_valid = False
             else:
-                parent_is_valid = self.parent_assets[selected_parent_index - 1][1]
+                parent_is_valid = not self.parent_assets[selected_parent_index - 1][1]
             self.parent_is_ok = parent_is_valid
             selected_asset_type_index = self.clayout.selected_index()
             asset_type = self.asset_types[selected_asset_type_index][1]
@@ -257,7 +257,7 @@ class CreateAssetPanel(QWidget, Logger):
 
             pos = self.asset_checker.line_edit.cursorPosition()
             self.asset_checker.line_edit.setText(asset)
-            self.asset_checker.line_edit.setCursorPosition(pos)
+            self.asset_checker.line_edit.setCursorPosition(max(pos, len(asset)))
 
             self.amount_e.update()
             # Disable the button no matter what
@@ -462,14 +462,48 @@ class CreateAssetPanel(QWidget, Logger):
             node.iterate_vars_return_first(lambda var: qualifiers.add(var))
             is_qualified = dict()
 
-            for qualifier in qualifiers:
+            x, h160 = b58_address_to_hash160(address)
+            h160_h = h160.hex()
+            restricted_asset_name = self.asset_checker.line_edit.text()            
+            maybe_flag = self.parent.wallet.adb.is_h160_tagged(h160_h, restricted_asset_name)
+            if maybe_flag is True:
+                self.payto_e.error_button.setToolTip(_('This address is blacklisted from receiving this asset.'))
+                self.payto_e.error_button.show()
+                return
+            elif maybe_flag is None:
                 if not self.parent.network:
                     self.payto_e.error_button.setToolTip(_("You are offline."))
                     self.payto_e.error_button.show()
                     return
                 try:
-                    h160 = b58_address_to_hash160(address)
-                    result = await self.parent.network.check_tag_for_h160(('#' if qualifier[0] != '#' else '') + qualifier, h160[1].hex())
+                    result = await self.parent.network.check_tag_for_h160(restricted_asset_name, h160_h)
+                except UntrustedServerReturnedError as e:
+                    self.payto_e.error_button.setToolTip(_("Error getting qualifier status from network") + ":\n" + e.get_message_for_gui())
+                    self.payto_e.error_button.show()
+                    return
+                except Exception as e:
+                    self.payto_e.error_button.setToolTip(_("Error getting qualifier status from network") + ":\n" + repr(e))
+                    self.payto_e.error_button.show()
+                    return
+                is_qual = result.get('flag', False)
+                assert isinstance(is_qual, bool)
+                if is_qual:
+                    self.payto_e.error_button.setToolTip(_('This address is blacklisted from receiving this asset.'))
+                    self.payto_e.error_button.show()
+                    return
+
+            for qualifier in qualifiers:
+                maybe_flag = self.parent.wallet.adb.is_h160_tagged(h160_h, qualifier)
+                if maybe_flag is not None:
+                    is_qualified[qualifier] = maybe_flag
+                    continue
+
+                if not self.parent.network:
+                    self.payto_e.error_button.setToolTip(_("You are offline."))
+                    self.payto_e.error_button.show()
+                    return
+                try:
+                    result = await self.parent.network.check_tag_for_h160(('#' if qualifier[0] != '#' else '') + qualifier, h160_h)
                 except UntrustedServerReturnedError as e:
                     self.payto_e.error_button.setToolTip(_("Error getting qualifier status from network") + ":\n" + e.get_message_for_gui())
                     self.payto_e.error_button.show()
@@ -517,6 +551,11 @@ class CreateAssetPanel(QWidget, Logger):
         vbox.addLayout(grid)
 
     def _maybe_enable_pay_button(self):
+        print(f'{self.verifier_is_ok=}')
+        print(f'{self.associated_data_is_ok=}')
+        print(f'{self.address_is_ok=}')
+        print(f'{self.asset_is_ok=}')
+        print(f'{self.parent_is_ok=}')
         self.send_button.setEnabled(self.verifier_is_ok and self.associated_data_is_ok and self.address_is_ok and self.asset_is_ok and self.parent_is_ok)
 
     def _on_divisions_change(self, amount):
@@ -669,7 +708,7 @@ class CreateAssetPanel(QWidget, Logger):
         frozen_bal = sum(self.wallet.get_frozen_balance())
         if not frozen_bal:
             return None
-        return self.format_amount_and_units(frozen_bal)
+        return self.parent.window.format_amount_and_units(frozen_bal)
 
     def update_parent_assets(self, _type: AssetType):
         if _type in (AssetType.SUB, AssetType.UNIQUE, AssetType.MSG_CHANNEL):
