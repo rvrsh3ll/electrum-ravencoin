@@ -863,6 +863,11 @@ class ValidatedDelayedCallbackEditor:
             
         self.line_edit.textChanged.connect(self.validate_text)
 
+    def show_error(self, err):
+        self.error_button.show()
+        self.error_button.setToolTip(err)
+        self.error_button.help_text = err
+
     def validate_text(self):
         if self._current_task:
             self._current_task.cancel()
@@ -876,16 +881,17 @@ class ValidatedDelayedCallbackEditor:
                 error = 'Internal Error: no event loop'
 
         if error:
-            self.error_button.show()
-            self.error_button.setToolTip(error)
-            self.error_button.help_text = error
+            self.show_error(error)
             return
         else:
             self.error_button.hide()
 
         async def waiter():
             await asyncio.sleep(self._delay)
-            await self._on_done()
+            try:
+                await self._on_done()
+            except Exception as e:
+                print(f'Validator Exception: {e}')
 
         self._current_task = event_loop.create_task(waiter())
 

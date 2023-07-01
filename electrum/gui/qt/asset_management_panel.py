@@ -89,74 +89,7 @@ class CreateAssetPanel(QWidget, Logger):
         self.verifier_is_ok = True
         self.parent_assets = set()
 
-        def clayout_on_edit(clayout: ChoicesLayout):
-            self.burn_address = self.asset_types[clayout.selected_index()][2]
-            self.burn_amount = self.asset_types[clayout.selected_index()][3]
-            self.send_button.setText(_("Pay") + f" {self.burn_amount} RVN...")
-
-            self.amount_e.setAmount(COIN)
-            self.divisions_e.setAmount(0)
-            self._on_divisions_change(0)
-            self.reissuable.setChecked(True)
-
-            asset_type = self.asset_types[clayout.selected_index()]
-            prefix = self.get_prefix(asset_type)
-            self.asset_checker.line_edit.setText(prefix)
-            if asset_type[1] in (AssetType.ROOT, AssetType.SUB, AssetType.RESTRICTED):
-                self.amount_e.max_amount = DEFAULT_ASSET_AMOUNT_MAX * COIN
-                self.divisions_e.max_amount = 8
-                self.amount_e.setEnabled(True)
-                self.divisions_e.setEnabled(True)
-                self.reissuable.setEnabled(True)
-            elif asset_type[1] in (AssetType.UNIQUE, AssetType.MSG_CHANNEL, AssetType.QUALIFIER, AssetType.SUB_QUALIFIER):
-                self.amount_e.setEnabled(False)
-                self.divisions_e.setEnabled(False)
-                self.reissuable.setEnabled(False)
-                self.reissuable.setChecked(False)
-
-            if asset_type[1] in (AssetType.QUALIFIER, AssetType.SUB_QUALIFIER):
-                self.amount_e.setEnabled(True)
-                self.amount_e.max_amount = QUALIFIER_ASSET_AMOUNT_MAX * COIN
-
-            if asset_type[1] in (AssetType.MSG_CHANNEL, ):
-                self.associated_data_e.line_edit.setText('')
-                self.associated_data_e.line_edit.setEnabled(False)
-            else:
-                self.associated_data_e.line_edit.setEnabled(True)
-
-            if asset_type[1] in (AssetType.RESTRICTED, ):
-                self.verifier_view.setVisible(True)
-                self.verifier_e.line_edit.setVisible(True)
-                self.verifier_label.setVisible(True)
-            else:
-                self.verifier_view.setVisible(False)
-                self.verifier_e.error_button.setVisible(False)
-                self.verifier_e.line_edit.setVisible(False)
-                self.verifier_label.setVisible(False)
-                self.verifier_e.line_edit.setText('')
-
-            self.parent_asset_selector_combo.setVisible(asset_type[1] not in (AssetType.ROOT, AssetType.QUALIFIER))
-            self.update_parent_assets(asset_type[1])
-
-            if asset_type[1] in (AssetType.ROOT, AssetType.QUALIFIER):
-                self.asset_checker.line_edit.setEnabled(True)
-                self.parent_is_ok = True
-            else:
-                selected_index = self.parent_asset_selector_combo.currentIndex()
-                self.parent_is_ok = selected_index > 0 and len(self.parent_assets) > (selected_index - 1) and self.parent_assets[selected_index - 1][1]
-                if asset_type[1] == AssetType.RESTRICTED:
-                    self.asset_checker.line_edit.setEnabled(False)
-                    if selected_index > 0 and len(self.parent_assets) > selected_index - 1:
-                        selected_asset = self.parent_assets[selected_index - 1][0]
-                        self.asset_checker.line_edit.setText(f'${selected_asset[:-1]}')
-                    else:
-                        self.asset_checker.line_edit.setText('')
-                else:
-                    self.asset_checker.line_edit.setText('')
-                    self.asset_checker.line_edit.setEnabled(selected_index > 0)
-            self.asset_checker.validate_text()
-
-        self.clayout = ChoicesLayout(_('Asset type'), [x[0] for x in self.asset_types], on_clicked=clayout_on_edit, checked_index=0)
+        self.clayout = ChoicesLayout(_('Asset type'), [x[0] for x in self.asset_types], on_clicked=self.clayout_on_edit, checked_index=0)
         self.burn_address = self.asset_types[self.clayout.selected_index()][2]
         self.burn_amount = self.asset_types[self.clayout.selected_index()][3]
 
@@ -222,24 +155,19 @@ class CreateAssetPanel(QWidget, Logger):
         # We don't want to query the server every click
         async def check_if_asset_exists():
             if not self.parent.network:
-                self.asset_checker.error_button.setToolTip(_("You are offline."))
-                self.asset_checker.error_button.show()
+                self.asset_checker.show_error(_("You are offline."))
                 return
             try:
                 raw_metadata = await self.parent.network.get_asset_metadata(self.asset_checker.line_edit.text())
             except UntrustedServerReturnedError as e:
-                self.asset_checker.error_button.setToolTip(_("Error getting asset from network") + ":\n" + e.get_message_for_gui())
-                self.asset_checker.error_button.show()
+                self.asset_checker.show_error(_("Error getting asset from network") + ":\n" + e.get_message_for_gui())
                 return
             except Exception as e:
-                self.asset_checker.error_button.setToolTip(_("Error getting asset from network") + ":\n" + repr(e))
-                self.asset_checker.error_button.show()
+                self.asset_checker.show_error(_("Error getting asset from network") + ":\n" + repr(e))
                 return
             if raw_metadata:
                 # Cannot create
-                self.asset_checker.error_button.setToolTip(_("This asset already exists!"))
-                self.asset_checker.error_button.show()
-                pass
+                self.asset_checker.show_error(_("This asset already exists!"))
             else:
                 self.asset_is_ok = True
                 self._maybe_enable_pay_button()
@@ -384,26 +312,22 @@ class CreateAssetPanel(QWidget, Logger):
             node.iterate_vars_return_first(lambda name: qualifiers.append(f'#{name}'))
             for qualifier in qualifiers:
                 if not self.parent.network:
-                    self.verifier_e.error_button.setToolTip(_("You are offline."))
-                    self.verifier_e.error_button.show()
+                    self.verifier_e.show_error(_("You are offline."))
                     return
                 try:
                     raw_metadata = await self.parent.network.get_asset_metadata(qualifier)
                 except UntrustedServerReturnedError as e:
-                    self.verifier_e.error_button.setToolTip(_("Error getting asset from network") + ":\n" + e.get_message_for_gui())
-                    self.verifier_e.error_button.show()
+                    self.verifier_e.show_error(_("Error getting asset from network") + ":\n" + e.get_message_for_gui())
                     return
                 except Exception as e:
-                    self.verifier_e.error_button.setToolTip(_("Error getting asset from network") + ":\n" + repr(e))
-                    self.verifier_e.error_button.show()
+                    self.verifier_e.show_error(_("Error getting asset from network") + ":\n" + repr(e))
                     return
                 if raw_metadata:
                     # Cannot create
                     self.verifier_is_ok = True
                     self.verifier_view.setEnabled(True)
                 else:
-                    self.verifier_e.error_button.setToolTip(_("Qualifier {} does not exist!").format(qualifier))
-                    self.verifier_e.error_button.show()
+                    self.verifier_e.show_error(_("Qualifier {} does not exist!").format(qualifier))
                     pass
             self._maybe_enable_pay_button()
             return None
@@ -457,9 +381,10 @@ class CreateAssetPanel(QWidget, Logger):
             node = parse_verifier_string(verifier)
             error = node.error()
             if error:
-                return _('The verifier string is not valid')
-            qualifiers = set()
-            node.iterate_vars_return_first(lambda var: qualifiers.add(var))
+                self.payto_e.show_error(_('The verifier string is not valid'))
+                return
+            vars = set()
+            node.iterate_vars_return_first(vars.add)
             is_qualified = dict()
 
             x, h160 = b58_address_to_hash160(address)
@@ -467,65 +392,60 @@ class CreateAssetPanel(QWidget, Logger):
             restricted_asset_name = self.asset_checker.line_edit.text()            
             maybe_flag = self.parent.wallet.adb.is_h160_tagged(h160_h, restricted_asset_name)
             if maybe_flag is True:
-                self.payto_e.error_button.setToolTip(_('This address is blacklisted from receiving this asset.'))
-                self.payto_e.error_button.show()
+                self.payto_e.show_error(_('This address is blacklisted from receiving this asset.'))
                 return
             elif maybe_flag is None:
                 if not self.parent.network:
-                    self.payto_e.error_button.setToolTip(_("You are offline."))
-                    self.payto_e.error_button.show()
+                    self.payto_e.show_error(_("You are offline."))
                     return
                 try:
                     result = await self.parent.network.check_tag_for_h160(restricted_asset_name, h160_h)
                 except UntrustedServerReturnedError as e:
-                    self.payto_e.error_button.setToolTip(_("Error getting qualifier status from network") + ":\n" + e.get_message_for_gui())
-                    self.payto_e.error_button.show()
+                    self.payto_e.show_error(_("Error getting restricted status from network") + ":\n" + e.get_message_for_gui())
                     return
                 except Exception as e:
-                    self.payto_e.error_button.setToolTip(_("Error getting qualifier status from network") + ":\n" + repr(e))
-                    self.payto_e.error_button.show()
+                    self.payto_e.show_error(_("Error getting restricted status from network") + ":\n" + repr(e))
                     return
                 is_qual = result.get('flag', False)
                 assert isinstance(is_qual, bool)
                 if is_qual:
-                    self.payto_e.error_button.setToolTip(_('This address is blacklisted from receiving this asset.'))
-                    self.payto_e.error_button.show()
+                    self.payto_e.show_error(_('This address is blacklisted from receiving this asset.'))
                     return
 
-            for qualifier in qualifiers:
-                maybe_flag = self.parent.wallet.adb.is_h160_tagged(h160_h, qualifier)
-                if maybe_flag is not None:
-                    is_qualified[qualifier] = maybe_flag
-                    continue
-
+            for var in vars:
+                for asset, d in self.parent.wallet.adb.get_tags_for_h160(h160_h, include_mempool=False).items():
+                    if asset.startswith(f'#{var}') and d['flag']:
+                        is_qualified[var] = True
+                        break
+                if is_qualified.get(var, False): continue
+                
                 if not self.parent.network:
-                    self.payto_e.error_button.setToolTip(_("You are offline."))
-                    self.payto_e.error_button.show()
+                    self.payto_e.show_error(_("You are offline."))
                     return
                 try:
-                    result = await self.parent.network.check_tag_for_h160(('#' if qualifier[0] != '#' else '') + qualifier, h160_h)
+                    result = await self.parent.network.get_tags_for_h160(h160_h)
                 except UntrustedServerReturnedError as e:
-                    self.payto_e.error_button.setToolTip(_("Error getting qualifier status from network") + ":\n" + e.get_message_for_gui())
-                    self.payto_e.error_button.show()
+                    self.payto_e.show_error(_("Error getting qualifier status from network") + ":\n" + e.get_message_for_gui())
                     return
                 except Exception as e:
-                    self.payto_e.error_button.setToolTip(_("Error getting qualifier status from network") + ":\n" + repr(e))
-                    self.payto_e.error_button.show()
+                    self.payto_e.show_error(_("Error getting qualifier status from network") + ":\n" + repr(e))
                     return
                 
-                is_qual = result.get('flag', False)
-                assert isinstance(is_qual, bool)
-                is_qualified[qualifier] = is_qual
+                for asset, d in result.items():
+                    if asset.startswith(f'#{var}') and d['flag']:
+                        is_qualified[var] = True
+                        break
+                else:
+                    is_qualified[var] = False
 
             can_receive = node.evaluate(is_qualified)
             if not can_receive:
-                self.payto_e.error_button.setToolTip(_('This address cannot receive this asset based on the verifier string'))
-                self.payto_e.error_button.show()
+                self.payto_e.show_error(_('This address cannot receive this asset based on the verifier string (qualifications must exit the mempool)'))
                 return
 
             self.address_is_ok = True
             self._maybe_enable_pay_button()
-            return None
+            return
 
         self.payto_e = ValidatedDelayedCallbackEditor(get_asyncio_loop, address_fast_fail, 0.5, validate_address)
 
@@ -567,6 +487,73 @@ class CreateAssetPanel(QWidget, Logger):
         self.amount_e.min_amount = Decimal('1' if amount == 0 else f'0.{"".join("0" for i in range(amount - 1))}1') * COIN
         self.amount_e.numbify()
         self.amount_e.update()
+
+    def clayout_on_edit(self, clayout: ChoicesLayout):
+        self.burn_address = self.asset_types[clayout.selected_index()][2]
+        self.burn_amount = self.asset_types[clayout.selected_index()][3]
+        self.send_button.setText(_("Pay") + f" {self.burn_amount} RVN...")
+
+        self.amount_e.setAmount(COIN)
+        self.divisions_e.setAmount(0)
+        self._on_divisions_change(0)
+        self.reissuable.setChecked(True)
+
+        asset_type = self.asset_types[clayout.selected_index()]
+        prefix = self.get_prefix(asset_type)
+        self.asset_checker.line_edit.setText(prefix)
+        if asset_type[1] in (AssetType.ROOT, AssetType.SUB, AssetType.RESTRICTED):
+            self.amount_e.max_amount = DEFAULT_ASSET_AMOUNT_MAX * COIN
+            self.divisions_e.max_amount = 8
+            self.amount_e.setEnabled(True)
+            self.divisions_e.setEnabled(True)
+            self.reissuable.setEnabled(True)
+        elif asset_type[1] in (AssetType.UNIQUE, AssetType.MSG_CHANNEL, AssetType.QUALIFIER, AssetType.SUB_QUALIFIER):
+            self.amount_e.setEnabled(False)
+            self.divisions_e.setEnabled(False)
+            self.reissuable.setEnabled(False)
+            self.reissuable.setChecked(False)
+
+        if asset_type[1] in (AssetType.QUALIFIER, AssetType.SUB_QUALIFIER):
+            self.amount_e.setEnabled(True)
+            self.amount_e.max_amount = QUALIFIER_ASSET_AMOUNT_MAX * COIN
+
+        if asset_type[1] in (AssetType.MSG_CHANNEL, ):
+            self.associated_data_e.line_edit.setText('')
+            self.associated_data_e.line_edit.setEnabled(False)
+        else:
+            self.associated_data_e.line_edit.setEnabled(True)
+
+        if asset_type[1] in (AssetType.RESTRICTED, ):
+            self.verifier_view.setVisible(True)
+            self.verifier_e.line_edit.setVisible(True)
+            self.verifier_label.setVisible(True)
+        else:
+            self.verifier_view.setVisible(False)
+            self.verifier_e.error_button.setVisible(False)
+            self.verifier_e.line_edit.setVisible(False)
+            self.verifier_label.setVisible(False)
+            self.verifier_e.line_edit.setText('')
+
+        self.parent_asset_selector_combo.setVisible(asset_type[1] not in (AssetType.ROOT, AssetType.QUALIFIER))
+        self.update_parent_assets(asset_type[1])
+
+        if asset_type[1] in (AssetType.ROOT, AssetType.QUALIFIER):
+            self.asset_checker.line_edit.setEnabled(True)
+            self.parent_is_ok = True
+        else:
+            selected_index = self.parent_asset_selector_combo.currentIndex()
+            self.parent_is_ok = selected_index > 0 and len(self.parent_assets) > (selected_index - 1) and self.parent_assets[selected_index - 1][1]
+            if asset_type[1] == AssetType.RESTRICTED:
+                self.asset_checker.line_edit.setEnabled(False)
+                if selected_index > 0 and len(self.parent_assets) > selected_index - 1:
+                    selected_asset = self.parent_assets[selected_index - 1][0]
+                    self.asset_checker.line_edit.setText(f'${selected_asset[:-1]}')
+                else:
+                    self.asset_checker.line_edit.setText('')
+            else:
+                self.asset_checker.line_edit.setText('')
+                self.asset_checker.line_edit.setEnabled(selected_index > 0)
+        self.asset_checker.validate_text()
 
     def create_asset(self):
         output = PartialTxOutput.from_address_and_value(self.burn_address, self.burn_amount * COIN)
@@ -694,6 +681,8 @@ class CreateAssetPanel(QWidget, Logger):
             tx,
             callback=sign_done,
             external_keypairs=None)
+        
+        self.clayout_on_edit(self.clayout)
         
     def get_text_not_enough_funds_mentioning_frozen(self) -> str:
         text = _("Not enough funds")

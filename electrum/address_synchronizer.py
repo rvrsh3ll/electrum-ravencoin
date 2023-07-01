@@ -917,7 +917,7 @@ class AddressSynchronizer(Logger, EventListener):
             self.db.add_verified_qualifier_tag(asset, h160, d)
         util.trigger_callback('adb_added_verified_tag_for_qualifier', self, asset, h160)
 
-    def get_tags_for_qualifier(self, asset: str):
+    def get_tags_for_qualifier(self, asset: str, *, include_mempool=True):
         with self.lock:
             d = {}
             for h160, data in (self.db.get_verified_qualifier_tags(asset) or dict()).items():
@@ -926,9 +926,25 @@ class AddressSynchronizer(Logger, EventListener):
             for h160, data in self.unverified_tags_for_qualifier.get(asset, dict()).items():
                 data['type'] = METADATA_UNVERIFIED
                 d[h160] = data
-            for h160, data in self.unconfirmed_tags_for_qualifier.get(asset, dict()).items():
-                data['type'] = METADATA_UNCONFIRMED
-                d[h160] = data
+            if include_mempool:
+                for h160, data in self.unconfirmed_tags_for_qualifier.get(asset, dict()).items():
+                    data['type'] = METADATA_UNCONFIRMED
+                    d[h160] = data
+            return d
+
+    def get_tags_for_h160(self, h160: str, *, include_mempool=True) -> Dict[str, Dict]:
+        with self.lock:
+            d = {}
+            for asset, data in (self.db.get_verified_h160_tags(h160) or dict()).items():
+                data['type'] = METADATA_VERIFIED
+                d[asset] = data
+            for asset, data in self.unverified_tags_for_h160.get(h160, dict()).items():
+                data['type'] = METADATA_UNVERIFIED
+                d[asset] = data
+            if include_mempool:
+                for asset, data in self.unconfirmed_tags_for_h160.get(h160, dict()).items():
+                    data['type'] = METADATA_UNCONFIRMED
+                    d[asset] = data
             return d
 
     def remove_unverified_tx(self, tx_hash, tx_height):

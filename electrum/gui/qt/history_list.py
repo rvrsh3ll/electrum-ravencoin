@@ -818,14 +818,15 @@ class HistoryList(MyTreeView, AcceptFileDragDrop):
         channel_id = tx_item.get('channel_id')
         if channel_id and self.wallet.lnworker and (chan := self.wallet.lnworker.get_channel_by_id(bytes.fromhex(channel_id))):
             menu.addAction(_("View Channel"), lambda: self.main_window.show_channel_details(chan))
-        if is_unconfirmed and tx:
-            if tx_details.can_bump:
-                menu.addAction(_("Increase fee"), lambda: self.main_window.bump_fee_dialog(tx))
-            else:
-                if tx_details.can_cpfp:
-                    menu.addAction(_("Child pays for parent"), lambda: self.main_window.cpfp_dialog(tx))
-            if tx_details.can_dscancel:
-                menu.addAction(_("Cancel (double-spend)"), lambda: self.main_window.dscancel_dialog(tx))
+        # RVN cannot replace mempool conflicts
+        #if is_unconfirmed and tx:
+        #    if tx_details.can_bump:
+        #        menu.addAction(_("Increase fee"), lambda: self.main_window.bump_fee_dialog(tx))
+        #    else:
+        #        if tx_details.can_cpfp:
+        #            menu.addAction(_("Child pays for parent"), lambda: self.main_window.cpfp_dialog(tx))
+        #    if tx_details.can_dscancel:
+        #        menu.addAction(_("Cancel (double-spend)"), lambda: self.main_window.dscancel_dialog(tx))
         invoices = self.wallet.get_relevant_invoices_for_tx(tx_hash)
         if len(invoices) == 1:
             menu.addAction(_("View invoice"), lambda inv=invoices[0]: self.main_window.show_onchain_invoice(inv))

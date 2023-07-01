@@ -54,9 +54,9 @@ class AssetTab(QWidget, MessageBoxMixin, Logger):
 
         self.tabs = tabs = QTabWidget(self)
         tabs.addTab(self.view_asset_tab, read_QIcon("eye1.png"), _('View'))
-        tabs.addTab(self.create_asset_tab, read_QIcon("preferences.png"), _('Create'))
-        tabs.addTab(self.reissue_asset_tab, read_QIcon("preferences.png"), _('Reissue'))
-        tabs.addTab(self.qualifiy_tab, read_QIcon("preferences.png"), _('Tagging'))
+        tabs.addTab(self.create_asset_tab, read_QIcon("unconfirmed.png"), _('Create'))
+        tabs.addTab(self.reissue_asset_tab, read_QIcon("reissue.png"), _('Reissue'))
+        tabs.addTab(self.qualifiy_tab, read_QIcon("tag.png"), _('Tagging'))
 
         tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 

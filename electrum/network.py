@@ -1166,17 +1166,24 @@ class Network(Logger, NetworkRetryManager[ServerAddr]):
 
     @best_effort_reliable
     @catch_server_exceptions
-    async def get_asset_metadata(self, asset: str) -> dict:
+    async def get_asset_metadata(self, asset: str) -> Dict:
         if self.interface is None:
             raise RequestTimedOut()
         return await self.interface.get_asset_metadata(asset)
 
     @best_effort_reliable
     @catch_server_exceptions
-    async def check_tag_for_h160(self, asset: str, h160: str) -> dict:
+    async def check_tag_for_h160(self, asset: str, h160: str) -> Dict:
         if self.interface is None:
             raise RequestTimedOut()
         return await self.interface.check_tag_for_h160(asset, h160)
+
+    @best_effort_reliable
+    @catch_server_exceptions
+    async def get_tags_for_h160(self, h160: str, *, include_mempool=False) -> Dict[str, Dict]:
+        if self.interface is None:
+            raise RequestTimedOut()
+        return await self.interface.get_tags_for_h160(h160, include_mempool=include_mempool)
 
     def blockchain(self) -> Blockchain:
         interface = self.interface

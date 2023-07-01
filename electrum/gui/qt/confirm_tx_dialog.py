@@ -409,12 +409,13 @@ class TxEditor(WindowModalDialog):
                 _('This may result in higher transactions fees.')
             ]))
         self.use_multi_change_menu.setEnabled(self.wallet.use_change)
-        add_pref_action(
-            self.config.WALLET_BATCH_RBF,
-            self.toggle_batch_rbf,
-            _('Batch unconfirmed transactions'),
-            _('If you check this box, your unconfirmed transactions will be consolidated into a single transaction.') + '\n' + \
-            _('This will save fees, but might have unwanted effects in terms of privacy'))
+        # RVN cannot replace mempool txs
+        #add_pref_action(
+        #    self.config.WALLET_BATCH_RBF,
+        #    self.toggle_batch_rbf,
+        #    _('Batch unconfirmed transactions'),
+        #    _('If you check this box, your unconfirmed transactions will be consolidated into a single transaction.') + '\n' + \
+        #    _('This will save fees, but might have unwanted effects in terms of privacy'))
         add_pref_action(
             self.config.WALLET_SPEND_CONFIRMED_ONLY,
             self.toggle_confirmed_only,
