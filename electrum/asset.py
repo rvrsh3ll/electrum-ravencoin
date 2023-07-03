@@ -224,6 +224,25 @@ def generate_create_script(address: str, asset: str, amount: int, divisions: int
     base_script = address_to_script(address)
     return base_script + asset_script
 
+def generate_reissue_script(address: str, asset: str, amount: int, divisions: int, reissuable: bool, associated_data: Optional[bytes]) -> str:
+    if get_error_for_asset_name(asset):
+        raise AssetException('Bad asset')
+    if not amount > 0 or amount > DEFAULT_ASSET_AMOUNT_MAX * COIN:
+        raise AssetException('Bad amount')
+    if (divisions < 0 or divisions > 8) and divisions != 0xff:
+        raise AssetException('Bad divisions')
+    if associated_data and len(associated_data) != 34:
+        raise AssetException('Bad data')
+
+    asset_data = (f'{RVN_ASSET_PREFIX.hex()}{RVN_ASSET_TYPE_REISSUE.hex()}'
+                  f'{int_to_hex(len(asset))}{asset.encode().hex()}'
+                  f'{int_to_hex(amount, 8)}{int_to_hex(divisions)}'
+                  f"{'01' if reissuable else '00'}"
+                  f'{associated_data.hex() if associated_data else ""}')
+    asset_script = construct_script([opcodes.OP_ASSET, asset_data, opcodes.OP_DROP])
+    base_script = address_to_script(address)
+    return base_script + asset_script
+
 def generate_owner_script(address: str, asset: str) -> 'str':
     base_script = address_to_script(address)
     return generate_owner_script_from_base(asset, base_script)

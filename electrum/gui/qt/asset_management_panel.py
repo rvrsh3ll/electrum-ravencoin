@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import QLabel, QVBoxLayout, QGridLayout, QCheckBox, QWidget
 
 from electrum import constants
 from electrum.asset import (get_error_for_asset_typed, AssetType, DEFAULT_ASSET_AMOUNT_MAX, QUALIFIER_ASSET_AMOUNT_MAX, MAX_VERIFIER_STING_LENGTH, generate_create_script, generate_owner_script,
-                            MAX_NAME_LENGTH, parse_verifier_string, compress_verifier_string, generate_verifier_tag)
+                            MAX_NAME_LENGTH, parse_verifier_string, compress_verifier_string, generate_verifier_tag, generate_reissue_script)
 from electrum.bitcoin import base_decode, BaseDecodeError, COIN, is_address, b58_address_to_hash160
 from electrum.i18n import _
 from electrum.util import get_asyncio_loop, format_satoshis_plain, DECIMAL_POINT
@@ -837,20 +837,148 @@ class CreateAssetPanel(ManageAssetPanel):
 class ReissueAssetPanel(ManageAssetPanel):
     def __init__(self, parent: 'AssetTab'):
         super().__init__(parent)
+        self.burn_address = constants.net.BURN_ADDRESSES.ReissueAssetBurnAddress
         self.burn_amount = constants.net.BURN_AMOUNTS.ReissueAssetBurnAmount
         self.send_button.setText(_("Pay") + f" {self.burn_amount} RVN...")
         self.asset_selector_combo.setVisible(True)
+        self.amount_e.min_amount = 0
+        self.amount_e.setAmount(0)
+
+    def _create_tx(self):
+        output = PartialTxOutput.from_address_and_value(self.burn_address, self.burn_amount * COIN)
+        outputs = [output]
+        goto_address = self.payto_e.line_edit.text()
+        asset = self.asset_checker.line_edit.text()
+        amount = self.amount_e.get_amount()
+        assert isinstance(amount, int)
+        divisions = self.divisions_e.get_amount()
+        assert isinstance(divisions, int)
+        reissuable = self.reissuable.isChecked()
+        associated_data = None
+        associated_data_raw = self.associated_data_e.line_edit.text()
+        if associated_data_raw:
+            try:
+                associated_data = b'\x54\x20' + bytes.fromhex(associated_data_raw)
+            except ValueError:
+                associated_data = base_decode(associated_data_raw, base=58)
+
+        if not goto_address:
+            asset_change_address = self.parent.wallet.get_single_change_address_for_new_transaction() or \
+                        self.parent.wallet.get_receiving_address() # Fallback
+            # Lock for parent asset change
+            self.parent.wallet.set_reserved_state_of_address(asset_change_address, reserved=True)
+        else:
+            asset_change_address = goto_address
+
+        output_amounts = {
+            None: self.burn_amount * COIN,
+            asset: amount,
+        }
+
+        selected_asset = self._get_selected_asset()
+        if selected_asset[0] == '$':
+            parent_asset = f'{selected_asset[1:]}!'
+        else:
+            parent_asset = f'{selected_asset}!'
+        output_amounts[parent_asset] = COIN
+        parent_asset_change_address = self.parent.wallet.get_single_change_address_for_new_transaction() or \
+                    self.parent.wallet.get_receiving_address() # Fallback
+        outputs.append(PartialTxOutput.from_address_and_value(parent_asset_change_address, COIN, asset=parent_asset))
+
+        if not goto_address:
+            self.parent.wallet.set_reserved_state_of_address(asset_change_address, reserved=False)
+
+        def make_tx(fee_est, *, confirmed_only=False):
+            if not goto_address:
+                # Freeze a change address so it is seperate from the rvn change
+                self.parent.wallet.set_reserved_state_of_address(asset_change_address, reserved=True)
+
+            self.parent.wallet.set_reserved_state_of_address(parent_asset_change_address, reserved=True)
+
+            appended_vouts = []
+            verifier_string = self.verifier_e.line_edit.text()
+            if selected_asset[0] == '$' and verifier_string:
+                # https://github.com/RavenProject/Ravencoin/blob/e48d932ec70267a62ec3541bdaf4fe022c149f0e/src/assets/assets.cpp#L4567
+                # https://github.com/RavenProject/Ravencoin/blob/e48d932ec70267a62ec3541bdaf4fe022c149f0e/src/assets/assets.cpp#L901
+                # Longest verifier string is 75 de-facto. OP_PUSH used.
+                verifier_script = generate_verifier_tag(verifier_string)
+                verifier_vout = PartialTxOutput(scriptpubkey=bytes.fromhex(verifier_script), value=0)
+                appended_vouts.append(verifier_vout)
+
+            create_script = generate_reissue_script(asset_change_address, asset, amount, divisions, reissuable, associated_data)
+            create_vout = PartialTxOutput(scriptpubkey=bytes.fromhex(create_script), value=0)
+            appended_vouts.append(create_vout)
+
+            def fee_mixin(fee_est):
+                def new_fee_estimator(size):
+                    # size is virtual bytes
+                    # We shouldn't need to worry about vout size varint increasing
+                    appended_size = sum(len(x.serialize_to_network()) for x in appended_vouts)
+                    return fee_est(size + appended_size)
+            
+                return new_fee_estimator
+
+            tx = self.parent.wallet.make_unsigned_transaction(
+                coins=self.parent.window.get_coins(nonlocal_only=False, confirmed_only=confirmed_only),
+                outputs=outputs,
+                fee=fee_est,
+                rbf=False,
+                fee_mixin=fee_mixin
+            )
+
+            tx.add_outputs(appended_vouts, do_sort=False)
+
+            if not goto_address:
+                self.parent.wallet.set_reserved_state_of_address(asset_change_address, reserved=False)
+            
+            if parent_asset_change_address:
+                self.parent.wallet.set_reserved_state_of_address(parent_asset_change_address, reserved=False)
+
+            return tx
+
+        conf_dlg = ConfirmTxDialog(window=self.parent.window, make_tx=make_tx, output_value=output_amounts)
+        if conf_dlg.not_enough_funds:
+            # note: use confirmed_only=False here, regardless of config setting,
+            #       as the user needs to get to ConfirmTxDialog to change the config setting
+            if not conf_dlg.can_pay_assuming_zero_fees(confirmed_only=False):
+                text = self.get_text_not_enough_funds_mentioning_frozen()
+                self.parent.show_message(text)
+                return
+        tx = conf_dlg.run()
+        if tx is None:
+            # user cancelled
+            return
+        is_preview = conf_dlg.is_preview
+        if is_preview:
+            self.parent.window.show_transaction(tx)
+            return
+        def sign_done(success):
+            if success:
+                self.parent.window.broadcast_or_show(tx)
+        self.parent.window.sign_tx(
+            tx,
+            callback=sign_done,
+            external_keypairs=None)
+        
+        self.asset_selector_combo.setCurrentIndex(0)
+
 
     def _parent_asset_selector_on_change(self):
         super()._parent_asset_selector_on_change()
         asset = self._get_selected_asset()
-        if not asset: return
+        if not asset: 
+            self.amount_e.setAmount(0)
+            self.divisions_e.setAmount(0)
+            self.associated_data_e.line_edit.setText('')
+            self.reissuable.setChecked(True)
+            return
         self.asset_checker.line_edit.setText(asset)
         asset_metadata_tup = self.parent.wallet.adb.get_asset_metadata(asset)
         if not asset_metadata_tup: return
         asset_metadata, x = asset_metadata_tup
         self.divisions_e.setAmount(asset_metadata.divisions)
         self.divisions_e.min_amount = asset_metadata.divisions
+        self.amount_e.max_amount = DEFAULT_ASSET_AMOUNT_MAX * COIN - asset_metadata.sats_in_circulation
         if asset_metadata.associated_data is None:
             associated_data_string = ''
         elif asset_metadata.associated_data[:2] == b'\x54\x20':

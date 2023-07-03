@@ -85,9 +85,10 @@ class AssetList(MyTreeView):
     def update(self):
         # not calling maybe_defer_update() as it interferes with coincontrol status bar
         watching_assets = [asset for asset, balance in self.wallet.get_balance(asset_aware=True).items() if asset and sum(balance) > 0]
-        new_assets = [(asset, (metadata[0].sats_in_circulation, metadata[1]) if ((metadata := self.wallet.adb.get_asset_metadata(asset)) is not None) else None) for asset in watching_assets]
+        new_assets = sorted([(asset, (metadata[0].sats_in_circulation, metadata[1]) if ((metadata := self.wallet.adb.get_asset_metadata(asset)) is not None) else None) for asset in watching_assets], key=lambda x: x[0])
         if self.current_assets == new_assets:
             return
+        self.parent.logger.info('refreshing asset view')
         self.model().clear()
         self.update_headers(self.__class__.headers)
         for idx, (asset, data) in enumerate(new_assets):

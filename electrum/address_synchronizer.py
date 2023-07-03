@@ -748,12 +748,12 @@ class AddressSynchronizer(Logger, EventListener):
     
     def get_asset_metadata(self, asset: str) -> Optional[Tuple[AssetMetadata, int]]:
         with self.lock:
-            verified = self.db.get_verified_asset_metadata(asset)
-            if verified:
-                return verified, METADATA_VERIFIED
             unconfirmed = self.unconfirmed_asset_metadata.get(asset, None)
             if unconfirmed:
                 return unconfirmed[0], METADATA_UNCONFIRMED
+            verified = self.db.get_verified_asset_metadata(asset)
+            if verified:
+                return verified, METADATA_VERIFIED
             unverified = self.unverified_asset_metadata.get(asset, None)
             if unverified:
                 return unverified[0], METADATA_UNVERIFIED
