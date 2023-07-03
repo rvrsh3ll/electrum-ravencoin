@@ -34,7 +34,7 @@ from .util import profiler, bfh, TxMinedInfo, UnrelatedTransactionException, wit
 from .transaction import Transaction, TxOutput, TxInput, PartialTxInput, TxOutpoint, PartialTransaction
 from .synchronizer import Synchronizer
 from .verifier import SPV
-from .asset import get_asset_info_from_script, AssetMetadata
+from .asset import get_asset_info_from_script, AssetMetadata, get_error_for_asset_typed, AssetType
 from .blockchain import hash_header, Blockchain
 from .i18n import _
 from .logging import Logger
@@ -136,7 +136,7 @@ class AddressSynchronizer(Logger, EventListener):
     def get_addresses(self):
         return sorted(self.db.get_history())
 
-    def get_assets(self):
+    def get_assets_to_watch(self):
         return sorted(self.db.get_assets_to_watch())
 
     def get_address_history(self, addr: str) -> Dict[str, int]:
@@ -407,6 +407,9 @@ class AddressSynchronizer(Logger, EventListener):
         if not self.db.is_watching_asset(asset):
             self.db.add_asset_to_watch(asset)
             self.synchronizer.add_asset(asset)
+        if asset[-1] == '!' and not get_error_for_asset_typed(asset[:-1], AssetType.ROOT):
+            # Check for any restricted assets
+            self.watch_asset(f'${asset[:-1]}')
 
     def remove_transaction(self, tx_hash: str) -> None:
         """Removes a transaction AND all its dependents/children

@@ -183,6 +183,8 @@ def get_error_for_asset_typed(asset: str, asset_type: AssetType) -> Optional[str
             else:
                 if _SUB_NAME_DELIMITER not in asset:
                     return _('Not a sub qualifier')
+            if len(asset) < 4:
+                return _('Name must contain at least {} characters.'.format(MIN_ASSET_LENGTH))
             if not _isQualifierNameValidBeforeTag(asset):
                 return _('Qualifier name contains invalid characters (Valid characters are: A-Z 0-9 _ .) (# must be the first character, _ . special characters can\'t be the first or last characters)')
         elif asset_type == AssetType.RESTRICTED:

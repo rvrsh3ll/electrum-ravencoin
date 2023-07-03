@@ -546,7 +546,7 @@ class Synchronizer(SynchronizerBase):
                     if h160_h not in self.adb.db.verified_tags_for_h160s:
                         self.adb.db.verified_tags_for_h160s[h160_h] = dict()
                     await self._add_h160_for_tags(h160_h)
-        for asset in random_shuffled_copy(self.adb.get_assets()):
+        for asset in random_shuffled_copy(self.adb.get_assets_to_watch()):
             await self._add_asset(asset)
             if asset[0] == '#':
                 if asset not in self.adb.db.verified_tags_for_qualifiers:

@@ -220,8 +220,8 @@ class HistoryNode(CustomNode):
             if asset := tx_item.get('asset'):
                 if asset[-1] != ASSET_OWNER_IDENTIFIER:
                     asset += ' '
-                if len(asset) > 13:
-                    asset = asset[:6] + '…' + asset[-6:]
+                #if len(asset) > 13:
+                #    asset = asset[:6] + '…' + asset[-6:]
                 return QVariant(asset)
             return QVariant('')
         elif col == HistoryColumns.BALANCE:
@@ -553,7 +553,7 @@ class HistoryList(MyTreeView, AcceptFileDragDrop):
         self.setRootIsDecorated(True)
         self.header().setStretchLastSection(False)
         for col in HistoryColumns:
-            sm = QHeaderView.Stretch if col == self.stretch_column else QHeaderView.ResizeToContents
+            sm = QHeaderView.Stretch if col == self.stretch_column or col == self.Columns.ASSET else QHeaderView.ResizeToContents
             self.header().setSectionResizeMode(col, sm)
         if self.config:
             self.configvar_show_toolbar = self.config.cv.GUI_QT_HISTORY_TAB_SHOW_TOOLBAR
