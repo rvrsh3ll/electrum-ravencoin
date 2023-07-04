@@ -597,6 +597,7 @@ class WalletDB(JsonDB):
         self.non_deterministic_vouts = self.get_dict('non_deterministic_txo_scriptpubkey')
         self.verified_tags_for_qualifiers = self.get_dict('verified_qualifier_tags')
         self.verified_tags_for_h160s = self.get_dict('verified_h160_tags')
+        self.verified_restricted_verifiers = self.get_dict('verified_verifier_strings')
 
     @locked
     def get_non_deterministic_txo_lockingscript(self, outpoint: TxOutpoint) -> Optional[bytes]:
@@ -672,6 +673,35 @@ class WalletDB(JsonDB):
     def remove_verified_asset_metadata(self, asset: str):
         assert isinstance(asset, str)
         return self.verified_asset_metadata.pop(asset, None)
+
+    @locked
+    def get_verified_restricted_verifier(self, asset: str) -> Optional[Dict[str, Any]]:
+        assert isinstance(asset, str)
+        return self.verified_restricted_verifiers.get(asset, None)
+
+    @modifier
+    def remove_verified_restricted_verifier(self, asset: str):
+        assert isinstance(asset, str)
+        self.verified_restricted_verifiers.pop(asset)
+
+    @modifier
+    def add_verified_restricted_verifier(self, asset: str, d):
+        assert isinstance(asset, str)
+        assert isinstance(d['tx_hash'], str)
+        assert isinstance(d['qualifying_tx_pos'], int)
+        assert isinstance(d['restricted_tx_pos'], int)
+        assert isinstance(d['height'], int)
+        assert isinstance(d['string'], str)
+        self.verified_restricted_verifiers[asset] = d
+
+    @locked
+    def get_verified_restricted_verifier_after_height(self, height: int) -> Set[str]:
+        assert isinstance(height, int)
+        s = set()
+        for asset, d in self.verified_restricted_verifiers.items():
+            if d['height'] > height:
+                s.add(asset)
+        return s
 
     @locked
     def get_verified_qualifier_tags(self, asset: str) -> Dict[str, Dict[str, Any]]:

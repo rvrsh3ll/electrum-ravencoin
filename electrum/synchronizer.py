@@ -117,11 +117,17 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
         self._handling_h160s_for_tags_statuses = set()
         self._processed_some_h160_for_tags_notifications = False
 
+        self._adding_restricted_for_verifier = set()
+        self.requested_restricted_for_verifier = set()
+        self._handling_restricted_for_verifier = set()
+        self._processed_some_restricted_for_verifier = False
+
         # Queues
         self.asset_status_queue = asyncio.Queue()
         self.status_queue = asyncio.Queue()
         self.qualifier_tags_status_queue = asyncio.Queue()
         self.h160_tags_status_queue = asyncio.Queue()
+        self.restricted_verifier_queue = asyncio.Queue()
 
     async def _run_tasks(self, *, taskgroup):
         await super()._run_tasks(taskgroup=taskgroup)
@@ -131,6 +137,7 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
                 await group.spawn(self.handle_asset_status())
                 await group.spawn(self.handle_qualifier_for_tags_status())
                 await group.spawn(self.handle_h160_for_tags_status())
+                await group.spawn(self.handle_restricted_for_verifier_update())
                 await group.spawn(self.main())
         finally:
             # we are being cancelled now
@@ -138,6 +145,7 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
             self.session.unsubscribe(self.asset_status_queue)
             self.session.unsubscribe(self.qualifier_tags_status_queue)
             self.session.unsubscribe(self.h160_tags_status_queue)
+            self.session.unsubscribe(self.restricted_verifier_queue)
 
     def add(self, addr):
         if not is_address(addr): raise ValueError(f"invalid bitcoin address {addr}")
@@ -154,6 +162,10 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
     def add_h160_for_tag(self, h160: str):
         if len(h160) != 40: raise ValueError(f'{h160} is not a valid h160 hex string')
         self._adding_h160s_for_tags.add(h160)
+
+    def add_restricted_for_verifier(self, asset: str):
+        if error := get_error_for_asset_typed(asset, AssetType.RESTRICTED): raise ValueError(f'invalid asset: {error}')
+        self._adding_restricted_for_verifier.add(asset)
 
     async def _add_address(self, addr: str):
         try:
@@ -189,6 +201,14 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
         finally:
             self._adding_h160s_for_tags.discard(h160)
 
+    async def _add_restricted_for_verifier(self, asset: str):
+        try:
+            if asset in self.requested_restricted_for_verifier: return
+            self.requested_restricted_for_verifier.add(asset)
+            await self.taskgroup.spawn(self._subscribe_to_restricted_for_verifier, asset)
+        finally:
+            self._adding_restricted_for_verifier.discard(asset)
+
     async def _on_address_status(self, addr, status):
         """Handle the change of the status of an address.
         Should remove addr from self._handling_addr_statuses when done.
@@ -202,6 +222,9 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
         raise NotImplementedError()
 
     async def _on_h160_for_tags_status(self, h160, status):
+        raise NotImplementedError()
+    
+    async def _on_restricted_for_verifier_update(self, asset, data):
         raise NotImplementedError()
 
     async def _subscribe_to_address(self, addr):
@@ -233,6 +256,12 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
         self._requests_sent += 1
         async with self._network_request_semaphore:
             await self.session.subscribe('blockchain.tag.h160.subscribe', [h160], self.h160_tags_status_queue)
+        self._requests_answered += 1
+
+    async def _subscribe_to_restricted_for_verifier(self, asset):
+        self._requests_sent += 1
+        async with self._network_request_semaphore:
+            await self.session.subscribe('blockchain.asset.verifier_string.subscribe', [asset], self.restricted_verifier_queue)
         self._requests_answered += 1
 
     async def handle_status(self):
@@ -268,6 +297,14 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
             await self.taskgroup.spawn(self._on_h160_for_tags_status, h160, status)
             self._processed_some_h160_for_tags_notifications = True
 
+    async def handle_restricted_for_verifier_update(self):
+        while True:
+            asset, data = await self.restricted_verifier_queue.get()
+            self._handling_restricted_for_verifier.add(asset)
+            self.requested_restricted_for_verifier.discard(asset)
+            await self.taskgroup.spawn(self._on_restricted_for_verifier_update, asset, data)
+            self._processed_some_restricted_for_verifier = True
+
     async def main(self):
         raise NotImplementedError()  # implemented by subclasses
 
@@ -293,11 +330,13 @@ class Synchronizer(SynchronizerBase):
         self.requested_asset_metadata = set()
         self.requested_qualifiers_for_tags_results = set()
         self.requested_h160s_for_tags_results = set()
+        self.requested_restricted_for_verifier_results = set()
 
         self._stale_histories = dict()  # type: Dict[str, asyncio.Task]
         self._stale_asset_metadatas = dict()  # type: Dict[str, asyncio.Task]
         self._stale_qualifiers_for_tags = dict()  # type: Dict[str, asyncio.Task]
         self._stale_h160s_for_tags = dict()
+        self._stale_restricted_for_verifier = dict()
 
     def diagnostic_name(self):
         return self.adb.diagnostic_name()
@@ -329,10 +368,39 @@ class Synchronizer(SynchronizerBase):
                 and not self.requested_h160s_for_tags_results
                 and not self._stale_h160s_for_tags
 
+                and not self._adding_restricted_for_verifier
+                and not self.requested_restricted_for_verifier
+                and not self._handling_restricted_for_verifier
+                and not self.requested_restricted_for_verifier_results
+                and not self._stale_restricted_for_verifier
+
                 and self.status_queue.empty()
                 and self.asset_status_queue.empty()
                 and self.qualifier_tags_status_queue.empty()
-                and self.h160_tags_status_queue.empty())
+                and self.h160_tags_status_queue.empty()
+                and self.restricted_verifier_queue.empty())
+
+    async def _on_restricted_for_verifier_update(self, asset, data):
+        data_id = f'{data["string"]}:{data["tx_hash"]}:{data["height"]}' if data else ''
+        try:
+            verifier_dict = self.adb.get_restricted_verifier_string_for_synchronizer(asset)
+            if verifier_dict == data:
+                return
+            if not data:
+                if verifier_dict:
+                    raise SynchronizerFailure(f'Server is not sending verifier string for verified restricted asset {asset}')
+                return
+            if (asset, data_id) in self.requested_restricted_for_verifier_results:
+                return
+            self.requested_restricted_for_verifier_results.add((asset, data_id))
+        finally:
+            self._handling_restricted_for_verifier.discard(asset)
+        self.logger.info(f'receiving verifier for asset {asset}: {data["string"]}')
+        verified_data = self.adb.db.get_verified_restricted_verifier(asset)
+        if verified_data and verified_data['height'] > data['height'] > 0:
+            raise SynchronizerFailure(f'Server is trying to send old tag verifier string for {asset}')            
+        self.adb.add_unverified_or_unconfirmed_verifier_string_for_restricted(asset, data)
+        self.requested_restricted_for_verifier_results.discard((asset, data_id))
 
     async def _on_h160_for_tags_status(self, h160, status):
         try:
@@ -548,6 +616,9 @@ class Synchronizer(SynchronizerBase):
                     await self._add_h160_for_tags(h160_h)
         for asset in random_shuffled_copy(self.adb.get_assets_to_watch()):
             await self._add_asset(asset)
+            if asset[-1] == '!' and get_error_for_asset_typed(asset[:-1], AssetType.ROOT) is None:
+                # Watch for restricted of this asset
+                await self._add_asset(f'${asset[:-1]}')
             if asset[0] == '#':
                 if asset not in self.adb.db.verified_tags_for_qualifiers:
                     self.adb.db.verified_tags_for_qualifiers[asset] = dict()
@@ -556,6 +627,7 @@ class Synchronizer(SynchronizerBase):
                 if asset not in self.adb.db.verified_tags_for_qualifiers:
                     self.adb.db.verified_tags_for_qualifiers[asset] = dict()
                 await self._add_qualifier_for_tags(asset)
+                await self._add_restricted_for_verifier(asset)
 
         # main loop
         self._init_done = True
@@ -570,15 +642,19 @@ class Synchronizer(SynchronizerBase):
                 await self._add_qualifier_for_tags(asset)
             for h160 in self._adding_h160s_for_tags.copy():
                 await self._add_h160_for_tags(h160)
+            for asset in self._adding_restricted_for_verifier.copy():
+                await self._add_restricted_for_verifier(asset)
             up_to_date = self.adb.is_up_to_date()
             # see if status changed
             if (up_to_date != prev_uptodate
                     or up_to_date and (self._processed_some_notifications or self._processed_some_asset_notifications or
-                                       self._processed_some_qualifier_for_tags_notifications or self._processed_some_h160_for_tags_notifications)):
+                                       self._processed_some_qualifier_for_tags_notifications or self._processed_some_h160_for_tags_notifications or
+                                       self._processed_some_restricted_for_verifier)):
                 self._processed_some_notifications = False
                 self._processed_some_asset_notifications = False
                 self._processed_some_qualifier_for_tags_notifications = False
                 self._processed_some_h160_for_tags_notifications = False
+                self._processed_some_restricted_for_verifier = False
                 self.adb.up_to_date_changed()
             prev_uptodate = up_to_date
 

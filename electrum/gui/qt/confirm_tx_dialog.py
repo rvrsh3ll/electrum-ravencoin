@@ -387,6 +387,11 @@ class TxEditor(WindowModalDialog):
             self.toggle_io_visibility,
             _('Show inputs and outputs'), '')
         add_pref_action(
+            self.config.GUI_QT_TX_DIALOG_SHOW_ALL_DATA,
+            self.toggle_advanced_view,
+            _('Advanced View'),
+            tooltip=_("Show more data when viewing transactions"))
+        add_pref_action(
             self.config.GUI_QT_TX_EDITOR_SHOW_FEE_DETAILS,
             self.toggle_fee_details,
             _('Edit fees manually'), '')
@@ -444,6 +449,11 @@ class TxEditor(WindowModalDialog):
         size = self.layout().sizeHint()
         self.resize(size)
         self.resize(size)
+
+    def toggle_advanced_view(self):
+        b = not self.config.GUI_QT_TX_DIALOG_SHOW_ALL_DATA
+        self.config.GUI_QT_TX_DIALOG_SHOW_ALL_DATA = b
+        self.trigger_update()
 
     def toggle_output_rounding(self):
         b = not self.config.WALLET_COIN_CHOOSER_OUTPUT_ROUNDING

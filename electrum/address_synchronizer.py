@@ -105,6 +105,9 @@ class AddressSynchronizer(Logger, EventListener):
         self.unverified_tags_for_h160 = defaultdict(dict)
         self.unconfirmed_tags_for_h160 = defaultdict(dict)
 
+        self.unverified_verifier_for_restricted = defaultdict(dict)
+        self.unconfirmed_verifier_for_restricted = defaultdict(dict)
+
         self._get_balance_cache = {}
         self._get_asset_balance_cache = {}
         self._get_assets_in_mempool_cache = {}
@@ -772,6 +775,43 @@ class AddressSynchronizer(Logger, EventListener):
                 return unverified[1][0]
             return None
 
+    def add_unverified_or_unconfirmed_verifier_string_for_restricted(self, asset: str, data):
+        print(f'unverified: {asset} {data}')
+        with self.lock:
+            self.unconfirmed_verifier_for_restricted.pop(asset, None)
+            self.unverified_verifier_for_restricted.pop(asset, None)
+            if data['height'] > 0:
+                self.unverified_verifier_for_restricted[asset] = data
+            else:
+                self.unconfirmed_verifier_for_restricted[asset] = data
+
+    def get_restricted_verifier_string_for_synchronizer(self, asset: str) -> Dict[str, object]:
+        with self.lock:
+            unconfirmed = self.unconfirmed_verifier_for_restricted.get(asset, dict())
+            if unconfirmed:
+                return unconfirmed
+            unverified = self.unverified_verifier_for_restricted.get(asset, dict())
+            if unverified:
+                return unverified
+            return self.db.get_verified_restricted_verifier(asset) or {}
+
+    def get_unverified_restricted_verifier_strings(self) -> Dict[str, Dict[str, object]]:
+        with self.lock:
+            return dict(self.unverified_verifier_for_restricted)
+
+    def remove_unverified_restricted_verifier_string(self, asset: str, source_height: int):
+        with self.lock:
+            d = self.unverified_verifier_for_restricted.get(asset, dict())
+            if d and d['height'] == source_height:
+                self.unverified_verifier_for_restricted.pop(asset)
+
+    def add_verified_restricted_verifier_string(self, asset: str, d):
+        # Remove from the unverified map and add to the verified map
+        with self.lock:
+            self.unverified_verifier_for_restricted.pop(asset, None)
+            self.db.add_verified_restricted_verifier(asset, d)
+        util.trigger_callback('adb_added_verified_restricted_verifier', self, asset, d['string'])
+
     def add_unverified_or_unconfirmed_tags_for_h160(self, h160, asset_tags):
         verified_h160_tags = self.db.get_verified_h160_tags(h160)
         if not verified_h160_tags:
@@ -987,7 +1027,15 @@ class AddressSynchronizer(Logger, EventListener):
                     txs.add(div_tup[0].txid.hex())
                 if associated_data_tup:
                     txs.add(associated_data_tup[0].txid.hex())
-            for asset, h160s in self.db.get_verified_qualifier_tags_after_height(above_height):
+            for asset in self.db.get_verified_restricted_verifier_after_height(above_height):
+                data = self.db.get_verified_restricted_verifier(asset)
+                verified_info = self.db.get_verified_tx(data['tx_hash'])
+                header = blockchain.read_header(data['height'])
+                if header and verified_info and hash_header(header) == verified_info.header_hash: continue
+                
+                self.db.remove_verified_restricted_verifier(asset)
+                txs.add(data['tx_hash'])
+            for asset, h160s in self.db.get_verified_qualifier_tags_after_height(above_height).items():
                 for h160 in h160s:
                     tag_data = self.db.get_verified_qualifier_tag(asset, h160)
                     verified_info = self.db.get_verified_tx(tag_data['tx_hash'])
@@ -996,7 +1044,7 @@ class AddressSynchronizer(Logger, EventListener):
                     
                     self.db.remove_verified_qualifier_tag(asset, h160)
                     txs.add(tag_data['tx_hash'])
-            for h160, assets in self.db.get_verified_h160_tags_after_height(above_height):
+            for h160, assets in self.db.get_verified_h160_tags_after_height(above_height).items():
                 for asset in assets:
                     tag_data = self.db.get_verified_h160_tag(h160, asset)
                     verified_info = self.db.get_verified_tx(tag_data['tx_hash'])

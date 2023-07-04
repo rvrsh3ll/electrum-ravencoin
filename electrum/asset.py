@@ -227,7 +227,7 @@ def generate_create_script(address: str, asset: str, amount: int, divisions: int
 def generate_reissue_script(address: str, asset: str, amount: int, divisions: int, reissuable: bool, associated_data: Optional[bytes]) -> str:
     if get_error_for_asset_name(asset):
         raise AssetException('Bad asset')
-    if not amount > 0 or amount > DEFAULT_ASSET_AMOUNT_MAX * COIN:
+    if not amount >= 0 or amount > DEFAULT_ASSET_AMOUNT_MAX * COIN:
         raise AssetException('Bad amount')
     if (divisions < 0 or divisions > 8) and divisions != 0xff:
         raise AssetException('Bad divisions')
@@ -434,7 +434,7 @@ def get_asset_info_from_script(script: bytes) -> BaseAssetVoutInformation:
                         else:
                             internal_data = decoded[i + 2][1]
                             verifier_string = next(script_GetOp(internal_data))[1]
-                            return VerifierTagAssetVoutInformation(f'"{verifier_string.decode()}"')
+                            return VerifierTagAssetVoutInformation(f'{verifier_string.decode()}')
                     else:
                         reader = ByteReader(asset_portion)
                         first_byte = reader.read_byte_as_int()
