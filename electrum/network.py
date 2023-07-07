@@ -41,13 +41,14 @@ from enum import IntEnum
 
 import aiorpcx
 from aiorpcx import ignore_after
-from aiohttp import ClientResponse
+from aiohttp import ClientResponse, ClientResponseError
 
 from . import util
 from .util import (log_exceptions, ignore_exceptions, OldTaskGroup,
                    bfh, make_aiohttp_session, send_exception_to_crash_reporter,
                    is_hash256_str, is_non_negative_integer, MyEncoder, NetworkRetryManager,
-                   nullcontext, error_text_str_to_safe_str)
+                   nullcontext, error_text_str_to_safe_str, ipfs_explorer_URL)
+
 from .bitcoin import COIN
 from . import constants
 from . import blockchain
@@ -1379,6 +1380,9 @@ class Network(Logger, NetworkRetryManager[ServerAddr]):
         async with make_aiohttp_session(proxy, timeout=timeout) as session:
             if method == 'get':
                 async with session.get(url, params=params, headers=headers) as resp:
+                    return await on_finish(resp)
+            elif method == 'head':
+                async with session.head(url, params=params, headers=headers) as resp:
                     return await on_finish(resp)
             elif method == 'post':
                 assert body is not None or json is not None, 'body or json must be supplied if method is post'

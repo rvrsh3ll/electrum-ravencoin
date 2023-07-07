@@ -28,7 +28,7 @@ from PyQt5.QtWidgets import (QPushButton, QLabel, QMessageBox, QHBoxLayout, QGri
                              QHeaderView, QApplication, QToolTip, QTreeWidget, QStyledItemDelegate,
                              QMenu, QStyleOptionViewItem, QLayout, QLayoutItem, QAbstractButton,
                              QGraphicsEffect, QGraphicsScene, QGraphicsPixmapItem, QSizePolicy, QCheckBox,
-                             QSpacerItem)
+                             QTextEdit)
 
 from electrum.i18n import _, languages
 from electrum.util import FileImportFailed, FileExportFailed, make_aiohttp_session, resource_path
@@ -1388,6 +1388,41 @@ class QHSeperationLine(QFrame):
         self.setFrameShadow(QFrame.Sunken)
         self.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Minimum)
         self.setStyleSheet(ColorScheme.GRAY.as_stylesheet(True))
+
+class AutoResizingTextEdit(QTextEdit):
+    def __init__(self, parent = None, *, max_rows=5):
+        super().__init__(parent)
+        self.textChanged.connect(lambda: self.updateGeometry())
+
+        self.max_rows=max_rows
+        document = self.document()
+        fontMetrics = QFontMetrics(document.defaultFont())
+        self.fontSpacing = fontMetrics.lineSpacing()
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        margins = self.contentsMargins()
+        
+        docLineCount = self.document().lineCount()
+        if docLineCount > self.max_rows:
+            docHeight = self.max_rows * self.fontSpacing
+            return int(docHeight + margins.top() + margins.bottom())
+        
+        if width >= margins.left() + margins.right():
+            document_width = width - margins.left() - margins.right()
+        else:
+            document_width = 0
+
+        document = self.document().clone()
+        document.setTextWidth(document_width)
+
+        return int(margins.top() + document.size().height() + margins.bottom())
+
+    def sizeHint(self):
+        original_hint = super(AutoResizingTextEdit, self).sizeHint()
+        return QSize(original_hint.width(), self.heightForWidth(original_hint.width()))
 
 class BooleanExprASTTableViewer(QDialog, MessageBoxMixin):
     def __init__(self, node: 'BooleanExprAST', window: 'ElectrumWindow'):

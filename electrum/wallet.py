@@ -69,6 +69,7 @@ from .keystore import (load_keystore, Hardware_KeyStore, KeyStore, KeyStoreWithM
 from .util import multisig_type
 from .storage import StorageEncryptionVersion, WalletStorage
 from .wallet_db import WalletDB
+from .ipfs_db import IPFSDB
 from . import transaction, bitcoin, coinchooser, paymentrequest, ecc, bip32
 from .transaction import (Transaction, TxInput, UnknownTxinType, TxOutput,
                           PartialTransaction, PartialTxInput, PartialTxOutput, TxOutpoint)
@@ -547,7 +548,7 @@ class Abstract_Wallet(ABC, Logger, EventListener):
             self.adb.start_network(network)
             if self.lnworker:
                 self._start_network_lightning()
-
+            
     def _start_network_lightning(self):
         assert self.lnworker
         assert self.lnworker.network is None, 'lnworker network already initialized'

@@ -628,7 +628,7 @@ class Synchronizer(SynchronizerBase):
                     self.adb.db.verified_tags_for_qualifiers[asset] = dict()
                 await self._add_qualifier_for_tags(asset)
                 await self._add_restricted_for_verifier(asset)
-
+            
         # main loop
         self._init_done = True
         prev_uptodate = False

@@ -991,6 +991,8 @@ ipfs_explorers = {
                 {'ipfs': 'ipfs/'}),
     'nftstorage.link': ('https://nftstorage.link/',
                 {'ipfs': 'ipfs/'}),
+    'ipfs.chaintek.net': ('https://ipfs.chaintek.net/',
+                {'ipfs': 'ipfs/'})
 }
 
 _ipfs_explorer_default_api_loc = {'ipfs': 'ipfs/'}

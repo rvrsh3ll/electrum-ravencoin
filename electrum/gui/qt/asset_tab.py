@@ -1,11 +1,12 @@
 from typing import TYPE_CHECKING
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QLabel, QVBoxLayout, QSizePolicy, QWidget, QTabWidget
+from PyQt5.QtWidgets import QLabel, QVBoxLayout, QSizePolicy, QWidget, QTabWidget, QHBoxLayout, QToolButton
 
 from electrum.logging import Logger
 from electrum.i18n import _
 
+from .my_treeview import MyMenu
 from .util import MessageBoxMixin, read_QIcon
 from .asset_view_panel import ViewAssetPanel
 from .asset_management_panel import CreateAssetPanel, ReissueAssetPanel
@@ -49,8 +50,25 @@ class AssetTab(QWidget, MessageBoxMixin, Logger):
             self.qualifiy_tab = QualifierAssetPanel(self)
 
 
-        self.info_label = QLabel(_('Select a tab below to view, create, and manage your assets'))
-        self.info_label.setAlignment(Qt.AlignCenter)
+        menu = MyMenu(window.config)
+        menu.addConfig(_('Download IPFS Data'), window.config.cv.DOWNLOAD_IPFS, callback=self.view_asset_tab.metadata_viewer.metadata_info.update_signal.emit)
+        menu.addConfig(_('Display IPFS Data'), window.config.cv.SHOW_IPFS, callback=self.view_asset_tab.metadata_viewer.metadata_info.update_signal.emit)
+        def maybe_update_manage_tabs():
+            if self.wallet.is_watching_only():
+                return
+            self.reissue_asset_tab.update()
+            self.create_asset_tab.update()
+        menu.addConfig(_('Control Asset Address'), window.config.cv.SHOW_CREATE_ASSET_PAY_TO, callback=maybe_update_manage_tabs)
+
+        toolbar_button = QToolButton()
+        toolbar_button.setIcon(read_QIcon("preferences.png"))
+        toolbar_button.setMenu(menu)
+        toolbar_button.setPopupMode(QToolButton.InstantPopup)
+        toolbar_button.setFocusPolicy(Qt.NoFocus)
+        toolbar = QHBoxLayout()
+        toolbar.addWidget(QLabel(_('Select a tab below to view, create, and manage your assets')))
+        toolbar.addStretch()
+        toolbar.addWidget(toolbar_button)
 
         self.tabs = tabs = QTabWidget(self)
         tabs.addTab(self.view_asset_tab, read_QIcon("eye1.png"), _('View'))
@@ -61,7 +79,7 @@ class AssetTab(QWidget, MessageBoxMixin, Logger):
         tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         vbox = QVBoxLayout(self)
-        vbox.addWidget(self.info_label)
+        vbox.addLayout(toolbar)
         vbox.addWidget(self.tabs)
 
         self.searchable_list = self.view_asset_tab.asset_list

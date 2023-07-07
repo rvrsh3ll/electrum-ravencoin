@@ -416,6 +416,11 @@ class SimpleConfig(Logger):
         path = os.path.join(self.path, 'ipfs_metadata')
         return path
 
+    def get_ipfs_raw_path(self):
+        util.assert_datadir_available(self.path)
+        path = os.path.join(self.path, 'raw_ipfs')
+        return path
+
     def remove_from_recently_open(self, filename):
         recent = self.RECENTLY_OPEN_WALLET_FILES or []
         if filename in recent:
@@ -933,7 +938,7 @@ class SimpleConfig(Logger):
 
     BLOCK_EXPLORER = ConfigVar('block_explorer', default='rvn.cryptoscope.io', type_=str)
     BLOCK_EXPLORER_CUSTOM = ConfigVar('block_explorer_custom', default=None)
-    IPFS_EXPLORER = ConfigVar('ipfs_explorer', default='cloudflare-ipfs.com', type_=str)
+    IPFS_EXPLORER = ConfigVar('ipfs_explorer', default='ipfs.chaintek.net', type_=str)
     IPFS_EXPLORER_CUSTOM = ConfigVar('ipfs_explorer_custom', default=None)
     VIDEO_DEVICE_PATH = ConfigVar('video_device', default='default', type_=str)
     OPENALIAS_ID = ConfigVar('alias', default="", type_=str)
@@ -975,8 +980,11 @@ class SimpleConfig(Logger):
     PLUGIN_TRUSTEDCOIN_NUM_PREPAY = ConfigVar('trustedcoin_prepay', default=20, type_=int)
 
     DOWNLOAD_IPFS = ConfigVar('download_ipfs_preview', default=False, type_=bool)
+    MAX_IPFS_DOWNLOAD_SIZE = ConfigVar('download_ipfs_max_size', default=10_000_000, type_=int)
     SHOW_IPFS = ConfigVar('show_ipfs_preview', default=False, type_=bool)
     SHOW_CREATE_ASSET_PAY_TO = ConfigVar('show_create_asset_pay_to', default=False, type_=bool)
+    SHOW_REISSUABLE_WARNING = ConfigVar('show_reissuable_warning', default=True, type_=bool)
+    HANDLE_UNCONFIRMED_METADATA = ConfigVar('handle_unconfirmed_metadata', default=True, type_=bool)
 
 def read_user_config(path: Optional[str]) -> Dict[str, Any]:
     """Parse and store the user config settings in electrum.conf into user_config[]."""

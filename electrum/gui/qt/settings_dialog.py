@@ -57,7 +57,6 @@ class SettingsDialog(QDialog, QtEventListener):
         self.network = window.network
         self.app = window.app
         self.need_restart = False
-        self.refresh_asset_view = False
         self.fx = window.fx
         self.wallet = window.wallet
 
@@ -402,28 +401,6 @@ class SettingsDialog(QDialog, QtEventListener):
         self.history_rates_cb.stateChanged.connect(on_history_rates)
         ex_combo.currentIndexChanged.connect(on_exchange)
 
-        # Asset 
-        ipfs_preview_cb = QCheckBox(_("Download IPFS data when looking at asset metadata"))
-        ipfs_preview_cb.setChecked(self.config.DOWNLOAD_IPFS)
-        def on_set_ipfs_preview(v):
-            self.config.DOWNLOAD_IPFS = (v == Qt.Checked)
-            self.refresh_asset_view = True
-        ipfs_preview_cb.stateChanged.connect(on_set_ipfs_preview)
-
-        ipfs_show_cb = QCheckBox(_("Display downloaded IPFS data when looking at asset metadata"))
-        ipfs_show_cb.setChecked(self.config.SHOW_IPFS)
-        def on_set_ipfs_show(v):
-            self.config.SHOW_IPFS = (v == Qt.Checked)
-            self.refresh_asset_view = True
-        ipfs_show_cb.stateChanged.connect(on_set_ipfs_show)
-
-        pay_to_create_cb = QCheckBox(_('Control where created assets go'))
-        pay_to_create_cb.setChecked(self.config.SHOW_CREATE_ASSET_PAY_TO)
-        def on_set_pay_to_create(v):
-            self.config.SHOW_CREATE_ASSET_PAY_TO = (v == Qt.Checked)
-            self.refresh_asset_view = True
-        pay_to_create_cb.stateChanged.connect(on_set_pay_to_create)
-
         gui_widgets = []
         gui_widgets.append((lang_label, lang_combo))
         gui_widgets.append((colortheme_label, colortheme_combo))
@@ -448,10 +425,6 @@ class SettingsDialog(QDialog, QtEventListener):
         misc_widgets.append((qr_label, qr_combo))
         if len(choosers) > 1:
             misc_widgets.append((chooser_label, chooser_combo))
-        asset_widgets = []
-        asset_widgets.append((ipfs_preview_cb, None))
-        asset_widgets.append((ipfs_show_cb, None))
-        asset_widgets.append((pay_to_create_cb, None))
 
         tabs_info = [
             (gui_widgets, _('Appearance')),
@@ -459,7 +432,6 @@ class SettingsDialog(QDialog, QtEventListener):
             (fiat_widgets, _('Fiat')),
             #(lightning_widgets, _('Lightning')),
             (misc_widgets, _('Misc')),
-            (asset_widgets, _('Assets')),
         ]
         for widgets, name in tabs_info:
             tab = QWidget()

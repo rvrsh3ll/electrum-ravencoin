@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import Optional, TYPE_CHECKING, Callable, Mapping, Tuple
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QLabel, QVBoxLayout, QGridLayout, QCheckBox, QWidget, QComboBox 
+from PyQt5.QtWidgets import QLabel, QVBoxLayout, QGridLayout, QCheckBox, QWidget, QComboBox, QMessageBox
 
 from electrum import constants
 from electrum.asset import (get_error_for_asset_typed, AssetType, DEFAULT_ASSET_AMOUNT_MAX, QUALIFIER_ASSET_AMOUNT_MAX, MAX_VERIFIER_STING_LENGTH, generate_create_script, generate_owner_script,
@@ -324,7 +324,17 @@ class ManageAssetPanel(QWidget, Logger):
         self.asset_combo_is_ok = parent_is_valid
         
     def _create_tx(self):
-        raise NotImplementedError()
+        if not self.reissuable.isChecked() and self.parent.window.config.SHOW_REISSUABLE_WARNING:
+            cb = QCheckBox(_("Don't show this message again"), checked=False)
+            cb_checked = False
+            def on_cb(x):
+                nonlocal cb_checked
+                cb_checked = x == Qt.Checked
+            cb.stateChanged.connect(on_cb)
+            self.parent.show_warning(_('By making this asset non-reissuable, you will not be able to modify its metadata in the future.'), self,
+                                     _('Non-Reissuable'), checkbox=cb)
+            if cb_checked:
+                self.parent.window.config.SHOW_REISSUABLE_WARNING = False
 
     def get_text_not_enough_funds_mentioning_frozen(self) -> str:
         text = _("Not enough funds")
@@ -645,6 +655,7 @@ class CreateAssetPanel(ManageAssetPanel):
         self.asset_checker.validate_text()
 
     def _create_tx(self):
+        super()._create_tx()
         output = PartialTxOutput.from_address_and_value(self.burn_address, self.burn_amount * COIN)
         outputs = [output]
         goto_address = self.payto_e.line_edit.text()
@@ -866,6 +877,7 @@ class ReissueAssetPanel(ManageAssetPanel):
         self.amount_e.setAmount(0)
 
     def _create_tx(self):
+        super()._create_tx()
         output = PartialTxOutput.from_address_and_value(self.burn_address, self.burn_amount * COIN)
         outputs = [output]
         goto_address = self.payto_e.line_edit.text()
@@ -1001,6 +1013,10 @@ class ReissueAssetPanel(ManageAssetPanel):
             self.divisions_e.setAmount(0)
             self.associated_data_e.line_edit.setText('')
             self.reissuable.setChecked(True)
+            self.verifier_e.line_edit.setText('')
+            self.verifier_e.line_edit.setVisible(False)
+            self.payto_e.line_edit.setText('')
+            self.payto_e.line_edit.setVisible(False)
             return
         if asset[0] == '$':
             self.verifier_e.line_edit.setVisible(True)

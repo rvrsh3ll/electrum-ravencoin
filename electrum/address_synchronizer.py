@@ -714,7 +714,10 @@ class AddressSynchronizer(Logger, EventListener):
             if source_height > 0:
                 self.unverified_asset_metadata[asset] = metadata, source, source_divisions, source_ipfs
             else:
+                if not self.config.HANDLE_UNCONFIRMED_METADATA:
+                    return
                 self.unconfirmed_asset_metadata[asset] = metadata, source, source_divisions, source_ipfs
+                util.trigger_callback('adb_added_unconfirmed_asset_metadata', self, asset)
 
     def get_unverified_asset_metadatas(self):
         '''Returns a map from tx hash to transaction height'''
@@ -776,13 +779,14 @@ class AddressSynchronizer(Logger, EventListener):
             return None
 
     def add_unverified_or_unconfirmed_verifier_string_for_restricted(self, asset: str, data):
-        print(f'unverified: {asset} {data}')
         with self.lock:
             self.unconfirmed_verifier_for_restricted.pop(asset, None)
             self.unverified_verifier_for_restricted.pop(asset, None)
             if data['height'] > 0:
                 self.unverified_verifier_for_restricted[asset] = data
             else:
+                if not self.config.HANDLE_UNCONFIRMED_METADATA:
+                    return
                 self.unconfirmed_verifier_for_restricted[asset] = data
 
     def get_restricted_verifier_string_for_synchronizer(self, asset: str) -> Dict[str, object]:
@@ -794,6 +798,19 @@ class AddressSynchronizer(Logger, EventListener):
             if unverified:
                 return unverified
             return self.db.get_verified_restricted_verifier(asset) or {}
+
+    def get_restricted_verifier_string(self, asset: str) -> Optional[Tuple[dict, int]]:
+        with self.lock:
+            unconfirmed = self.unconfirmed_verifier_for_restricted.get(asset, dict())
+            if unconfirmed:
+                return unconfirmed, METADATA_UNCONFIRMED
+            verified = self.db.get_verified_restricted_verifier(asset)
+            if verified:
+                return verified, METADATA_VERIFIED
+            unverified = self.unverified_verifier_for_restricted.get(asset, dict())
+            if unverified:
+                return unverified, METADATA_UNVERIFIED
+        return None
 
     def get_unverified_restricted_verifier_strings(self) -> Dict[str, Dict[str, object]]:
         with self.lock:
@@ -832,6 +849,8 @@ class AddressSynchronizer(Logger, EventListener):
                             continue
                     self.unverified_tags_for_h160[h160][asset] = d
                 else:
+                    if not self.config.HANDLE_UNCONFIRMED_METADATA:
+                        return
                     self.unconfirmed_tags_for_h160[h160][asset] = d
 
     def get_h160_tags_for_synchronizer(self, h160: str) -> Dict[str, Dict[str, object]]:
@@ -919,6 +938,8 @@ class AddressSynchronizer(Logger, EventListener):
                             continue
                     self.unverified_tags_for_qualifier[asset][h160] = d
                 else:
+                    if not self.config.HANDLE_UNCONFIRMED_METADATA:
+                        return
                     self.unconfirmed_tags_for_qualifier[asset][h160] = d
 
     def get_qualifier_tags_for_synchronizer(self, asset: str) -> Dict[str, Dict[str, object]]:

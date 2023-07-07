@@ -1,14 +1,16 @@
 import enum
 import math
 from decimal import Decimal
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING, Tuple
+from functools import lru_cache
 
-from PyQt5.QtGui import QFont, QStandardItemModel, QStandardItem
-from PyQt5.QtCore import pyqtSignal, Qt, QItemSelectionModel
+from PyQt5.QtGui import QFont, QStandardItemModel, QStandardItem, QPixmap, QMovie
+from PyQt5.QtCore import pyqtSignal, Qt, QItemSelectionModel, QSize
 from PyQt5.QtWidgets import (QLabel, QVBoxLayout, QSplitter, QScrollArea,
                              QHBoxLayout, QWidget, QFrame, QAbstractItemView,
-                             QTextEdit)
+                             QSizePolicy)
 
+from electrum import constants
 from electrum.asset import AssetMetadata
 from electrum.bitcoin import base_encode
 from electrum.i18n import _
@@ -18,28 +20,14 @@ from electrum.logging import Logger
 
 from electrum.ipfs_db import IPFSDB
 
-from .util import HelpLabel, ColorScheme, HelpButton
-from .util import QHSeperationLine, read_QIcon, MONOSPACE_FONT, font_height
+from .util import HelpLabel, ColorScheme, HelpButton, AutoResizingTextEdit
+from .util import QHSeperationLine, read_QIcon, MONOSPACE_FONT, EnterButton, webopen_safe
 from .my_treeview import MyTreeView
 
 if TYPE_CHECKING:
     from .main_window import ElectrumWindow
     from aiohttp import ClientResponse
     from .asset_tab import AssetTab
-
-_VIEWABLE_MIMES = ('image/jpeg', 'image/png', 'image/gif', 'image/tiff', 'image/webp', 'image/avif',
-                    'text/plain', 'application/json')
-
-
-def human_readable_size(size, decimal_places=3):
-    if not isinstance(size, int):
-        return _('Unknown')
-    for unit in ['Bytes','KiB','MiB','GiB','TiB']:
-        if size < 1024.0:
-            break
-        size /= 1024.0
-    return f"{size:.{decimal_places}g} {unit}"
-
 
 class AssetList(MyTreeView):
     class Columns(MyTreeView.BaseColumnsEnum):
@@ -136,6 +124,9 @@ class AssetList(MyTreeView):
             col.setToolTip(tooltip)
         
 class MetadataInfo(QWidget):
+    metadata_info_signal = pyqtSignal(str)
+    update_signal = pyqtSignal()
+
     def __init__(self, window: 'ElectrumWindow'):
         QWidget.__init__(self)
 
@@ -188,17 +179,33 @@ class MetadataInfo(QWidget):
         associated_data_type_layout.addWidget(associated_data_type_label)
         associated_data_type_layout.addWidget(self.associated_data_type_text, 1, Qt.AlignLeft)
 
-        self.associated_data_text = QTextEdit()
+        self.associated_data_text = AutoResizingTextEdit()
         self.associated_data_text.setReadOnly(True)
-        self.associated_data_text.setFixedHeight(math.floor(font_height() * 1.7))
+        self.associated_data_text.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.associated_data_text.setAlignment(Qt.AlignVCenter)
         self.associated_data_text.setVisible(False)
 
+        self.view_associated_data_button = EnterButton('', self._view_associated_data)
+        self.view_associated_data_button.setVisible(False)
+        
+        self.associated_data_view_image = QLabel()
+        self.associated_data_view_image.setVisible(False)
+        self.associated_data_view_image.setAlignment(Qt.AlignLeft)
+
+        self.associated_data_view_text = AutoResizingTextEdit()
+        self.associated_data_view_text.setReadOnly(True)
+        self.associated_data_view_text.setAlignment(Qt.AlignVCenter)
+        self.associated_data_view_text.setVisible(False)
+        
+        associated_data_view_seperator = QHSeperationLine()
         associated_data_info_layout = QVBoxLayout()
+        associated_data_info_layout.addWidget(associated_data_view_seperator)
         associated_data_info_layout.addLayout(associated_data_type_layout)
         associated_data_info_layout.addWidget(self.associated_data_text)
+        associated_data_info_layout.addWidget(self.view_associated_data_button)
+        associated_data_info_layout.addWidget(self.associated_data_view_image)
+        associated_data_info_layout.addWidget(self.associated_data_view_text)
 
-        self.associated_data_view_seperator = QHSeperationLine()
         predicted_mime_type_layout = QHBoxLayout()
         self.predicted_mime_type_label = QLabel(_('Predicted MIME Type: '))
         self.predicted_mime_type_text = QLabel()
@@ -211,9 +218,23 @@ class MetadataInfo(QWidget):
         predicted_size_layout.addWidget(self.predicted_size_text, 1, Qt.AlignLeft)
 
         associated_data_view_layout = QVBoxLayout()
-        associated_data_view_layout.addWidget(self.associated_data_view_seperator)
         associated_data_view_layout.addLayout(predicted_mime_type_layout)
         associated_data_view_layout.addLayout(predicted_size_layout)
+
+        self.verifier_string_label = QLabel(_('Verifier String:'))
+        self.verifier_string_label.setVisible(False)
+        self.verifier_string_text = AutoResizingTextEdit()
+        self.verifier_string_text.setReadOnly(True)
+        self.verifier_string_text.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.verifier_string_text.setAlignment(Qt.AlignVCenter)
+        self.verifier_string_text.setVisible(False)
+
+        self.verifier_string_seperator = QHSeperationLine()
+        self.verifier_string_seperator.setVisible(False)
+        restricted_verifier_layout = QVBoxLayout()
+        restricted_verifier_layout.addWidget(self.verifier_string_seperator)
+        restricted_verifier_layout.addWidget(self.verifier_string_label)
+        restricted_verifier_layout.addWidget(self.verifier_string_text)
 
         vbox.addLayout(header_layout)
         vbox.addLayout(asset_layout)
@@ -221,12 +242,73 @@ class MetadataInfo(QWidget):
         vbox.addLayout(basic_info_layout)
         vbox.addLayout(associated_data_info_layout)
         vbox.addLayout(associated_data_view_layout)
+        vbox.addLayout(restricted_verifier_layout)
         vbox.addWidget(QWidget(), 1)
         self.clear()
 
         self.current_asset = None
+        self.metadata_info_signal.connect(self._update_associated_data_info)
+        self.update_signal.connect(self.update_no_change)
 
-    def update(self, asset: str, type_text: Optional[str], metadata: AssetMetadata):
+    def _update_associated_data_info(self, ipfs_hash: str):
+        if self.associated_data_text.toPlainText() != ipfs_hash:
+            return
+        saved_mime_type, saved_bytes = IPFSDB.get_instance().get_text_for_ipfs_str(ipfs_hash)
+        self.predicted_mime_type_text.setText(saved_mime_type or _('Unknown'))
+        self.predicted_size_text.setText(saved_bytes or _('Unknown'))
+
+        for x in [self.associated_data_view_image, self.associated_data_view_text]:
+            x.setVisible(False)
+            x.clear()
+
+        resource_path, resource_type = IPFSDB.get_instance().get_resource_path_for_ipfs_str(ipfs_hash)
+        if resource_path and self.window.config.SHOW_IPFS:
+            resource_data = self._get_viewable_from_resource_path(resource_path, resource_type)
+
+            if resource_type == 'image/gif':
+                pixmap, movie = resource_data
+                scaled = pixmap.scaledToWidth(self.width() - 100, Qt.SmoothTransformation)
+                movie.setScaledSize(QSize(scaled.width(), scaled.height()))
+                self.associated_data_view_image.setMovie(movie)
+                movie.start()
+                self.associated_data_view_image.setVisible(True)
+            elif resource_type.startswith('image/'):
+                pixmap: QPixmap = resource_data
+                scaled = pixmap.scaledToWidth(self.width() - 100, Qt.SmoothTransformation)
+                self.associated_data_view_image.setPixmap(scaled)
+                self.associated_data_view_image.setVisible(True)
+            elif resource_type in ('text/plain', 'application/json'):
+                self.associated_data_view_text.setText(resource_data)
+                self.associated_data_view_text.setVisible(True)
+            
+            for x in [self.associated_data_text, self.view_associated_data_button, 
+                        self.predicted_mime_type_label, self.predicted_size_label, 
+                        self.predicted_mime_type_text, self.predicted_size_text]:
+                x.setVisible(False)
+
+    @lru_cache(50)
+    def _get_viewable_from_resource_path(self, resource_path: str, resource_type: str):
+        if resource_type == 'image/gif':
+            return QPixmap(resource_path), QMovie(resource_path)
+        elif resource_type.startswith('image/'):
+            return QPixmap(resource_path)
+        elif resource_type in ('text/plain', 'application/json'):
+            with open(resource_path, 'r') as f:
+                return f.read()
+
+    def _view_associated_data(self):
+        associated_data = self.associated_data_text.toPlainText()
+        if len(associated_data) == 64:
+            try:
+                _b = bytes.fromhex(associated_data)
+                self.window.do_process_from_txid(txid=associated_data)
+                return
+            except Exception:
+                pass
+        ipfs_url = ipfs_explorer_URL(self.window.config, 'ipfs', associated_data)
+        webopen_safe(ipfs_url, self.window.config, self.window)
+
+    def update(self, asset: str, type_text: Optional[str], metadata: AssetMetadata, verifier_text, verifier_string_data):
         self.current_asset = asset
         if type_text:
             header_text = '<h3>{} ({})</h3>'.format(_('Asset Metadata'), type_text)
@@ -252,31 +334,94 @@ class MetadataInfo(QWidget):
         self.divisions_text.setText(str(metadata.divisions))
         self.reissuable_text.setText(str(metadata.reissuable))
 
+        for x in [self.associated_data_view_image, self.associated_data_view_text]:
+            x.setVisible(False)
+            x.clear()
+
         if metadata.associated_data is None:
             self.associated_data_type_text.setText('None')
-            self.associated_data_text.setVisible(False)
-            for x in [self.predicted_mime_type_label, self.predicted_size_label, self.predicted_mime_type_text, self.predicted_size_text, self.associated_data_view_seperator]:
+            for x in [self.associated_data_text, self.view_associated_data_button, 
+                      self.predicted_mime_type_label, self.predicted_size_label, 
+                      self.predicted_mime_type_text, self.predicted_size_text,
+                      self.associated_data_view_image, self.associated_data_view_text]:
                 x.setVisible(False)
+            for x in [self.associated_data_view_image, self.associated_data_view_text]:
+                x.clear()
         else:
             self.associated_data_text.setVisible(True)
-            for x in [self.predicted_mime_type_label, self.predicted_size_label, self.predicted_mime_type_text, self.predicted_size_text, self.associated_data_view_seperator]:
-                x.setVisible(self.window.config.DOWNLOAD_IPFS)
+            self.view_associated_data_button.setVisible(True)
             if metadata.associated_data[:2] == b'\x54\x20':
+                self.view_associated_data_button.setText(_('Search Blockchain Transactions'))
                 self.associated_data_type_text.setText('TXID')
                 self.associated_data_text.setText(metadata.associated_data[2:].hex())
+                for x in [self.predicted_mime_type_label, self.predicted_size_label, 
+                          self.predicted_mime_type_text, self.predicted_size_text,
+                          self.associated_data_view_image, self.associated_data_view_text]:
+                    x.setVisible(False)
+                for x in [self.associated_data_view_image, self.associated_data_view_text]:
+                    x.clear()
             else:
-                self.associated_data_type_text.setText('IPFS')
                 ipfs_str = base_encode(metadata.associated_data, base=58)
+                self.associated_data_type_text.setText('IPFS')
                 self.associated_data_text.setText(ipfs_str)
-                if self.window.config.DOWNLOAD_IPFS:
-                    for x in [self.predicted_mime_type_text, self.predicted_size_text]:
-                        x.setText(_('Loading...'))
-                    saved_mime_type, saved_bytes = IPFSDB.get_instance().get_metadata(ipfs_str) or (None, None)
-                    if saved_mime_type is None or saved_bytes is None:
-                        self.window.run_coroutine_from_thread(self.maybe_download_ipfs(asset, ipfs_str, saved_mime_type, saved_bytes), ipfs_str)
-                    else:
-                        self.predicted_mime_type_text.setText(saved_mime_type)
-                        self.predicted_size_text.setText(human_readable_size(saved_bytes))
+                self.view_associated_data_button.setText(_('View in Browser'))
+
+                resource_path, resource_type = IPFSDB.get_instance().get_resource_path_for_ipfs_str(ipfs_str)
+                if resource_path and self.window.config.SHOW_IPFS:
+                    for x in [self.associated_data_text, self.view_associated_data_button, 
+                              self.predicted_mime_type_label, self.predicted_size_label, 
+                              self.predicted_mime_type_text, self.predicted_size_text]:
+                        x.setVisible(False)
+
+                    resource_data = self._get_viewable_from_resource_path(resource_path, resource_type)
+                    if resource_type == 'image/gif':
+                        pixmap, movie = resource_data
+                        scaled = pixmap.scaledToWidth(self.width() - 100, Qt.SmoothTransformation)
+                        movie.setScaledSize(QSize(scaled.width(), scaled.height()))
+                        self.associated_data_view_image.setMovie(movie)
+                        movie.start()
+                        self.associated_data_view_image.setVisible(True)
+                    elif resource_type.startswith('image/'):
+                        pixmap: QPixmap = resource_data
+                        scaled = pixmap.scaledToWidth(self.width() - 100, Qt.SmoothTransformation)
+                        self.associated_data_view_image.setPixmap(scaled)
+                        self.associated_data_view_image.setVisible(True)
+                    elif resource_type in ('text/plain', 'application/json'):
+                        self.associated_data_view_text.setText(resource_data)
+                        self.associated_data_view_text.setVisible(True)
+                else:
+                    if self.window.config.DOWNLOAD_IPFS:
+                        for x in [self.predicted_mime_type_label, self.predicted_size_label, 
+                                  self.predicted_mime_type_text, self.predicted_size_text]:
+                            x.setVisible(True)
+                        for x in [self.associated_data_view_image, self.associated_data_view_text]:
+                            x.setVisible(False)
+                        for x in [self.associated_data_view_image, self.associated_data_view_text]:
+                            x.clear()
+
+                        saved_mime_type, saved_bytes = IPFSDB.get_instance().get_text_for_ipfs_str(ipfs_str)
+                        self.predicted_mime_type_text.setText(saved_mime_type or _('Unknown'))
+                        self.predicted_size_text.setText(saved_bytes or _('Unknown'))
+
+                        async def download_all_ipfs_data():
+                            # Ensure data tries to download even if we have the info
+                            await IPFSDB.get_instance().maybe_get_info_for_ipfs_hash(self.window.network, ipfs_str, asset, self.metadata_info_signal)
+                            await IPFSDB.get_instance().maybe_download_data_for_ipfs_hash(self.window.network, ipfs_str)
+
+                        self.window.run_coroutine_from_thread(download_all_ipfs_data(), ipfs_str)
+
+        if verifier_string_data:
+            for x in [self.verifier_string_label, self.verifier_string_text, self.verifier_string_seperator]:
+                x.setVisible(True)
+            label = _('Verifier String')
+            if verifier_text:
+                label += ' ' + verifier_text
+            label += ':'
+            self.verifier_string_label.setText(label)
+            self.verifier_string_text.setText(verifier_string_data['string'])
+        else:
+            for x in [self.verifier_string_label, self.verifier_string_text, self.verifier_string_seperator]:
+                x.setVisible(False)
 
     def clear(self):
         self.header.setText('<h3>{}</h3>'.format(_('Asset Metadata')))
@@ -285,8 +430,12 @@ class MetadataInfo(QWidget):
 
         self.associated_data_text.setText('')
 
-        for x in [self.associated_data_text]:
+        for x in [self.associated_data_text, self.verifier_string_label, 
+                  self.verifier_string_seperator, self.verifier_string_text,
+                  self.associated_data_view_image, self.associated_data_view_text]:
             x.setVisible(False)
+        for x in [self.associated_data_view_image, self.associated_data_view_text]:
+            x.clear()
 
         for x in [self.predicted_mime_type_text, self.predicted_size_text]:
             x.setText(_('N/A'))
@@ -294,43 +443,14 @@ class MetadataInfo(QWidget):
         self.update_no_change()
 
     def update_no_change(self):
-        for x in [self.predicted_mime_type_label, self.predicted_size_label, self.predicted_mime_type_text, self.predicted_size_text, self.associated_data_view_seperator]:
-            x.setVisible(self.window.config.DOWNLOAD_IPFS and bool(self.associated_data_text.toPlainText()))
-
-    async def maybe_download_ipfs(self, asset: str, ipfs: str, saved_bytes, saved_mime_type):
-        if saved_bytes is not None and asset == self.current_asset:
-            self.predicted_size_text.setText(human_readable_size(saved_bytes))
-        if saved_mime_type:
-            if asset == self.current_asset:
-                self.predicted_mime_type_text.setText(saved_mime_type)
-            return
-        ipfs_url = ipfs_explorer_URL(self.window.config, 'ipfs', ipfs)
-        async def on_finish(resp: 'ClientResponse'):
-            resp.raise_for_status()
-            if asset == self.current_asset:
-                self.predicted_mime_type_text.setText(resp.content_type or _('Unknown'))
-            if saved_bytes:
-                IPFSDB.get_instance().add_metadata(ipfs, resp.content_type or None, saved_bytes)
-                return
-            if resp.content_length:
-                content_length = resp.content_length
-            else:
-                content_length = 0
-                while True:
-                    chunk = await resp.content.read(1024)
-                    if not chunk:
-                        break
-                    content_length += len(chunk)
-            if asset == self.current_asset:
-                self.predicted_size_text.setText(human_readable_size(content_length))
-            IPFSDB.get_instance().add_metadata(ipfs, resp.content_type or None, content_length)
-        try:
-            await self.window.network.async_send_http_on_proxy('get', ipfs_url, on_finish=on_finish)
-        except Exception as e:
-            self.window.logger.error(f'failed to download {ipfs_url=}: {repr(e)}')
-            if asset == self.current_asset:
-                for x in [self.predicted_mime_type_text, self.predicted_size_text]:
-                    x.setText(_('Unknown'))
+        associated_data_text = self.associated_data_text.toPlainText()
+        for x in [self.associated_data_text, self.view_associated_data_button]:
+            x.setVisible(bool(associated_data_text) and not self.window.config.SHOW_IPFS)
+        if associated_data_text and associated_data_text.startswith('Qm'):
+            for x in [self.predicted_mime_type_label, self.predicted_mime_type_text,
+                      self.predicted_size_label, self.predicted_size_text]:
+                x.setVisible(self.window.config.DOWNLOAD_IPFS)
+            self._update_associated_data_info(associated_data_text)
 
 class MetadataViewer(QFrame):
     def __init__(self, parent: 'ViewAssetPanel'):
@@ -360,7 +480,19 @@ class MetadataViewer(QFrame):
             type_text = _('UNCONFIRMED')
         elif metadata_source == METADATA_UNVERIFIED:
             type_text = _('NOT VERIFIED!')
-        self.metadata_info.update(asset, type_text, metadata)
+        
+        verifier_string_data = None
+        verifier_string_text = None
+        if asset[0] == '$':
+            verifier_string_data_tup = self.parent.parent.wallet.adb.get_restricted_verifier_string(asset)
+            if verifier_string_data_tup:
+                verifier_string_data, verifier_string_type_id = verifier_string_data_tup
+                if verifier_string_type_id == METADATA_UNCONFIRMED:
+                    verifier_string_text = _('UNCONFIRMED')
+                elif verifier_string_type_id == METADATA_UNVERIFIED:
+                    verifier_string_text = _('NOT VERIFIED!')
+
+        self.metadata_info.update(asset, type_text, metadata, verifier_string_text, verifier_string_data)
 
     def update(self):
         self.metadata_info.update_no_change()

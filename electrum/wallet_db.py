@@ -49,6 +49,7 @@ from .json_db import StoredDict, JsonDB, locked, modifier, StoredObject
 from .plugin import run_hook, plugin_loaders
 from .submarine_swaps import SwapData
 from .version import ELECTRUM_VERSION
+from .ipfs_db import IPFSDB
 
 if TYPE_CHECKING:
     from .storage import WalletStorage
