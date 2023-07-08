@@ -122,12 +122,18 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
         self._handling_restricted_for_verifier = set()
         self._processed_some_restricted_for_verifier = False
 
+        self._adding_restricted_for_freeze = set()
+        self.requested_restricted_for_freeze = set()
+        self._handling_restricted_for_freeze = set()
+        self._processed_some_restricted_for_freeze = False
+
         # Queues
         self.asset_status_queue = asyncio.Queue()
         self.status_queue = asyncio.Queue()
         self.qualifier_tags_status_queue = asyncio.Queue()
         self.h160_tags_status_queue = asyncio.Queue()
         self.restricted_verifier_queue = asyncio.Queue()
+        self.restricted_freeze_queue = asyncio.Queue()
 
     async def _run_tasks(self, *, taskgroup):
         await super()._run_tasks(taskgroup=taskgroup)
@@ -138,6 +144,7 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
                 await group.spawn(self.handle_qualifier_for_tags_status())
                 await group.spawn(self.handle_h160_for_tags_status())
                 await group.spawn(self.handle_restricted_for_verifier_update())
+                await group.spawn(self.handle_restricted_for_freeze_update())
                 await group.spawn(self.main())
         finally:
             # we are being cancelled now
@@ -146,6 +153,7 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
             self.session.unsubscribe(self.qualifier_tags_status_queue)
             self.session.unsubscribe(self.h160_tags_status_queue)
             self.session.unsubscribe(self.restricted_verifier_queue)
+            self.session.unsubscribe(self.restricted_freeze_queue)
 
     def add(self, addr):
         if not is_address(addr): raise ValueError(f"invalid bitcoin address {addr}")
@@ -166,6 +174,10 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
     def add_restricted_for_verifier(self, asset: str):
         if error := get_error_for_asset_typed(asset, AssetType.RESTRICTED): raise ValueError(f'invalid asset: {error}')
         self._adding_restricted_for_verifier.add(asset)
+
+    def add_restricted_for_verifier(self, asset: str):
+        if error := get_error_for_asset_typed(asset, AssetType.RESTRICTED): raise ValueError(f'invalid asset: {error}')
+        self._adding_restricted_for_freeze.add(asset)
 
     async def _add_address(self, addr: str):
         try:
@@ -209,6 +221,14 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
         finally:
             self._adding_restricted_for_verifier.discard(asset)
 
+    async def _add_restricted_for_freeze(self, asset: str):
+        try:
+            if asset in self.requested_restricted_for_freeze: return
+            self.requested_restricted_for_freeze.add(asset)
+            await self.taskgroup.spawn(self._subscribe_to_restricted_for_freeze, asset)
+        finally:
+            self._adding_restricted_for_freeze.discard(asset)
+
     async def _on_address_status(self, addr, status):
         """Handle the change of the status of an address.
         Should remove addr from self._handling_addr_statuses when done.
@@ -225,6 +245,9 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
         raise NotImplementedError()
     
     async def _on_restricted_for_verifier_update(self, asset, data):
+        raise NotImplementedError()
+    
+    async def _on_restricted_for_freeze_update(self, asset, data):
         raise NotImplementedError()
 
     async def _subscribe_to_address(self, addr):
@@ -262,6 +285,12 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
         self._requests_sent += 1
         async with self._network_request_semaphore:
             await self.session.subscribe('blockchain.asset.verifier_string.subscribe', [asset], self.restricted_verifier_queue)
+        self._requests_answered += 1
+
+    async def _subscribe_to_restricted_for_freeze(self, asset):
+        self._requests_sent += 1
+        async with self._network_request_semaphore:
+            await self.session.subscribe('blockchain.asset.is_frozen.subscribe', [asset], self.restricted_freeze_queue)
         self._requests_answered += 1
 
     async def handle_status(self):
@@ -305,6 +334,14 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
             await self.taskgroup.spawn(self._on_restricted_for_verifier_update, asset, data)
             self._processed_some_restricted_for_verifier = True
 
+    async def handle_restricted_for_freeze_update(self):
+        while True:
+            asset, data = await self.restricted_freeze_queue.get()
+            self._handling_restricted_for_freeze.add(asset)
+            self.requested_restricted_for_freeze.discard(asset)
+            await self.taskgroup.spawn(self._on_restricted_for_freeze_update, asset, data)
+            self._processed_some_restricted_for_freeze = True
+
     async def main(self):
         raise NotImplementedError()  # implemented by subclasses
 
@@ -331,12 +368,14 @@ class Synchronizer(SynchronizerBase):
         self.requested_qualifiers_for_tags_results = set()
         self.requested_h160s_for_tags_results = set()
         self.requested_restricted_for_verifier_results = set()
+        self.requested_restricted_for_freeze_results = set()
 
         self._stale_histories = dict()  # type: Dict[str, asyncio.Task]
         self._stale_asset_metadatas = dict()  # type: Dict[str, asyncio.Task]
         self._stale_qualifiers_for_tags = dict()  # type: Dict[str, asyncio.Task]
         self._stale_h160s_for_tags = dict()
         self._stale_restricted_for_verifier = dict()
+        self._stale_restricted_for_freeze = dict()
 
     def diagnostic_name(self):
         return self.adb.diagnostic_name()
@@ -374,11 +413,40 @@ class Synchronizer(SynchronizerBase):
                 and not self.requested_restricted_for_verifier_results
                 and not self._stale_restricted_for_verifier
 
+                and not self._adding_restricted_for_freeze
+                and not self.requested_restricted_for_freeze
+                and not self._handling_restricted_for_freeze
+                and not self.requested_restricted_for_freeze
+                and not self._stale_restricted_for_freeze
+
                 and self.status_queue.empty()
                 and self.asset_status_queue.empty()
                 and self.qualifier_tags_status_queue.empty()
                 and self.h160_tags_status_queue.empty()
-                and self.restricted_verifier_queue.empty())
+                and self.restricted_verifier_queue.empty()
+                and self.restricted_freeze_queue.empty())
+
+    async def _on_restricted_for_freeze_update(self, asset, data):
+        data_id = f'{data["frozen"]}:{data["tx_hash"]}:{data["height"]}' if data else ''
+        try:
+            freeze_dict = self.adb.get_restricted_freeze_for_synchronizer(asset)
+            if freeze_dict == data:
+                return
+            if not data:
+                if freeze_dict:
+                    raise SynchronizerFailure(f'Server is not sending freeze for verified restricted asset {asset}')
+                return
+            if (asset, data_id) in self.requested_restricted_for_freeze_results:
+                return
+            self.requested_restricted_for_freeze_results.add((asset, data_id))
+        finally:
+            self._handling_restricted_for_freeze.discard(asset)
+        self.logger.info(f'receiving freeze for asset {asset}: {data["frozen"]}')
+        verified_data = self.adb.db.get_verified_restricted_freeze(asset)
+        if verified_data and verified_data['height'] > data['height'] > 0:
+            raise SynchronizerFailure(f'Server is trying to send old freeze for {asset}')            
+        self.adb.add_unverified_or_unconfirmed_freeze_for_restricted(asset, data)
+        self.requested_restricted_for_freeze_results.discard((asset, data_id))
 
     async def _on_restricted_for_verifier_update(self, asset, data):
         data_id = f'{data["string"]}:{data["tx_hash"]}:{data["height"]}' if data else ''
@@ -628,7 +696,8 @@ class Synchronizer(SynchronizerBase):
                     self.adb.db.verified_tags_for_qualifiers[asset] = dict()
                 await self._add_qualifier_for_tags(asset)
                 await self._add_restricted_for_verifier(asset)
-            
+                await self._add_restricted_for_freeze(asset)
+
         # main loop
         self._init_done = True
         prev_uptodate = False
@@ -644,17 +713,20 @@ class Synchronizer(SynchronizerBase):
                 await self._add_h160_for_tags(h160)
             for asset in self._adding_restricted_for_verifier.copy():
                 await self._add_restricted_for_verifier(asset)
+            for asset in self._adding_restricted_for_freeze.copy():
+                await self._add_restricted_for_freeze(asset)
             up_to_date = self.adb.is_up_to_date()
             # see if status changed
             if (up_to_date != prev_uptodate
                     or up_to_date and (self._processed_some_notifications or self._processed_some_asset_notifications or
                                        self._processed_some_qualifier_for_tags_notifications or self._processed_some_h160_for_tags_notifications or
-                                       self._processed_some_restricted_for_verifier)):
+                                       self._processed_some_restricted_for_verifier or self._processed_some_restricted_for_freeze)):
                 self._processed_some_notifications = False
                 self._processed_some_asset_notifications = False
                 self._processed_some_qualifier_for_tags_notifications = False
                 self._processed_some_h160_for_tags_notifications = False
                 self._processed_some_restricted_for_verifier = False
+                self._processed_some_restricted_for_freeze = False
                 self.adb.up_to_date_changed()
             prev_uptodate = up_to_date
 

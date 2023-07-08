@@ -153,6 +153,44 @@ class SPV(NetworkJobOnDefaultServer):
             self.logger.info(f'attempting to verify restricted verifier for {asset}: {d["string"]}')
             await self.taskgroup.spawn(self._verify_unverified_restricted_verifier(asset, d))
 
+        unverified_resticted_freezes = self.wallet.get_unverified_restricted_freezes()
+        for asset, d in unverified_resticted_freezes.items():
+            txid = d['tx_hash']
+            height = d['height']
+            if txid not in self.merkle_roots and await self._maybe_defer(txid, height): continue
+            self.logger.info(f'attempting to verify restricted freeze for {asset}: {d["frozen"]}')
+            await self.taskgroup.spawn(self._verify_unverified_restricted_freeze(asset, d))
+
+    async def _verify_unverified_restricted_freeze(self, asset: str, d):
+        txid = d['tx_hash']
+        height = d['height']
+        try:
+            if not self.wallet.db.get_verified_tx(txid) and txid not in self.merkle_roots:
+                await self._request_and_verify_single_proof(txid, height)
+            else:
+                self.requested_merkle.discard(txid)
+            tx = self.wallet.get_transaction(txid)
+            if not tx:
+                self._requests_sent += 1
+                async with self._network_request_semaphore:
+                    raw_tx = await self.interface.get_transaction(txid)
+                    tx = Transaction(raw_tx)
+                self._requests_answered += 1
+            idx = d['tx_pos']
+            asset_info = get_asset_info_from_script(tx.outputs()[idx].scriptpubkey)
+            if _type := asset_info.get_type() != AssetVoutType.FREEZE:
+                raise AssetException(f'bad asset type: {_type}')
+            if asset_info.asset != asset:
+                raise AssetException(f'bad asset: {asset}')
+            if asset_info.flag != d['frozen']:
+                raise AssetException(f'bad flag: {d["frozen"]}')
+        except (aiorpcx.jsonrpc.RPCError, RequestCorrupted, AssetException, IndexError) as e:
+            self.logger.info(f'bad freeze {asset} {d["string"]}: {repr(e)}')
+            self.wallet.remove_unverified_restricted_freeze(asset, height)
+            raise GracefulDisconnect(e) from e
+        self.logger.info(f'verified freeze for {asset} {d["string"]}')
+        self.wallet.add_verified_restricted_freeze(asset, d)
+
     async def _verify_unverified_restricted_verifier(self, asset: str, d):
         txid = d['tx_hash']
         height = d['height']
@@ -497,8 +535,8 @@ class SPV(NetworkJobOnDefaultServer):
                 and not self.wallet.unverified_asset_metadata
                 and not self.wallet.unverified_tags_for_qualifier
                 and not self.wallet.unverified_tags_for_h160
-                and not self.wallet.unverified_verifier_for_restricted)
-
+                and not self.wallet.unverified_verifier_for_restricted
+                and not self.wallet.unverified_freeze_for_restricted)
 
 def verify_tx_is_in_block(tx_hash: str, merkle_branch: Sequence[str],
                           leaf_pos_in_tree: int, block_header: Optional[dict],

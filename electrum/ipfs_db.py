@@ -12,8 +12,10 @@ from aiohttp import ClientResponse, ClientResponseError
 
 from .bitcoin import base_decode
 from .json_db import JsonDB, locked, modifier, StoredObject, StoredDict
-from .util import standardize_path, test_read_write_permissions, profiler, os_chmod, ipfs_explorer_URL, event_listener, make_dir
+from .util import standardize_path, test_read_write_permissions, profiler, os_chmod, ipfs_explorer_URL, event_listener, make_dir, EventListener
 from .network import Network
+
+from electrum import util
 
 if TYPE_CHECKING:
     from .address_synchronizer import AddressSynchronizer
@@ -54,7 +56,7 @@ class IPFSMetadata(StoredObject):
 
 class IPFSDBReadWriteError(Exception): pass
 
-class IPFSDB(JsonDB):
+class IPFSDB(JsonDB, EventListener):
     def __new__(cls, *args, **kwargs):
         if not hasattr(cls, 'instance'):
             cls._instance = super().__new__(cls)
@@ -89,6 +91,8 @@ class IPFSDB(JsonDB):
         self._ipfs_lookup_semaphore = asyncio.Semaphore()
         self._ipfs_lookup_current = set()
         self._ipfs_download_current = set()
+
+        self.register_callbacks()
     
     def _should_convert_to_stored_dict(self, key) -> bool:
         return False
@@ -153,7 +157,7 @@ class IPFSDB(JsonDB):
         except (FileNotFoundError, OSError):
             pass
 
-    async def _download_ipfs_data(self, network: Network, ipfs_hash: str, signal):
+    async def _download_ipfs_data(self, network: Network, ipfs_hash: str):
         ipfs_url = ipfs_explorer_URL(network.config, 'ipfs', ipfs_hash)
         
         async def on_finish(resp: ClientResponse):
@@ -177,8 +181,7 @@ class IPFSDB(JsonDB):
                     self.logger.info(f'successfully downloaded ipfs data for {ipfs_hash}')
                     m.known_size = downloaded_length
                     m.is_client_side = True
-                    if signal:
-                        signal.emit(ipfs_hash)
+                    util.trigger_callback('ipfs_download', ipfs_hash)
             except ClientResponseError as e:
                 self.logger.warn(f'failed to download ipfs data for {ipfs_hash}: {str(e)}')
             finally:
@@ -193,7 +196,7 @@ class IPFSDB(JsonDB):
             self.logger.info(f'downloading ipfs data for {ipfs_hash}')
             await Network.async_send_http_on_proxy('get', ipfs_url, on_finish=on_finish, timeout=60)
 
-    async def _download_ipfs_information(self, network: Network, ipfs_hash: str, signal):
+    async def _download_ipfs_information(self, network: Network, ipfs_hash: str):
         ipfs_url = ipfs_explorer_URL(network.config, 'ipfs', ipfs_hash)
 
         async def on_finish(resp: ClientResponse):
@@ -206,9 +209,7 @@ class IPFSDB(JsonDB):
                 m.info_lookup_successful = True
                 self.logger.info(f'downloaded information for ipfs {ipfs_hash}: {resp.content_type} {resp.content_length}')
                 self._ipfs_lookup_current.discard(ipfs_hash)
-                if signal:
-                    signal.emit(ipfs_hash)
-                await self.maybe_download_data_for_ipfs_hash(network, ipfs_hash, signal)
+                await self.maybe_download_data_for_ipfs_hash(network, ipfs_hash)
             except ClientResponseError as e:
                 self.logger.warn(f'failed to download information for ipfs {ipfs_hash}: {str(e)}')
             finally:
@@ -216,6 +217,7 @@ class IPFSDB(JsonDB):
                 resp.close()
                 m.last_attemped_query = curr_time
                 self.data[ipfs_hash] = m
+                util.trigger_callback('ipfs_download', ipfs_hash)
 
         # Rate limit ourselves :)
         async with self._ipfs_lookup_semaphore:
@@ -223,7 +225,7 @@ class IPFSDB(JsonDB):
             self.logger.info(f'looking up ipfs information {ipfs_hash}')
             await Network.async_send_http_on_proxy('head', ipfs_url, on_finish=on_finish, timeout=30)
 
-    async def maybe_download_data_for_ipfs_hash(self, network: 'Network', ipfs_hash: str, signal=None):
+    async def maybe_download_data_for_ipfs_hash(self, network: 'Network', ipfs_hash: str):
         assert isinstance(ipfs_hash, str)
         if not network:
             return
@@ -240,9 +242,9 @@ class IPFSDB(JsonDB):
                 return
             if m and not m.is_client_side and is_mime_viewable(m.known_mime) and (m.known_size is None or m.known_size < network.config.MAX_IPFS_DOWNLOAD_SIZE):
                 self._ipfs_download_current.add(ipfs_hash)
-                await network.taskgroup.spawn(self._download_ipfs_data(network, ipfs_hash, signal))
+                await network.taskgroup.spawn(self._download_ipfs_data(network, ipfs_hash))
 
-    async def maybe_get_info_for_ipfs_hash(self, network: 'Network', ipfs_hash: str, asset: str, signal = None):
+    async def maybe_get_info_for_ipfs_hash(self, network: 'Network', ipfs_hash: str, asset: str):
         assert isinstance(ipfs_hash, str)
         assert isinstance(asset, str)
         if not network:
@@ -259,9 +261,8 @@ class IPFSDB(JsonDB):
             if ipfs_hash in self._ipfs_lookup_current:
                 return
             self._ipfs_lookup_current.add(ipfs_hash)
-            if signal:
-                signal.emit(ipfs_hash)
-            await network.taskgroup.spawn(self._download_ipfs_information(network, ipfs_hash, signal))
+            util.trigger_callback('ipfs_download', ipfs_hash)
+            await network.taskgroup.spawn(self._download_ipfs_information(network, ipfs_hash))
 
     @event_listener
     async def on_event_adb_added_verified_asset_metadata(self, adb: 'AddressSynchronizer', asset):

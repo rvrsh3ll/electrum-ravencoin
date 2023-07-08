@@ -417,6 +417,12 @@ class VerifierTagAssetVoutInformation(TagAssetVoutInformation):
         BaseAssetVoutInformation.__init__(self, AssetVoutType.VERIFIER, True)
         self.verifier_string = verifier_string
 
+class FreezeTagAssetVoutInformation(TagAssetVoutInformation):
+    def __init__(self, asset: str, flag: bool):
+        BaseAssetVoutInformation.__init__(self, AssetVoutType.FREEZE, True)
+        self.asset = asset
+        self.flag = flag
+
 def get_asset_info_from_script(script: bytes) -> BaseAssetVoutInformation:
     try:
         decoded = [x for x in script_GetOp(script)]
@@ -430,11 +436,16 @@ def get_asset_info_from_script(script: bytes) -> BaseAssetVoutInformation:
                 if i == 0:
                     if decoded[i + 1][0] == opcodes.OP_RESERVED:
                         if decoded[i + 2][0] == opcodes.OP_RESERVED:
-                            pass
+                            internal_data = decoded[i + 3][1]
+                            reader = ByteReader(internal_data)
+                            asset_length = reader.read_byte_as_int()
+                            asset_b = reader.read_bytes(asset_length)
+                            flag = True if reader.read_byte_as_int() != 0 else False
+                            return FreezeTagAssetVoutInformation(asset_b.decode(), flag)
                         else:
                             internal_data = decoded[i + 2][1]
                             verifier_string = next(script_GetOp(internal_data))[1]
-                            return VerifierTagAssetVoutInformation(f'{verifier_string.decode()}')
+                            return VerifierTagAssetVoutInformation(verifier_string.decode())
                     else:
                         reader = ByteReader(asset_portion)
                         first_byte = reader.read_byte_as_int()

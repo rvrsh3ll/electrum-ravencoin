@@ -599,6 +599,7 @@ class WalletDB(JsonDB):
         self.verified_tags_for_qualifiers = self.get_dict('verified_qualifier_tags')
         self.verified_tags_for_h160s = self.get_dict('verified_h160_tags')
         self.verified_restricted_verifiers = self.get_dict('verified_verifier_strings')
+        self.verified_restricted_freezes = self.get_dict('verified_freezes')
 
     @locked
     def get_non_deterministic_txo_lockingscript(self, outpoint: TxOutpoint) -> Optional[bytes]:
@@ -700,6 +701,34 @@ class WalletDB(JsonDB):
         assert isinstance(height, int)
         s = set()
         for asset, d in self.verified_restricted_verifiers.items():
+            if d['height'] > height:
+                s.add(asset)
+        return s
+
+    @locked
+    def get_verified_restricted_freeze(self, asset: str) -> Optional[Dict[str, Any]]:
+        assert isinstance(asset, str)
+        return self.verified_restricted_freezes.get(asset, None)
+
+    @modifier
+    def remove_verified_restricted_freeze(self, asset: str):
+        assert isinstance(asset, str)
+        self.verified_restricted_freezes.pop(asset)
+
+    @modifier
+    def add_verified_restricted_freeze(self, asset: str, d):
+        assert isinstance(asset, str)
+        assert isinstance(d['tx_hash'], str)
+        assert isinstance(d['tx_pos'], int)
+        assert isinstance(d['height'], int)
+        assert isinstance(d['frozen'], bool)
+        self.verified_restricted_freezes[asset] = d
+
+    @locked
+    def get_verified_restricted_freeze_after_height(self, height: int) -> Set[str]:
+        assert isinstance(height, int)
+        s = set()
+        for asset, d in self.verified_restricted_freezes.items():
             if d['height'] > height:
                 s.add(asset)
         return s

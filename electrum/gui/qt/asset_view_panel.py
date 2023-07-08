@@ -8,7 +8,7 @@ from PyQt5.QtGui import QFont, QStandardItemModel, QStandardItem, QPixmap, QMovi
 from PyQt5.QtCore import pyqtSignal, Qt, QItemSelectionModel, QSize
 from PyQt5.QtWidgets import (QLabel, QVBoxLayout, QSplitter, QScrollArea,
                              QHBoxLayout, QWidget, QFrame, QAbstractItemView,
-                             QSizePolicy)
+                             QCheckBox)
 
 from electrum import constants
 from electrum.asset import AssetMetadata
@@ -20,7 +20,7 @@ from electrum.logging import Logger
 
 from electrum.ipfs_db import IPFSDB
 
-from .util import HelpLabel, ColorScheme, HelpButton, AutoResizingTextEdit
+from .util import HelpLabel, ColorScheme, HelpButton, AutoResizingTextEdit, qt_event_listener, QtEventListener
 from .util import QHSeperationLine, read_QIcon, MONOSPACE_FONT, EnterButton, webopen_safe
 from .my_treeview import MyTreeView
 
@@ -123,10 +123,7 @@ class AssetList(MyTreeView):
             col.setBackground(color)
             col.setToolTip(tooltip)
         
-class MetadataInfo(QWidget):
-    metadata_info_signal = pyqtSignal(str)
-    update_signal = pyqtSignal()
-
+class MetadataInfo(QWidget, QtEventListener):
     def __init__(self, window: 'ElectrumWindow'):
         QWidget.__init__(self)
 
@@ -229,13 +226,23 @@ class MetadataInfo(QWidget):
         self.verifier_string_text.setAlignment(Qt.AlignVCenter)
         self.verifier_string_text.setVisible(False)
 
+        verifier_freeze_layout = QHBoxLayout()
+        self.global_freeze_label = QLabel(_('Globally Frozen: '))
+        self.global_freeze_label.setVisible(False)
+        self.global_freeze_cb = QCheckBox()
+        self.global_freeze_cb.setEnabled(True)
+        self.global_freeze_cb.setVisible(False)
+        predicted_mime_type_layout.addWidget(self.global_freeze_label)
+        predicted_mime_type_layout.addWidget(self.global_freeze_cb, 1, Qt.AlignLeft)
+
         self.verifier_string_seperator = QHSeperationLine()
         self.verifier_string_seperator.setVisible(False)
         restricted_verifier_layout = QVBoxLayout()
         restricted_verifier_layout.addWidget(self.verifier_string_seperator)
         restricted_verifier_layout.addWidget(self.verifier_string_label)
         restricted_verifier_layout.addWidget(self.verifier_string_text)
-
+        restricted_verifier_layout.addLayout(verifier_freeze_layout)
+        
         vbox.addLayout(header_layout)
         vbox.addLayout(asset_layout)
         vbox.addLayout(type_layout)
@@ -247,8 +254,11 @@ class MetadataInfo(QWidget):
         self.clear()
 
         self.current_asset = None
-        self.metadata_info_signal.connect(self._update_associated_data_info)
-        self.update_signal.connect(self.update_no_change)
+        self.register_callbacks()
+
+    @qt_event_listener
+    def on_event_ipfs_download(self, ipfs_hash):
+        self._update_associated_data_info(ipfs_hash)
 
     def _update_associated_data_info(self, ipfs_hash: str):
         if self.associated_data_text.toPlainText() != ipfs_hash:
@@ -308,7 +318,9 @@ class MetadataInfo(QWidget):
         ipfs_url = ipfs_explorer_URL(self.window.config, 'ipfs', associated_data)
         webopen_safe(ipfs_url, self.window.config, self.window)
 
-    def update(self, asset: str, type_text: Optional[str], metadata: AssetMetadata, verifier_text, verifier_string_data):
+    def update(self, asset: str, type_text: Optional[str], metadata: AssetMetadata, 
+               verifier_text, verifier_string_data,
+               freeze_text, freeze_data):
         self.current_asset = asset
         if type_text:
             header_text = '<h3>{} ({})</h3>'.format(_('Asset Metadata'), type_text)
@@ -347,6 +359,7 @@ class MetadataInfo(QWidget):
                 x.setVisible(False)
             for x in [self.associated_data_view_image, self.associated_data_view_text]:
                 x.clear()
+            self.associated_data_text.clear()
         else:
             self.associated_data_text.setVisible(True)
             self.view_associated_data_button.setVisible(True)
@@ -405,7 +418,7 @@ class MetadataInfo(QWidget):
 
                         async def download_all_ipfs_data():
                             # Ensure data tries to download even if we have the info
-                            await IPFSDB.get_instance().maybe_get_info_for_ipfs_hash(self.window.network, ipfs_str, asset, self.metadata_info_signal)
+                            await IPFSDB.get_instance().maybe_get_info_for_ipfs_hash(self.window.network, ipfs_str, asset)
                             await IPFSDB.get_instance().maybe_download_data_for_ipfs_hash(self.window.network, ipfs_str)
 
                         self.window.run_coroutine_from_thread(download_all_ipfs_data(), ipfs_str)
@@ -422,6 +435,16 @@ class MetadataInfo(QWidget):
         else:
             for x in [self.verifier_string_label, self.verifier_string_text, self.verifier_string_seperator]:
                 x.setVisible(False)
+
+        if freeze_data:
+            for x in [self.global_freeze_label, self.global_freeze_cb, self.verifier_string_seperator]:
+                x.setVisible(True)
+            label = _('Globally Frozen')
+            if freeze_text:
+                label += ' ' + freeze_text
+            label += ':'
+            self.global_freeze_label.setText(label)
+            self.global_freeze_cb.setChecked(freeze_data['frozen'])
 
     def clear(self):
         self.header.setText('<h3>{}</h3>'.format(_('Asset Metadata')))
@@ -483,6 +506,8 @@ class MetadataViewer(QFrame):
         
         verifier_string_data = None
         verifier_string_text = None
+        freeze_data = None
+        freeze_text = None
         if asset[0] == '$':
             verifier_string_data_tup = self.parent.parent.wallet.adb.get_restricted_verifier_string(asset)
             if verifier_string_data_tup:
@@ -492,7 +517,17 @@ class MetadataViewer(QFrame):
                 elif verifier_string_type_id == METADATA_UNVERIFIED:
                     verifier_string_text = _('NOT VERIFIED!')
 
-        self.metadata_info.update(asset, type_text, metadata, verifier_string_text, verifier_string_data)
+            freeze_data_tup = self.parent.parent.wallet.adb.get_restricted_freeze(asset)
+            if freeze_data_tup:
+                freeze_data, freeze_type_id = freeze_data_tup
+                if freeze_type_id == METADATA_UNCONFIRMED:
+                    freeze_text = _('UNCONFIRMED')
+                elif freeze_type_id == METADATA_UNVERIFIED:
+                    freeze_text = _('NOT VERIFIED!')
+
+        self.metadata_info.update(asset, type_text, metadata, 
+                                  verifier_string_text, verifier_string_data, 
+                                  freeze_text, freeze_data)
 
     def update(self):
         self.metadata_info.update_no_change()

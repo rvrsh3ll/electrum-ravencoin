@@ -49,10 +49,9 @@ class AssetTab(QWidget, MessageBoxMixin, Logger):
         else:
             self.qualifiy_tab = QualifierAssetPanel(self)
 
-
         menu = MyMenu(window.config)
-        menu.addConfig(_('Download IPFS Data'), window.config.cv.DOWNLOAD_IPFS, callback=self.view_asset_tab.metadata_viewer.metadata_info.update_signal.emit)
-        menu.addConfig(_('Display IPFS Data'), window.config.cv.SHOW_IPFS, callback=self.view_asset_tab.metadata_viewer.metadata_info.update_signal.emit)
+        menu.addConfig(_('Download IPFS Data'), window.config.cv.DOWNLOAD_IPFS, callback=self.view_asset_tab.metadata_viewer.metadata_info.update_no_change)
+        menu.addConfig(_('Display IPFS Data'), window.config.cv.SHOW_IPFS, callback=self.view_asset_tab.metadata_viewer.metadata_info.update_no_change)
         def maybe_update_manage_tabs():
             if self.wallet.is_watching_only():
                 return
