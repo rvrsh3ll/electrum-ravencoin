@@ -283,6 +283,11 @@ def generate_null_tag(asset: str, h160: str, flag: bool) -> str:
     asset_data = f'{int_to_hex(len(asset))}{asset.encode().hex()}{"01" if flag else "00"}'
     return construct_script([opcodes.OP_ASSET, h160, asset_data])
 
+def generate_freeze_tag(asset: str, frozen: bool) -> str:
+    assert (error := get_error_for_asset_typed(asset, AssetType.RESTRICTED)) is None, error
+    asset_data = f'{int_to_hex(len(asset))}{asset.encode().hex()}{"01" if frozen else "00"}'
+    return construct_script([opcodes.OP_ASSET, opcodes.OP_RESERVED, opcodes.OP_RESERVED, asset_data])
+
 def _associated_data_converter(input):
     if not input:
         return None
@@ -320,6 +325,9 @@ class AssetMetadata(StoredObject):
     divisions = attr.ib(type=int, validator=_validate_divisions)
     reissuable = attr.ib(type=bool)
     associated_data = attr.ib(default=None, type=bytes, converter=_associated_data_converter)
+
+    def is_associated_data_ipfs(self) -> bool:
+        return self.associated_data and len(self.associated_data) == 34 and self.associated_data[:2] == b'\x12\x20'
 
     def associated_data_as_ipfs(self) -> Optional[str]:
         if not self.associated_data:

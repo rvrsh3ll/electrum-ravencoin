@@ -11,6 +11,7 @@ from .util import MessageBoxMixin, read_QIcon
 from .asset_view_panel import ViewAssetPanel
 from .asset_management_panel import CreateAssetPanel, ReissueAssetPanel
 from .asset_qualifier_tag_panel import QualifierAssetPanel
+from .asset_freeze_tag_panel import ViewFreezePanel
 
 if TYPE_CHECKING:
     from .main_window import ElectrumWindow
@@ -49,6 +50,12 @@ class AssetTab(QWidget, MessageBoxMixin, Logger):
         else:
             self.qualifiy_tab = QualifierAssetPanel(self)
 
+        if self.wallet.is_watching_only():
+            self.freeze_tab = QLabel(_('Watch only wallets cannot freeze assets'))
+            self.freeze_tab.setAlignment(Qt.AlignCenter)
+        else:
+            self.freeze_tab = ViewFreezePanel(self)
+
         menu = MyMenu(window.config)
         menu.addConfig(_('Download IPFS Data'), window.config.cv.DOWNLOAD_IPFS, callback=self.view_asset_tab.metadata_viewer.metadata_info.update_no_change)
         menu.addConfig(_('Display IPFS Data'), window.config.cv.SHOW_IPFS, callback=self.view_asset_tab.metadata_viewer.metadata_info.update_no_change)
@@ -74,6 +81,7 @@ class AssetTab(QWidget, MessageBoxMixin, Logger):
         tabs.addTab(self.create_asset_tab, read_QIcon("unconfirmed.png"), _('Create'))
         tabs.addTab(self.reissue_asset_tab, read_QIcon("reissue.png"), _('Reissue'))
         tabs.addTab(self.qualifiy_tab, read_QIcon("tag.png"), _('Tagging'))
+        tabs.addTab(self.freeze_tab, read_QIcon("freeze.png"), _('Freezing'))
 
         tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
@@ -87,6 +95,8 @@ class AssetTab(QWidget, MessageBoxMixin, Logger):
                 self.searchable_list = self.view_asset_tab.asset_list
             elif index == 3 and not self.wallet.is_watching_only():
                 self.searchable_list = self.qualifiy_tab.searchable_list_grouping
+            elif index == 4 and not self.wallet.is_watching_only():
+                self.searchable_list =self.freeze_tab.asset_list
             else:
                 self.searchable_list = DummySearchableList()
         tabs.currentChanged.connect(on_change_tab)
@@ -97,4 +107,5 @@ class AssetTab(QWidget, MessageBoxMixin, Logger):
             self.create_asset_tab.update()
             self.reissue_asset_tab.update()
             self.qualifiy_tab.update()
+            self.freeze_tab.update()
         super().update()

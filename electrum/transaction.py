@@ -960,7 +960,6 @@ class Transaction:
                 if txin.asset is not None:
                     if txin.asset[-1] == '!':
                         asset_source_outpoint = wallet.adb.get_asset_metadata_outpoint(txin.asset)
-                        print(f'{asset_source_outpoint=} {txin.prevout=}')
                         if asset_source_outpoint is not None:
                             if txin.prevout == asset_source_outpoint:
                                 get_logger('get_preimage_script').info(f'ownership creation script identified: {txin.prevout.to_str()}')

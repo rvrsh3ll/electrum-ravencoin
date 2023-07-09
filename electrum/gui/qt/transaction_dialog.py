@@ -297,7 +297,10 @@ class TxInOutWidget(QWidget):
                                 verifier_str = asset_info.verifier_string
                                 cursor.insertText(f'\t{verifier_str}', tcf_ext)
                             elif asset_vout_type == AssetVoutType.FREEZE:
-                                pass
+                                cursor.insertBlock()
+                                asset = asset_info.asset
+                                flag = asset_info.flag
+                                cursor.insertText(f'\t{asset}\t{"FROZEN" if flag else "UN-FROZEN"}', tcf_ext)
 
                     elif addr is not None:
                         cursor.insertBlock()

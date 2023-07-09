@@ -612,6 +612,11 @@ class WalletDB(JsonDB):
         assert isinstance(script, bytes)
         self.non_deterministic_vouts[outpoint.to_str()] = script
 
+    @modifier
+    def remove_non_deterministic_txo_lockingscript(self, outpoint: TxOutpoint):
+        assert isinstance(outpoint, TxOutpoint)
+        self.non_deterministic_vouts.pop(outpoint.to_str(), None)
+
     @locked
     def get_assets_to_watch(self) -> Sequence[str]:
         return list(sorted(self.assets_to_watch))

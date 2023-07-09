@@ -230,10 +230,10 @@ class MetadataInfo(QWidget, QtEventListener):
         self.global_freeze_label = QLabel(_('Globally Frozen: '))
         self.global_freeze_label.setVisible(False)
         self.global_freeze_cb = QCheckBox()
-        self.global_freeze_cb.setEnabled(True)
+        self.global_freeze_cb.setEnabled(False)
         self.global_freeze_cb.setVisible(False)
-        predicted_mime_type_layout.addWidget(self.global_freeze_label)
-        predicted_mime_type_layout.addWidget(self.global_freeze_cb, 1, Qt.AlignLeft)
+        verifier_freeze_layout.addWidget(self.global_freeze_label)
+        verifier_freeze_layout.addWidget(self.global_freeze_cb, 1, Qt.AlignLeft)
 
         self.verifier_string_seperator = QHSeperationLine()
         self.verifier_string_seperator.setVisible(False)

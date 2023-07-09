@@ -205,7 +205,7 @@ class CoinChooserBase(Logger):
         # Break change up if bigger than max_change
         output_amounts = [o.value for o in tx.outputs() if o.asset is None]
         # Don't split change of less than 0.02 BTC
-        max_change = max(max(output_amounts) * 1.25, 0.02 * COIN)
+        max_change = max(max(output_amounts) * 1.25, 0.02 * COIN) if output_amounts else 0
 
         # Use N change outputs
         for n in range(1, addrs_left + 1):
@@ -222,8 +222,8 @@ class CoinChooserBase(Logger):
             return len(s) - len(s.rstrip('0'))
 
         zeroes = [trailing_zeroes(i) for i in output_amounts]
-        min_zeroes = min(zeroes)
-        max_zeroes = max(zeroes)
+        min_zeroes = min(zeroes) if zeroes else 0
+        max_zeroes = max(zeroes) if zeroes else 0
 
         if n > 1:
             zeroes = range(max(0, min_zeroes - 1), (max_zeroes + 1) + 1)

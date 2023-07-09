@@ -266,20 +266,27 @@ class IPFSDB(JsonDB, EventListener):
 
     @event_listener
     async def on_event_adb_added_verified_asset_metadata(self, adb: 'AddressSynchronizer', asset):
-        metadata_tup = adb.db.verified_asset_metadata.get(asset)
-        if metadata_tup:
-            metadata = metadata_tup[0]
-            if metadata.associated_data and metadata.associated_data[:2] == b'\x12\x20':
-                await self.maybe_get_info_for_ipfs_hash(adb.network, metadata.associated_data_as_ipfs(), asset)
-
+        metadata = adb.db.get_verified_asset_metadata(asset)
+        if metadata and metadata.is_associated_data_ipfs():
+            await self.maybe_get_info_for_ipfs_hash(adb.network, metadata.associated_data_as_ipfs(), asset)
 
     @event_listener
     async def on_event_adb_added_unconfirmed_asset_metadata(self, adb: 'AddressSynchronizer', asset):
         metadata_tup = adb.unconfirmed_asset_metadata.get(asset, None)
         if metadata_tup:
             metadata = metadata_tup[0]
-            if metadata.associated_data and metadata.associated_data[:2] == b'\x12\x20':
+            if metadata.is_associated_data_ipfs():
                 await self.maybe_get_info_for_ipfs_hash(adb.network, metadata.associated_data_as_ipfs(), asset)
+
+    @event_listener
+    def on_event_ipfs_hash_dissociate_asset(self, ipfs_hash: str, asset: str):
+        self.dissociate_asset_with_ipfs(ipfs_hash, asset)
+
+    @modifier
+    def dissociate_asset_with_ipfs(self, ipfs_hash: str, asset: str):
+        m = self.data.get(ipfs_hash, None)
+        if m:
+            m.associated_assets.discard(asset)
 
     @modifier
     def associate_asset_with_ipfs(self, ipfs_hash: str, asset: str):

@@ -372,6 +372,7 @@ class AddressSynchronizer(Logger, EventListener):
                 ser = txi.prevout.to_str()
                 self.db.set_spent_outpoint(prevout_hash, prevout_n, tx_hash)
                 add_value_from_prev_output()
+                self.db.remove_non_deterministic_txo_lockingscript(txi.prevout)
             # add outputs
             for n, txo in enumerate(tx.outputs()):
                 v = txo.value
@@ -739,6 +740,11 @@ class AddressSynchronizer(Logger, EventListener):
         # Remove from the unverified map and add to the verified map
         with self.lock:
             self.unverified_asset_metadata.pop(asset, None)
+            old_metadata = self.db.get_verified_asset_metadata(asset)
+            if old_metadata:
+                if old_metadata.is_associated_data_ipfs():
+                    old_ipfs_str = old_metadata.associated_data_as_ipfs()
+                    util.trigger_callback('ipfs_hash_dissociate_asset', old_ipfs_str, asset)
             self.db.add_verified_asset_metadata(asset, metadata, source_tup, source_divisions_tup, source_associated_data_tup)
         util.trigger_callback('adb_added_verified_asset_metadata', self, asset)
 

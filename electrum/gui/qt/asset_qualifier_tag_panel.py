@@ -33,13 +33,11 @@ if TYPE_CHECKING:
 
 class TaggedAddressList(MyTreeView):
     class Columns(MyTreeView.BaseColumnsEnum):
-        STATUS = enum.auto()
         ADDRESS = enum.auto()
         TAGGED = enum.auto()
 
     #// TODO: STATUS!
     headers = {
-        Columns.STATUS: '',
         Columns.ADDRESS: _('Address'),
         Columns.TAGGED: _('Flag')
     }
@@ -95,7 +93,7 @@ class TaggedAddressList(MyTreeView):
             labels[self.Columns.TAGGED] = str(data['flag'])
             row_item = [QStandardItem(x) for x in labels]
             icon = read_QIcon('unconfirmed.png') if data['height'] < 0 else read_QIcon('confirmed.png')
-            row_item[self.Columns.STATUS] = QStandardItem(icon, '')
+            row_item[self.Columns.ADDRESS] = QStandardItem(icon, labels[self.Columns.ADDRESS])
             self.set_editability(row_item)
             row_item[self.Columns.ADDRESS].setData(addr, self.ROLE_ADDRESS_STR)
             row_item[self.Columns.ADDRESS].setData(data['flag'], self.ROLE_TAG_BOOL)
@@ -113,7 +111,7 @@ class TaggedAddressList(MyTreeView):
         
         tooltip = 'In the mempool' if data['height'] < 0 else 'Confirmed'
 
-        asset_item[self.Columns.STATUS].setToolTip(tooltip)
+        asset_item[self.Columns.ADDRESS].setToolTip(tooltip)
 
 class SmallAssetList(MyTreeView):
     class Columns(MyTreeView.BaseColumnsEnum):

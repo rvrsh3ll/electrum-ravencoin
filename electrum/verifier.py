@@ -185,10 +185,10 @@ class SPV(NetworkJobOnDefaultServer):
             if asset_info.flag != d['frozen']:
                 raise AssetException(f'bad flag: {d["frozen"]}')
         except (aiorpcx.jsonrpc.RPCError, RequestCorrupted, AssetException, IndexError) as e:
-            self.logger.info(f'bad freeze {asset} {d["string"]}: {repr(e)}')
+            self.logger.info(f'bad freeze {asset} {d["frozen"]}: {repr(e)}')
             self.wallet.remove_unverified_restricted_freeze(asset, height)
             raise GracefulDisconnect(e) from e
-        self.logger.info(f'verified freeze for {asset} {d["string"]}')
+        self.logger.info(f'verified freeze for {asset} {d["frozen"]}')
         self.wallet.add_verified_restricted_freeze(asset, d)
 
     async def _verify_unverified_restricted_verifier(self, asset: str, d):
