@@ -30,7 +30,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QComboBox,  QTabWidget, QDialog,
                              QSpinBox,  QFileDialog, QCheckBox, QLabel,
                              QVBoxLayout, QGridLayout, QLineEdit,
-                             QPushButton, QWidget, QHBoxLayout)
+                             QPushButton, QWidget, QHBoxLayout, QTextEdit)
 
 from electrum.i18n import _, languages
 from electrum import util, coinchooser, paymentrequest
@@ -57,6 +57,7 @@ class SettingsDialog(QDialog, QtEventListener):
         self.network = window.network
         self.app = window.app
         self.need_restart = False
+        self.do_refresh = False
         self.fx = window.fx
         self.wallet = window.wallet
 
@@ -401,6 +402,22 @@ class SettingsDialog(QDialog, QtEventListener):
         self.history_rates_cb.stateChanged.connect(on_history_rates)
         ex_combo.currentIndexChanged.connect(on_exchange)
 
+        # Assets
+        asset_blacklist_msg = _('A list of regular expressions separated by new lines.') + \
+                            ' ' + _('If an asset\'s name matches any regular expression in this list,') + \
+                            ' ' + _('it will be hidden from view.')
+        asset_blacklist_label = HelpLabel(_('Asset Blacklist') + ':', asset_blacklist_msg)
+        asset_blacklist_edit = QTextEdit()
+        asset_blacklist_edit.setLineWrapMode(QTextEdit.NoWrap)
+        asset_blacklist_edit.setPlainText('\n'.join(self.wallet.adb.db.get_asset_blacklist_regex_list()))
+
+        def on_asset_blacklist_edit():
+            regex_iter = (regex.strip() for regex in asset_blacklist_edit.toPlainText().splitlines())
+            self.wallet.adb.db.update_asset_blacklist_regex_list(regex_iter)
+            self.do_refresh = True
+
+        asset_blacklist_edit.textChanged.connect(on_asset_blacklist_edit)
+
         gui_widgets = []
         gui_widgets.append((lang_label, lang_combo))
         gui_widgets.append((colortheme_label, colortheme_combo))
@@ -426,12 +443,16 @@ class SettingsDialog(QDialog, QtEventListener):
         if len(choosers) > 1:
             misc_widgets.append((chooser_label, chooser_combo))
 
+        asset_widgets = []
+        asset_widgets.append((asset_blacklist_label, asset_blacklist_edit))
+
         tabs_info = [
             (gui_widgets, _('Appearance')),
             (units_widgets, _('Units')),
             (fiat_widgets, _('Fiat')),
             #(lightning_widgets, _('Lightning')),
             (misc_widgets, _('Misc')),
+            (asset_widgets, _('Asset')),
         ]
         for widgets, name in tabs_info:
             tab = QWidget()

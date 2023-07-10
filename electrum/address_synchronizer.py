@@ -887,7 +887,7 @@ class AddressSynchronizer(Logger, EventListener):
         with self.lock:
             self.unverified_freeze_for_restricted.pop(asset, None)
             self.db.add_verified_restricted_freeze(asset, d)
-        util.trigger_callback('adb_added_verified_restricted_freeze', self, asset, d['flag'])
+        util.trigger_callback('adb_added_verified_restricted_freeze', self, asset, d['frozen'])
 
     def add_unverified_or_unconfirmed_tags_for_h160(self, h160, asset_tags):
         verified_h160_tags = self.db.get_verified_h160_tags(h160)

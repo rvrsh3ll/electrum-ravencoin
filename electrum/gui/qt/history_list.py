@@ -312,7 +312,7 @@ class HistoryModel(CustomModel, Logger):
         
         if transactions == self.transactions:
             return
-        
+
         #for transaction in transactions.values():
         #    print(transaction['txid'])
         #    print(transaction['asset'])
@@ -836,6 +836,11 @@ class HistoryList(MyTreeView, AcceptFileDragDrop):
                 menu_invs.addAction(_("View invoice"), lambda inv=inv: self.main_window.show_onchain_invoice(inv))
         if tx_URL:
             menu.addAction(_("View on block explorer"), lambda: webopen(tx_URL))
+
+        asset = tx_item.get('asset', None)
+        if asset and not self.wallet.is_asset_in_blacklist(asset):
+            menu.addAction(_('Mark asset as junk'), lambda: self.wallet.add_asset_regex_to_blacklist_for_asset(asset) or self.main_window.update_tabs())
+            
         menu.exec_(self.viewport().mapToGlobal(position))
 
     def remove_local_tx(self, tx_hash: str):

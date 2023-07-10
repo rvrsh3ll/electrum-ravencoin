@@ -2558,7 +2558,9 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         run_hook('close_settings_dialog')
         if d.need_restart:
             self.show_warning(_('Please restart Electrum to activate the new GUI settings'), title=_('Success'))
-        
+        if d.do_refresh:
+            self.update_tabs()
+
     def closeEvent(self, event):
         # note that closeEvent is NOT called if the user quits with Ctrl-C
         self.clean_up()

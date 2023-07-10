@@ -593,6 +593,8 @@ class WalletDB(JsonDB):
         """ called from Abstract_Wallet.__init__ """
         if 'assets_to_watch' not in self.data:
             self.data['assets_to_watch'] = set()
+        if 'asset_blacklist' not in self.data:
+            self.data['asset_blacklist'] = set()
         self.assets_to_watch = self.get('assets_to_watch')  # type: Set[str]
         self.verified_asset_metadata = self.get_dict('verified_asset_metadata')  # type: Dict[str, Tuple[AssetMetadata, Tuple[TxOutpoint, int], Tuple[TxOutpoint, int] | None, Tuple[TxOutpoint, int] | None]]       
         self.non_deterministic_vouts = self.get_dict('non_deterministic_txo_scriptpubkey')
@@ -600,6 +602,20 @@ class WalletDB(JsonDB):
         self.verified_tags_for_h160s = self.get_dict('verified_h160_tags')
         self.verified_restricted_verifiers = self.get_dict('verified_verifier_strings')
         self.verified_restricted_freezes = self.get_dict('verified_freezes')
+        self.asset_blacklist = self.get('asset_blacklist')  # type: Set[str]
+
+    @locked
+    def get_asset_blacklist_regex_list(self) -> Sequence[str]:
+        return sorted((regex for regex in self.asset_blacklist))
+
+    @modifier
+    def update_asset_blacklist_regex_list(self, l):
+        self.asset_blacklist.clear()
+        self.asset_blacklist.update(l)
+
+    @modifier
+    def add_asset_blacklist_regex(self, r):
+        self.asset_blacklist.add(r)
 
     @locked
     def get_non_deterministic_txo_lockingscript(self, outpoint: TxOutpoint) -> Optional[bytes]:
@@ -927,7 +943,7 @@ class WalletDB(JsonDB):
             v = ChannelType(v)
         elif key == 'db_metadata':
             v = DBMetadata(**v)
-        elif key == 'assets_to_watch':
+        elif key in ('assets_to_watch', 'asset_blacklist'):
             v = set(v)
         return v
 

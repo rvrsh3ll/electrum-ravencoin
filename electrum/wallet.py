@@ -36,6 +36,7 @@ import errno
 import traceback
 import operator
 import math
+import re
 from functools import partial
 from collections import defaultdict
 from numbers import Number
@@ -704,6 +705,21 @@ class Abstract_Wallet(ABC, Logger, EventListener):
         balances = self.get_balance(asset_aware=True)
         return asset in balances and sum(balances[asset]) > 0
     
+    def is_asset_in_blacklist(self, asset: str) -> bool:
+        if not asset: return False
+        for regex in self.db.get_asset_blacklist_regex_list():
+            if re.match(regex, asset): return True
+        return False
+
+    def is_asset_specific_regex_in_blacklist(self, asset: str) -> bool:
+        return self._regex_for_asset(asset) in self.db.get_asset_blacklist_regex_list()
+
+    def add_asset_regex_to_blacklist_for_asset(self, asset: str):
+        self.db.add_asset_blacklist_regex(self._regex_for_asset(asset))
+
+    def _regex_for_asset(self, asset: str):
+        return f'^{re.escape(asset)}$'
+
     @abstractmethod
     def get_address_index(self, address: str) -> Optional[AddressIndexGeneric]:
         pass
@@ -1317,6 +1333,7 @@ class Abstract_Wallet(ABC, Logger, EventListener):
         
         transactions = OrderedDictWithIndex()
         for k, v in sorted(list(transactions_tmp.items()), key=sort_key):
+            if self.is_asset_in_blacklist(v['asset']): continue
             transactions[k] = v
 
         seen_txids = set()

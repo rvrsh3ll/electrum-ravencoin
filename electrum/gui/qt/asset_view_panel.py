@@ -8,7 +8,7 @@ from PyQt5.QtGui import QFont, QStandardItemModel, QStandardItem, QPixmap, QMovi
 from PyQt5.QtCore import pyqtSignal, Qt, QItemSelectionModel, QSize
 from PyQt5.QtWidgets import (QLabel, QVBoxLayout, QSplitter, QScrollArea,
                              QHBoxLayout, QWidget, QFrame, QAbstractItemView,
-                             QCheckBox)
+                             QCheckBox, QMenu)
 
 from electrum import constants
 from electrum.asset import AssetMetadata
@@ -72,7 +72,7 @@ class AssetList(MyTreeView):
     @profiler(min_threshold=0.05)
     def update(self):
         # not calling maybe_defer_update() as it interferes with coincontrol status bar
-        watching_assets = [asset for asset, balance in self.wallet.get_balance(asset_aware=True).items() if asset and sum(balance) > 0]
+        watching_assets = [asset for asset, balance in self.wallet.get_balance(asset_aware=True).items() if asset and sum(balance) > 0 and not self.wallet.is_asset_in_blacklist(asset)]
         new_assets = sorted([(asset, (metadata[0].sats_in_circulation, metadata[1]) if ((metadata := self.wallet.adb.get_asset_metadata(asset)) is not None) else None) for asset in watching_assets], key=lambda x: x[0])
         if self.current_assets == new_assets:
             return
@@ -122,6 +122,22 @@ class AssetList(MyTreeView):
         for col in asset_item:
             col.setBackground(color)
             col.setToolTip(tooltip)
+
+    def create_menu(self, position):
+        selected = self.selected_in_column(self.Columns.ASSET)
+        if not selected:
+            return
+        assets = [self.item_from_index(item).text() for item in selected]
+        
+        def mark_as_junk():
+            for asset in assets:
+                self.wallet.add_asset_regex_to_blacklist_for_asset(asset)
+            self.parent.update_asset_trigger.emit(None)
+            self.main_window.update_tabs()
+
+        menu = QMenu()
+        menu.addAction(_('Mark asset{} as junk').format('s' if len(assets) > 1 else ''), mark_as_junk)
+        menu.exec_(self.viewport().mapToGlobal(position))
         
 class MetadataInfo(QWidget, QtEventListener):
     def __init__(self, window: 'ElectrumWindow'):
@@ -436,9 +452,10 @@ class MetadataInfo(QWidget, QtEventListener):
             for x in [self.verifier_string_label, self.verifier_string_text, self.verifier_string_seperator]:
                 x.setVisible(False)
 
+        for x in [self.global_freeze_label, self.global_freeze_cb, self.verifier_string_seperator]:
+            x.setVisible(bool(freeze_data))
+
         if freeze_data:
-            for x in [self.global_freeze_label, self.global_freeze_cb, self.verifier_string_seperator]:
-                x.setVisible(True)
             label = _('Globally Frozen')
             if freeze_text:
                 label += ' ' + freeze_text
