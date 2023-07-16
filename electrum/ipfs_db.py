@@ -316,4 +316,6 @@ class IPFSDB(JsonDB, EventListener):
         if m is None or not m.is_client_side:
             return None, None
         path = standardize_path(os.path.join(self.raw_ipfs_path, ipfs_hash))
+        if not os.path.exists(path):
+            return None, None
         return path, m.known_mime

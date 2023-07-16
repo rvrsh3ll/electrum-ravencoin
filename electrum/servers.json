@@ -12,8 +12,9 @@
     },
     "aq7vuqykup2voklcrpqljf6jnjkzrouowsjfrmybdou5kdhrpr6sjjid.onion": {
       "pruning": "-",
+      "s": "50002",
       "t": "50001",
-      "version": "1.10"
+      "version": "1.11"
     }
   }
   

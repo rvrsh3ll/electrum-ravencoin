@@ -44,8 +44,6 @@ except ImportError as e:
 
 _logger = get_logger(__name__)
 
-HEADER_SIZE = 80  # bytes
-
 MAX_TARGET = 0x00000fffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
 KAWPOW_LIMIT = 0x0000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffff
 

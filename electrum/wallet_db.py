@@ -746,7 +746,7 @@ class WalletDB(JsonDB):
         self.verified_restricted_freezes[asset] = d
 
     @locked
-    def get_verified_restricted_freeze_after_height(self, height: int) -> Set[str]:
+    def get_verified_restricted_freezes_after_height(self, height: int) -> Set[str]:
         assert isinstance(height, int)
         s = set()
         for asset, d in self.verified_restricted_freezes.items():
