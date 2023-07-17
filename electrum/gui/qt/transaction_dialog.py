@@ -285,6 +285,20 @@ class TxInOutWidget(QWidget):
                                     else:
                                         associated_data_str = base_encode(raw_associated_data, base=58)
                                 cursor.insertText(_('\tAssociated Data: {}').format(associated_data_str), tcf_ext)
+                            elif asset_vout_type == AssetVoutType.TRANSFER:
+                                if asset_info.asset_memo:
+                                    raw_memo = asset_info.asset_memo
+                                    if raw_memo[0] == 0x54:
+                                        memo_str = raw_memo[2:].hex()
+                                    else:
+                                        memo_str = base_encode(raw_memo, base=58)
+
+                                    timestamp_str = str(asset_info.asset_memo_timestamp or _('None'))
+
+                                    cursor.insertBlock()
+                                    cursor.insertText(_('\tMemo: {}').format(memo_str), tcf_ext)
+                                    cursor.insertBlock()
+                                    cursor.insertText(_('\tExpiry: {}').format(timestamp_str), tcf_ext)
                             elif asset_vout_type == AssetVoutType.NULL:
                                 cursor.insertBlock()
                                 tag_addr_str = hash160_to_b58_address(bytes.fromhex(asset_info.h160), constants.net.ADDRTYPE_P2PKH)

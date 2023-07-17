@@ -154,11 +154,11 @@ class TxOutput:
         return self._asset_value
 
     @classmethod
-    def from_address_and_value(cls, address: str, value: Union[int, str], *, asset: str = None) -> Union['TxOutput', 'PartialTxOutput']:
+    def from_address_and_value(cls, address: str, value: Union[int, str], *, asset: str = None, memo = None) -> Union['TxOutput', 'PartialTxOutput']:
         if asset:
             from .asset import generate_transfer_script_from_base
             assert isinstance(value, int)
-            return cls(scriptpubkey=bfh(generate_transfer_script_from_base(asset, value, bitcoin.address_to_script(address))),
+            return cls(scriptpubkey=bfh(generate_transfer_script_from_base(asset, value, bitcoin.address_to_script(address), memo=memo)),
                        value=0)
         else:
             return cls(scriptpubkey=bfh(bitcoin.address_to_script(address)),

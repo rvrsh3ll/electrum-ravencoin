@@ -174,6 +174,8 @@ def get_error_for_asset_typed(asset: str, asset_type: AssetType) -> Optional[str
             if not _isNameValidBeforeTag(parts[0]) or not _isMsgChannelTagValid(parts[-1]):
                 return _('Message Channel name contains invalid characters (Valid characters are: A-Z 0-9 _ .) (special characters can\'t be the first or last characters)')
         elif asset_type == AssetType.OWNER:
+            if asset[-1] != ASSET_OWNER_IDENTIFIER:
+                return _('Not an owner asset')
             if not _isNameValidBeforeTag(asset[:-1]):
                 return _('Owner name contains invalid characters (Valid characters are: A-Z 0-9 _ .) (special characters can\'t be the first or last characters)')
         elif asset_type == AssetType.QUALIFIER or asset_type == AssetType.SUB_QUALIFIER:
@@ -269,8 +271,8 @@ def _asset_portion_of_transfer_script(asset: str, amount: int, *, memo: 'AssetMe
 def extra_size_for_asset_transfer(asset: str):
     return len(_asset_portion_of_transfer_script(asset, 0)) // 2
 
-def generate_transfer_script_from_base(asset: str, amount: int, base_script: str):
-    return base_script + _asset_portion_of_transfer_script(asset, amount)
+def generate_transfer_script_from_base(asset: str, amount: int, base_script: str, *, memo: 'AssetMemo' = None):
+    return base_script + _asset_portion_of_transfer_script(asset, amount, memo=memo)
 
 def generate_verifier_tag(verifier_string: str) -> str:
     assert len(verifier_string) <= MAX_VERIFIER_STING_LENGTH
