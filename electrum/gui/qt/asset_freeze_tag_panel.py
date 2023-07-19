@@ -40,7 +40,6 @@ class AssetFreezeList(MyTreeView):
         Columns.FROZEN: _('Frozen'),
     }
     filter_columns = [Columns.ASSET, Columns.FROZEN]
-    stretch_column = Columns.ASSET
 
     ROLE_ASSET_STR = Qt.UserRole + 1000
     ROLE_PARENT_IN_MEMPOOL_BOOL = Qt.UserRole + 1001
@@ -51,7 +50,7 @@ class AssetFreezeList(MyTreeView):
     def __init__(self, parent: 'ViewFreezePanel'):
         super().__init__(
             main_window=parent.parent.window,
-            stretch_column=self.stretch_column,
+            stretch_columns=[self.Columns.ASSET],
         )
         self.parent = parent
         self.wallet = self.main_window.wallet

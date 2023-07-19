@@ -31,7 +31,6 @@ class AssetList(MyTreeView):
         Columns.BALANCE: _('Balance'),
     }
     filter_columns = [Columns.ASSET]
-    stretch_column = Columns.ASSET
 
     ROLE_ASSET_STR = Qt.UserRole + 1000
     key_role = ROLE_ASSET_STR
@@ -39,7 +38,7 @@ class AssetList(MyTreeView):
     def __init__(self, parent: 'ViewAssetPanel'):
         super().__init__(
             main_window=parent.parent.window,
-            stretch_column=self.stretch_column,
+            stretch_columns=[self.Columns.ASSET],
         )
         self.parent = parent
         self.wallet = self.main_window.wallet

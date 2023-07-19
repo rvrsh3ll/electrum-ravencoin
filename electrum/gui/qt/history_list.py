@@ -527,7 +527,7 @@ class HistoryList(MyTreeView, AcceptFileDragDrop):
     def __init__(self, main_window: 'ElectrumWindow', model: HistoryModel):
         super().__init__(
             main_window=main_window,
-            stretch_column=HistoryColumns.DESCRIPTION,
+            stretch_columns=[HistoryColumns.DESCRIPTION, HistoryColumns.ASSET],
             editable_columns=[HistoryColumns.DESCRIPTION, HistoryColumns.FIAT_VALUE],
         )
         self.hm = model
@@ -553,7 +553,7 @@ class HistoryList(MyTreeView, AcceptFileDragDrop):
         self.setRootIsDecorated(True)
         self.header().setStretchLastSection(False)
         for col in HistoryColumns:
-            sm = QHeaderView.Stretch if col == self.stretch_column or col == self.Columns.ASSET else QHeaderView.ResizeToContents
+            sm = QHeaderView.Stretch if col in self.stretch_columns else QHeaderView.ResizeToContents
             self.header().setSectionResizeMode(col, sm)
         if self.config:
             self.configvar_show_toolbar = self.config.cv.GUI_QT_HISTORY_TAB_SHOW_TOOLBAR

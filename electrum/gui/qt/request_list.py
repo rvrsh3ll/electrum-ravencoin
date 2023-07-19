@@ -76,7 +76,7 @@ class RequestList(MyTreeView):
         window = receive_tab.window
         super().__init__(
             main_window=window,
-            stretch_column=self.Columns.DESCRIPTION,
+            stretch_columns=[self.Columns.DESCRIPTION],
         )
         self.wallet = window.wallet
         self.receive_tab = receive_tab

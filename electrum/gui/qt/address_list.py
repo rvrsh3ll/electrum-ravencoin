@@ -94,7 +94,7 @@ class AddressList(MyTreeView):
     def __init__(self, main_window: 'ElectrumWindow'):
         super().__init__(
             main_window=main_window,
-            stretch_column=self.Columns.LABEL,
+            stretch_columns=[self.Columns.LABEL],
             editable_columns=[self.Columns.LABEL],
         )
         self.wallet = self.main_window.wallet

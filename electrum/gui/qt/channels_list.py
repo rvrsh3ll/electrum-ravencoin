@@ -70,7 +70,7 @@ class ChannelsList(MyTreeView):
     def __init__(self, main_window: 'ElectrumWindow'):
         super().__init__(
             main_window=main_window,
-            stretch_column=self.Columns.NODE_ALIAS,
+            stretch_columns=[self.Columns.NODE_ALIAS],
         )
         self.setModel(QtGui.QStandardItemModel(self))
         self.setSelectionMode(QAbstractItemView.ExtendedSelection)

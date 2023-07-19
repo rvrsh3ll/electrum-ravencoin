@@ -50,7 +50,7 @@ class WatcherList(MyTreeView):
     def __init__(self, parent: 'WatchtowerDialog'):
         super().__init__(
             parent=parent,
-            stretch_column=self.Columns.OUTPOINT,
+            stretch_columns=[self.Columns.OUTPOINT],
         )
         self.parent = parent
         self.setModel(QStandardItemModel(self))

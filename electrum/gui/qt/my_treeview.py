@@ -206,14 +206,14 @@ class MyTreeView(QTreeView):
         *,
         parent: Optional[QWidget] = None,
         main_window: Optional['ElectrumWindow'] = None,
-        stretch_column: Optional[int] = None,
+        stretch_columns: Optional[Sequence[int]] = None,
         editable_columns: Optional[Sequence[int]] = None,
     ):
         parent = parent or main_window
         super().__init__(parent)
         self.main_window = main_window
         self.config = self.main_window.config if self.main_window else None
-        self.stretch_column = stretch_column
+        self.stretch_columns = stretch_columns
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self.create_menu)
         self.setUniformRowHeights(True)
@@ -289,7 +289,7 @@ class MyTreeView(QTreeView):
         self.original_model().setHorizontalHeaderLabels(col_names)
         self.header().setStretchLastSection(False)
         for col_idx in headers:
-            sm = QHeaderView.Stretch if col_idx == self.stretch_column else QHeaderView.ResizeToContents
+            sm = QHeaderView.Stretch if self.stretch_columns and col_idx in self.stretch_columns else QHeaderView.ResizeToContents
             self.header().setSectionResizeMode(col_idx, sm)
 
     def keyPressEvent(self, event):

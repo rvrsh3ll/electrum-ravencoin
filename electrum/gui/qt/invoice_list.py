@@ -73,7 +73,7 @@ class InvoiceList(MyTreeView):
         window = send_tab.window
         super().__init__(
             main_window=window,
-            stretch_column=self.Columns.DESCRIPTION,
+            stretch_columns=[self.Columns.DESCRIPTION],
         )
         self.wallet = window.wallet
         self.send_tab = send_tab

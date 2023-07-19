@@ -43,7 +43,6 @@ class TaggedAddressList(MyTreeView):
     }
 
     filter_columns = [Columns.ADDRESS, Columns.TAGGED]
-    stretch_column = Columns.ADDRESS
 
     ROLE_ADDRESS_STR = Qt.UserRole + 1000
     ROLE_TAG_BOOL = Qt.UserRole + 1001
@@ -52,7 +51,7 @@ class TaggedAddressList(MyTreeView):
     def __init__(self, parent: 'QualifierAssetPanel'):
         super().__init__(
             main_window=parent.parent.window,
-            stretch_column=self.stretch_column
+            stretch_columns=[self.Columns.ADDRESS]
         )
         self.parent = parent
         self.wallet = self.main_window.wallet
@@ -121,7 +120,6 @@ class SmallAssetList(MyTreeView):
         Columns.ASSET: _('Asset'),
     }
     filter_columns = [Columns.ASSET]
-    stretch_column = Columns.ASSET
 
     ROLE_ASSET_STR = Qt.UserRole + 1000
     ROLE_IN_MEMPOOL_BOOL = Qt.UserRole + 1001
@@ -130,7 +128,7 @@ class SmallAssetList(MyTreeView):
     def __init__(self, parent: 'QualifierAssetPanel', filter, id):
         super().__init__(
             main_window=parent.parent.window,
-            stretch_column=self.stretch_column,
+            stretch_columns=[self.Columns.ASSET],
         )
         self.parent = parent
         self.wallet = self.main_window.wallet

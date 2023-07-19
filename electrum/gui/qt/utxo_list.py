@@ -53,6 +53,7 @@ class UTXOList(MyTreeView):
         OUTPOINT = enum.auto()
         ADDRESS = enum.auto()
         LABEL = enum.auto()
+        ASSET = enum.auto()
         AMOUNT = enum.auto()
         PARENTS = enum.auto()
 
@@ -62,9 +63,9 @@ class UTXOList(MyTreeView):
         Columns.PARENTS: _('Parents'),
         Columns.LABEL: _('Label'),
         Columns.AMOUNT: _('Amount'),
+        Columns.ASSET: _('Asset')
     }
     filter_columns = [Columns.ADDRESS, Columns.LABEL, Columns.OUTPOINT]
-    stretch_column = Columns.LABEL
 
     ROLE_PREVOUT_STR = Qt.UserRole + 1000
     key_role = ROLE_PREVOUT_STR
@@ -72,7 +73,7 @@ class UTXOList(MyTreeView):
     def __init__(self, main_window: 'ElectrumWindow'):
         super().__init__(
             main_window=main_window,
-            stretch_column=self.stretch_column,
+            stretch_columns=[self.Columns.LABEL, self.Columns.ASSET],
         )
         self._spend_set = set()
         self._utxo_dict = {}
@@ -103,7 +104,8 @@ class UTXOList(MyTreeView):
             labels = [""] * len(self.Columns)
             labels[self.Columns.OUTPOINT] = str(utxo.short_id)
             labels[self.Columns.ADDRESS] = utxo.address
-            labels[self.Columns.AMOUNT] = self.main_window.format_amount(utxo.value_sats(), whitespaces=True)
+            labels[self.Columns.AMOUNT] = self.main_window.format_amount(utxo.value_sats(asset_aware=True), whitespaces=True)
+            labels[self.Columns.ASSET] = utxo.asset
             utxo_item = [QStandardItem(x) for x in labels]
             self.set_editability(utxo_item)
             utxo_item[self.Columns.OUTPOINT].setData(name, self.ROLE_PREVOUT_STR)
@@ -111,6 +113,7 @@ class UTXOList(MyTreeView):
             utxo_item[self.Columns.AMOUNT].setFont(QFont(MONOSPACE_FONT))
             utxo_item[self.Columns.PARENTS].setFont(QFont(MONOSPACE_FONT))
             utxo_item[self.Columns.OUTPOINT].setFont(QFont(MONOSPACE_FONT))
+            utxo_item[self.Columns.ASSET].setFont(QFont(MONOSPACE_FONT))
             self.model().insertRow(idx, utxo_item)
             self.refresh_row(name, idx)
         self.filter()
@@ -154,6 +157,8 @@ class UTXOList(MyTreeView):
         if self.wallet.is_frozen_coin(utxo):
             utxo_item[self.Columns.OUTPOINT].setBackground(ColorScheme.BLUE.as_color(True))
             utxo_item[self.Columns.OUTPOINT].setToolTip(f"{key}\n{_('Coin is frozen')}")
+        if utxo.asset:
+            utxo_item[self.Columns.ASSET].setToolTip(utxo.asset)
 
     def get_selected_outpoints(self) -> List[str]:
         if not self.model():

@@ -1559,6 +1559,7 @@ class AddressSynchronizer(Logger, EventListener):
         for addr in domain:
             txos = self.get_addr_outputs(addr)
             for txo in txos.values():
+                if txo.value_sats(asset_aware=True) == 0: continue
                 if txo.spent_height is not None:
                     if not confirmed_spending_only:
                         continue
