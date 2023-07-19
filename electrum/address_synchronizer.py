@@ -780,6 +780,28 @@ class AddressSynchronizer(Logger, EventListener):
                 return unverified[0], METADATA_UNVERIFIED
             return None
     
+    def get_asset_metadata_txids(self, asset: str) -> Optional[Tuple[bytes, Optional[bytes], Optional[bytes]]]:
+        with self.lock:
+            unconfirmed = self.unconfirmed_asset_metadata.get(asset, None)
+            if unconfirmed and self.config.HANDLE_UNCONFIRMED_METADATA:
+                # source_main, div, ipfs
+                return (
+                    unconfirmed[1][0].txid, 
+                    unconfirmed[2][0].txid if unconfirmed[2] else None, 
+                    unconfirmed[3][0].txid if unconfirmed[3] else None
+                )
+            verified = self.db.get_verified_asset_metadata_source_txids(asset)
+            if verified:
+                return verified
+            unverified = self.unverified_asset_metadata.get(asset, None)
+            if unverified:
+                return (
+                    unverified[1][0].txid, 
+                    unverified[2][0].txid if unverified[2] else None, 
+                    unverified[3][0].txid if unverified[3] else None
+                )
+            return None
+        
     def get_asset_metadata_outpoint(self, asset: str) -> Optional[TxOutpoint]:
         with self.lock:
             base_source = self.db.get_verified_asset_metadata_base_source(asset)

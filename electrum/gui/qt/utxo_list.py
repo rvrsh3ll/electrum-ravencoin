@@ -300,10 +300,10 @@ class UTXOList(MyTreeView):
         menu_spend = menu.addMenu(_("Fully spend") + '…')
         m = menu_spend.addAction(_("send to address in clipboard"), lambda: self.pay_to_clipboard_address(coins))
         m.setEnabled(self.clipboard_contains_address())
-        m = menu_spend.addAction(_("in new channel"), lambda: self.open_channel_with_coins(coins))
-        m.setEnabled(self.can_open_channel(coins))
-        m = menu_spend.addAction(_("in submarine swap"), lambda: self.swap_coins(coins))
-        m.setEnabled(self.can_swap_coins(coins))
+        #m = menu_spend.addAction(_("in new channel"), lambda: self.open_channel_with_coins(coins))
+        #m.setEnabled(self.can_open_channel(coins))
+        #m = menu_spend.addAction(_("in submarine swap"), lambda: self.swap_coins(coins))
+        #m.setEnabled(self.can_swap_coins(coins))
         # coin control
         if self.are_in_coincontrol(coins):
             menu.addAction(_("Remove from coin control"), lambda: self.remove_from_coincontrol(coins))

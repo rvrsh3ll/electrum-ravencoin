@@ -1,5 +1,5 @@
 import enum
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING, Tuple
 
 from PyQt5.QtGui import QFont, QStandardItemModel, QStandardItem
 from PyQt5.QtCore import pyqtSignal, Qt, QItemSelectionModel
@@ -14,7 +14,7 @@ from electrum.address_synchronizer import METADATA_UNCONFIRMED, METADATA_UNVERIF
 from electrum.logging import Logger
 
 from .util import HelpLabel, ColorScheme, HelpButton, AutoResizingTextEdit, qt_event_listener, QtEventListener
-from .util import QHSeperationLine, read_QIcon, MONOSPACE_FONT, IPFSViewer
+from .util import QHSeperationLine, read_QIcon, MONOSPACE_FONT, IPFSViewer, EnterButton
 from .my_treeview import MyTreeView
 
 if TYPE_CHECKING:
@@ -202,6 +202,51 @@ class MetadataInfo(QWidget, QtEventListener):
         restricted_verifier_layout.addWidget(self.verifier_string_text)
         restricted_verifier_layout.addLayout(verifier_freeze_layout)
         
+        self.source_seperator = QHSeperationLine()
+        self.source_seperator.setVisible(False)
+
+        self.associated_data_source_label = QLabel(_('Associated data last changed') + ':')
+        self.associated_data_source_label.setVisible(False)
+        self.associated_data_source_txid = AutoResizingTextEdit()
+        self.associated_data_source_txid.setReadOnly(True)
+        self.associated_data_source_txid.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.associated_data_source_txid.setAlignment(Qt.AlignVCenter)
+        self.associated_data_source_txid.setVisible(False)
+        self.associated_data_source_button = EnterButton(_('View Transaction'), lambda: self._show_source_tx(self.associated_data_source_txid))
+        self.associated_data_source_button.setVisible(False)
+
+        self.divisions_source_label = QLabel(_('Divisions last changed') + ':')
+        self.divisions_source_label.setVisible(False)
+        self.divisions_source_txid = AutoResizingTextEdit()
+        self.divisions_source_txid.setReadOnly(True)
+        self.divisions_source_txid.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.divisions_source_txid.setAlignment(Qt.AlignVCenter)
+        self.divisions_source_txid.setVisible(False)
+        self.divisions_source_button = EnterButton(_('View Transaction'), lambda: self._show_source_tx(self.divisions_source_txid))
+        self.divisions_source_button.setVisible(False)
+
+        self.main_source_label = QLabel()
+        self.main_source_label.setVisible(False)
+        self.main_source_txid = AutoResizingTextEdit()
+        self.main_source_txid.setReadOnly(True)
+        self.main_source_txid.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.main_source_txid.setAlignment(Qt.AlignVCenter)
+        self.main_source_txid.setVisible(False)
+        self.main_source_button = EnterButton(_('View Transaction'), lambda: self._show_source_tx(self.main_source_txid))
+        self.main_source_button.setVisible(False)
+
+        source_layout = QVBoxLayout()
+        source_layout.addWidget(self.source_seperator)
+        source_layout.addWidget(self.associated_data_source_label)
+        source_layout.addWidget(self.associated_data_source_txid)
+        source_layout.addWidget(self.associated_data_source_button)
+        source_layout.addWidget(self.divisions_source_label)
+        source_layout.addWidget(self.divisions_source_txid)
+        source_layout.addWidget(self.divisions_source_button)
+        source_layout.addWidget(self.main_source_label)
+        source_layout.addWidget(self.main_source_txid)
+        source_layout.addWidget(self.main_source_button)
+
         self.ipfs_viewer = IPFSViewer(window)
 
         vbox.addLayout(header_layout)
@@ -211,17 +256,23 @@ class MetadataInfo(QWidget, QtEventListener):
         vbox.addWidget(QHSeperationLine())
         vbox.addWidget(self.ipfs_viewer)
         vbox.addLayout(restricted_verifier_layout)
+        vbox.addLayout(source_layout)
         vbox.addWidget(QWidget(), 1)
         self.clear()
 
         self.current_asset = None
         self.register_callbacks()
 
+    def _show_source_tx(self, txid_widget):
+        txid = txid_widget.toPlainText()
+        self.window.do_process_from_txid(txid=txid)
+
     @qt_event_listener
     def on_event_ipfs_download(self, ipfs_hash):
         self.ipfs_viewer.update_associated_data_info(ipfs_hash)
 
-    def update(self, asset: str, type_text: Optional[str], metadata: AssetMetadata, 
+    def update(self, asset: str, type_text: Optional[str], metadata: AssetMetadata,
+               metadata_sources: Optional[Tuple[bytes, Optional[bytes], Optional[bytes]]],
                verifier_text, verifier_string_data,
                freeze_text, freeze_data):
         self.current_asset = asset
@@ -276,13 +327,60 @@ class MetadataInfo(QWidget, QtEventListener):
             self.global_freeze_label.setText(label)
             self.global_freeze_cb.setChecked(freeze_data['frozen'])
 
+        if metadata_sources:
+            for x in [self.source_seperator, self.main_source_txid,
+                      self.main_source_label, self.main_source_button]:
+                x.setVisible(self.window.config.SHOW_METADATA_SOURCE)
+            self.main_source_txid.setText(metadata_sources[0].hex())
+            if metadata_sources[1] or metadata_sources[2]:
+                source_text = _('Other data last changed')
+            else:
+                source_text = _('Metadata last changed')
+            self.main_source_label.setText(source_text + ':')
+
+            if metadata_sources[1]:
+                for x in [self.divisions_source_txid, self.divisions_source_label,
+                          self.divisions_source_button]:
+                    x.setVisible(self.window.config.SHOW_METADATA_SOURCE)
+                self.divisions_source_txid.setText(metadata_sources[1].hex())
+            else:
+                self.divisions_source_txid.clear()
+                for x in [self.divisions_source_txid, self.divisions_source_label,
+                          self.divisions_source_button]:
+                    x.setVisible(False)
+
+            if metadata_sources[2]:
+                for x in [self.associated_data_source_txid, self.associated_data_source_label,
+                          self.associated_data_source_button]:
+                    x.setVisible(self.window.config.SHOW_METADATA_SOURCE)
+                self.associated_data_source_txid.setText(metadata_sources[2].hex())
+            else:
+                self.associated_data_source_txid.clear()
+                for x in [self.associated_data_source_txid, self.associated_data_source_label,
+                          self.associated_data_source_button]:
+                    x.setVisible(False)
+        else:
+            for x in [self.main_source_txid, self.divisions_source_txid, self.associated_data_source_txid]:
+                x.clear()
+            for x in [self.source_seperator, self.associated_data_source_txid,
+                        self.associated_data_source_label, self.associated_data_source_button,
+                        self.divisions_source_txid, self.divisions_source_label,
+                        self.divisions_source_button, self.main_source_txid,
+                        self.main_source_label, self.main_source_button]:
+                x.setVisible(False)
+
     def clear(self):
         self.header.setText('<h3>{}</h3>'.format(_('Asset Metadata')))
         for x in [self.asset_text, self.type_text, self.divisions_text, self.reissuable_text]:
             x.setText(_('N/A'))
 
         for x in [self.verifier_string_label, 
-                  self.verifier_string_seperator, self.verifier_string_text]:
+                  self.verifier_string_seperator, self.verifier_string_text,
+                  self.source_seperator, self.associated_data_source_txid,
+                  self.associated_data_source_label, self.associated_data_source_button,
+                  self.divisions_source_txid, self.divisions_source_label,
+                  self.divisions_source_button, self.main_source_txid,
+                  self.main_source_label, self.main_source_button]:
             x.setVisible(False)
 
         self.ipfs_viewer.clear()
@@ -306,6 +404,7 @@ class MetadataViewer(QFrame):
             self.metadata_info.clear()
             return
         metadata_tup = self.parent.parent.wallet.adb.get_asset_metadata(asset)
+        metadata_sources = self.parent.parent.wallet.adb.get_asset_metadata_txids(asset)
         if metadata_tup is None:
             self.metadata_info.clear()
             return
@@ -337,12 +436,27 @@ class MetadataViewer(QFrame):
                 elif freeze_type_id == METADATA_UNVERIFIED:
                     freeze_text = _('NOT VERIFIED!')
 
-        self.metadata_info.update(asset, type_text, metadata, 
+        self.metadata_info.update(asset, type_text, metadata, metadata_sources,
                                   verifier_string_text, verifier_string_data, 
                                   freeze_text, freeze_data)
 
-    def update(self):
+    def update_visibility(self):
         self.metadata_info.ipfs_viewer.update_visibility()
+        if self.metadata_info.main_source_txid.toPlainText():
+            for x in [self.metadata_info.source_seperator, self.metadata_info.main_source_txid,
+                      self.metadata_info.main_source_label, self.metadata_info.main_source_button]:
+                x.setVisible(self.parent.parent.window.config.SHOW_METADATA_SOURCE)
+            if self.metadata_info.divisions_source_txid.toPlainText():
+                for x in [self.metadata_info.divisions_source_txid, self.metadata_info.divisions_source_label,
+                          self.metadata_info.divisions_source_button]:
+                    x.setVisible(self.parent.parent.window.config.SHOW_METADATA_SOURCE)
+            if self.metadata_info.associated_data_source_txid.toPlainText():
+                for x in [self.metadata_info.associated_data_source_txid, self.metadata_info.associated_data_source_label,
+                          self.metadata_info.associated_data_source_button]:
+                    x.setVisible(self.parent.parent.window.config.SHOW_METADATA_SOURCE)
+
+    def update(self):
+        self.update_visibility()
         super().update()
 
 class ViewAssetPanel(QSplitter, Logger):

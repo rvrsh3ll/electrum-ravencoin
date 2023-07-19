@@ -692,6 +692,17 @@ class WalletDB(JsonDB):
         return result[1][0], result[1][1]
     
     @locked
+    def get_verified_asset_metadata_source_txids(self, asset: str) -> Optional[Tuple[bytes, Optional[bytes], Optional[bytes]]]:
+        assert isinstance(asset, str)
+        result = self.verified_asset_metadata.get(asset, None)
+        if not result: return None
+        return (
+            result[1][0].txid,
+            result[2][0].txid if result[2] else None,
+            result[3][0].txid if result[3] else None
+        )
+    
+    @locked
     def get_assets_verified_after_height(self, height: int) -> Sequence[str]:
         assert isinstance(height, int)
         assets = []

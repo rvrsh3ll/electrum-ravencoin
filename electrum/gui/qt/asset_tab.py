@@ -73,6 +73,7 @@ class AssetTab(QWidget, MessageBoxMixin, Logger):
             self.create_asset_tab.update()
         menu.addConfig(_('Control Asset Address'), window.config.cv.SHOW_CREATE_ASSET_PAY_TO, callback=maybe_update_manage_tabs)
         menu.addConfig(_('Display Unconfirmed Information'), window.config.cv.HANDLE_UNCONFIRMED_METADATA, callback=self.update)
+        menu.addConfig(_('Show Asset Metadata Sources'), window.config.cv.SHOW_METADATA_SOURCE, callback=self.view_asset_tab.update)
 
         toolbar_button = QToolButton()
         toolbar_button.setIcon(read_QIcon("preferences.png"))

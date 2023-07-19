@@ -985,6 +985,7 @@ class SimpleConfig(Logger):
     SHOW_CREATE_ASSET_PAY_TO = ConfigVar('show_create_asset_pay_to', default=False, type_=bool)
     SHOW_REISSUABLE_WARNING = ConfigVar('show_reissuable_warning', default=True, type_=bool)
     HANDLE_UNCONFIRMED_METADATA = ConfigVar('handle_unconfirmed_metadata', default=True, type_=bool)
+    SHOW_METADATA_SOURCE = ConfigVar('show_metadata_source', default=False, type_=bool)
 
 def read_user_config(path: Optional[str]) -> Dict[str, Any]:
     """Parse and store the user config settings in electrum.conf into user_config[]."""
