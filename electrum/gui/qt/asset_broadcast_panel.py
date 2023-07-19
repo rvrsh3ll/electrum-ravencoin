@@ -159,6 +159,8 @@ class MakeBroadcastPanel(QWidget, Logger):
             callback=sign_done,
             external_keypairs=None)
 
+        self.associated_data_e.line_edit.clear()
+        self.timestamp.clear()
 
     def get_text_not_enough_funds_mentioning_frozen(self) -> str:
         text = _("Not enough funds")
