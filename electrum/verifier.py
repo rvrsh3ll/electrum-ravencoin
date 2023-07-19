@@ -30,7 +30,7 @@ from .util import TxMinedInfo, NetworkJobOnDefaultServer
 from .crypto import sha256d
 from .asset import (get_asset_info_from_script, AssetMetadata, AssetException, MetadataAssetVoutInformation, OwnerAssetVoutInformation,
                     AssetVoutType)
-from .bitcoin import hash_decode, hash_encode
+from .bitcoin import hash_decode, hash_encode, base_decode
 from .transaction import Transaction, TxOutpoint
 from .blockchain import hash_header
 from .interface import GracefulDisconnect, RequestCorrupted
@@ -160,6 +160,59 @@ class SPV(NetworkJobOnDefaultServer):
             if txid not in self.merkle_roots and await self._maybe_defer(txid, height): continue
             self.logger.info(f'attempting to verify restricted freeze for {asset}: {d["frozen"]}')
             await self.taskgroup.spawn(self._verify_unverified_restricted_freeze(asset, d))
+
+        unverified_broadcasts = self.wallet.get_unverified_broadcasts()
+        for asset, d1 in unverified_broadcasts.items():
+            for tx_hash, d2 in d1.items():
+                height = d2['height']
+                if tx_hash not in self.merkle_roots and await self._maybe_defer(tx_hash, height): continue
+                self.logger.info(f'attempting to verify broadcast for {asset}: {tx_hash}')
+                await self.taskgroup.spawn(self._verify_unverified_broadcast(asset, tx_hash, d2))
+
+    async def _verify_unverified_broadcast(self, asset: str, tx_hash: str, d):
+        height = d['height']
+        try:
+            if not self.wallet.db.get_verified_tx(tx_hash) and tx_hash not in self.merkle_roots:
+                await self._request_and_verify_single_proof(tx_hash, height)
+            else:
+                self.requested_merkle.discard(tx_hash)
+            tx = self.wallet.get_transaction(tx_hash)
+            if not tx:
+                self._requests_sent += 1
+                async with self._network_request_semaphore:
+                    raw_tx = await self.interface.get_transaction(tx_hash)
+                    tx = Transaction(raw_tx)
+                self._requests_answered += 1
+            idx = d['tx_pos']
+            asset_info = get_asset_info_from_script(tx.outputs()[idx].scriptpubkey)
+            if _type := asset_info.get_type() != AssetVoutType.TRANSFER:
+                raise AssetException(f'bad asset type: {_type}')
+            if asset_info.asset != asset:
+                raise AssetException(f'bad asset: {asset}')
+            if asset_info.asset_memo != base_decode(d['data'], base=58):
+                raise AssetException(f'bad data: {asset_info.asset_memo}')
+            if asset_info.asset_memo_timestamp != d['expiration']:
+                raise AssetException(f'bad timestamp: {asset_info.asset_memo_timestamp}')
+            for input in tx.inputs():
+                in_txid = input.prevout.txid.hex()
+                in_tx = self.wallet.get_transaction(in_txid)
+                if not in_tx:
+                    self._requests_sent += 1
+                    async with self._network_request_semaphore:
+                        raw_tx = await self.interface.get_transaction(tx_hash)
+                        in_tx = Transaction(raw_tx)
+                    self._requests_answered += 1
+                if in_tx.outputs()[input.prevout.out_idx].address == tx.outputs()[idx].address and \
+                    in_tx.outputs()[input.prevout.out_idx].asset == tx.outputs()[idx].asset:
+                    break
+            else:
+                raise AssetException(f'no same vin address found')
+        except (aiorpcx.jsonrpc.RPCError, RequestCorrupted, AssetException, IndexError) as e:
+            self.logger.info(f'bad broadcast {asset} {d["data"]}: {repr(e)}')
+            self.wallet.remove_unverified_broadcast(asset, tx_hash, height)
+            raise GracefulDisconnect(e) from e
+        self.logger.info(f'verified broadcast for {asset} {d["data"]}')
+        self.wallet.add_verified_broadcast(asset, tx_hash, d)
 
     async def _verify_unverified_restricted_freeze(self, asset: str, d):
         txid = d['tx_hash']
@@ -530,13 +583,23 @@ class SPV(NetworkJobOnDefaultServer):
         self.requested_merkle.discard(tx_hash)
 
     def is_up_to_date(self):
+        #print(f'{self.requested_merkle=}')
+        #print(f'{self.wallet.unverified_tx=}')
+        #print(f'{self.wallet.unverified_asset_metadata=}')
+        #print(f'{self.wallet.unverified_tags_for_qualifier=}')
+        #print(f'{self.wallet.unverified_tags_for_h160=}')
+        #print(f'{self.wallet.unverified_verifier_for_restricted=}')
+        #print(f'{self.wallet.unverified_freeze_for_restricted=}')
+        #print(f'{self.wallet.unverified_broadcast=}')
+
         return (not self.requested_merkle
                 and not self.wallet.unverified_tx
                 and not self.wallet.unverified_asset_metadata
                 and not self.wallet.unverified_tags_for_qualifier
                 and not self.wallet.unverified_tags_for_h160
                 and not self.wallet.unverified_verifier_for_restricted
-                and not self.wallet.unverified_freeze_for_restricted)
+                and not self.wallet.unverified_freeze_for_restricted
+                and not self.wallet.unverified_broadcast)
 
 def verify_tx_is_in_block(tx_hash: str, merkle_branch: Sequence[str],
                           leaf_pos_in_tree: int, block_header: Optional[dict],

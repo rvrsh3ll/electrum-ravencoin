@@ -85,6 +85,12 @@ def h160_tag_status(d):
     status = ';'.join(f'{asset}:{d["height"]}{d["tx_hash"]}{d["tx_pos"]}{d["flag"]}' for asset, d in sorted(d.items(), key=lambda x: x[0]))
     return hashlib.sha256(status.encode('ascii')).digest().hex()
 
+def broadcast_status(broadcasts):
+    if not broadcasts:
+        return None
+    status = ';'.join(f'{d["tx_hash"]}:{d["height"]}{d["tx_pos"]}{d["data"]}{d["expiration"]}' for d in sorted(broadcasts, key=lambda x: (x["height"], x['tx_hash'], x["tx_pos"])))
+    return hashlib.sha256(status.encode('ascii')).digest().hex()
+
 class SynchronizerBase(NetworkJobOnDefaultServer):
     """Subscribe over the network to a set of addresses, and monitor their statuses.
     Every time a status changes, run a coroutine provided by the subclass.
@@ -127,6 +133,11 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
         self._handling_restricted_for_freeze = set()
         self._processed_some_restricted_for_freeze = False
 
+        self._adding_broadcasts = set()
+        self.requested_broadcasts = set()
+        self._handling_broadcast_statuses = set()
+        self._processed_some_broadcasts = False
+
         # Queues
         self.asset_status_queue = asyncio.Queue()
         self.status_queue = asyncio.Queue()
@@ -134,6 +145,7 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
         self.h160_tags_status_queue = asyncio.Queue()
         self.restricted_verifier_queue = asyncio.Queue()
         self.restricted_freeze_queue = asyncio.Queue()
+        self.broadcast_status_queue = asyncio.Queue()
 
     async def _run_tasks(self, *, taskgroup):
         await super()._run_tasks(taskgroup=taskgroup)
@@ -145,6 +157,7 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
                 await group.spawn(self.handle_h160_for_tags_status())
                 await group.spawn(self.handle_restricted_for_verifier_update())
                 await group.spawn(self.handle_restricted_for_freeze_update())
+                await group.spawn(self.handle_broadcast_status())
                 await group.spawn(self.main())
         finally:
             # we are being cancelled now
@@ -154,6 +167,7 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
             self.session.unsubscribe(self.h160_tags_status_queue)
             self.session.unsubscribe(self.restricted_verifier_queue)
             self.session.unsubscribe(self.restricted_freeze_queue)
+            self.session.unsubscribe(self.broadcast_status_queue)
 
     def add(self, addr):
         if not is_address(addr): raise ValueError(f"invalid bitcoin address {addr}")
@@ -178,6 +192,10 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
     def add_restricted_for_verifier(self, asset: str):
         if error := get_error_for_asset_typed(asset, AssetType.RESTRICTED): raise ValueError(f'invalid asset: {error}')
         self._adding_restricted_for_freeze.add(asset)
+
+    def add_broadcast(self, asset: str):
+        if error := get_error_for_asset_name(asset): raise ValueError(f'invalid asset: {error}')
+        self._adding_broadcasts.add(asset)
 
     async def _add_address(self, addr: str):
         try:
@@ -229,6 +247,14 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
         finally:
             self._adding_restricted_for_freeze.discard(asset)
 
+    async def _add_broadcast(self, asset: str):
+        try:
+            if asset in self.requested_broadcasts: return
+            self.requested_broadcasts.add(asset)
+            await self.taskgroup.spawn(self._subscribe_to_broadcast, asset)
+        finally:
+            self._adding_broadcasts.discard(asset)
+
     async def _on_address_status(self, addr, status):
         """Handle the change of the status of an address.
         Should remove addr from self._handling_addr_statuses when done.
@@ -248,6 +274,9 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
         raise NotImplementedError()
     
     async def _on_restricted_for_freeze_update(self, asset, data):
+        raise NotImplementedError()
+
+    async def _on_broadcast_status(self, asset, status):
         raise NotImplementedError()
 
     async def _subscribe_to_address(self, addr):
@@ -291,6 +320,12 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
         self._requests_sent += 1
         async with self._network_request_semaphore:
             await self.session.subscribe('blockchain.asset.is_frozen.subscribe', [asset], self.restricted_freeze_queue)
+        self._requests_answered += 1
+
+    async def _subscribe_to_broadcast(self, asset):
+        self._requests_sent += 1
+        async with self._network_request_semaphore:
+            await self.session.subscribe('blockchain.asset.broadcasts.subscribe', [asset], self.broadcast_status_queue)
         self._requests_answered += 1
 
     async def handle_status(self):
@@ -342,6 +377,14 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
             await self.taskgroup.spawn(self._on_restricted_for_freeze_update, asset, data)
             self._processed_some_restricted_for_freeze = True
 
+    async def handle_broadcast_status(self):
+        while True:
+            asset, status = await self.broadcast_status_queue.get()
+            self._handling_broadcast_statuses.add(asset)
+            self.requested_broadcasts.discard(asset)
+            await self.taskgroup.spawn(self._on_broadcast_status, asset, status)
+            self._processed_some_broadcasts = True
+
     async def main(self):
         raise NotImplementedError()  # implemented by subclasses
 
@@ -369,6 +412,7 @@ class Synchronizer(SynchronizerBase):
         self.requested_h160s_for_tags_results = set()
         self.requested_restricted_for_verifier_results = set()
         self.requested_restricted_for_freeze_results = set()
+        self.requested_broadcast_history = set()
 
         self._stale_histories = dict()  # type: Dict[str, asyncio.Task]
         self._stale_asset_metadatas = dict()  # type: Dict[str, asyncio.Task]
@@ -376,6 +420,7 @@ class Synchronizer(SynchronizerBase):
         self._stale_h160s_for_tags = dict()
         self._stale_restricted_for_verifier = dict()
         self._stale_restricted_for_freeze = dict()
+        self._stale_broadcast_history = dict()
 
     def diagnostic_name(self):
         return self.adb.diagnostic_name()
@@ -416,15 +461,22 @@ class Synchronizer(SynchronizerBase):
                 and not self._adding_restricted_for_freeze
                 and not self.requested_restricted_for_freeze
                 and not self._handling_restricted_for_freeze
-                and not self.requested_restricted_for_freeze
+                and not self.requested_restricted_for_freeze_results
                 and not self._stale_restricted_for_freeze
+
+                and not self._adding_broadcasts
+                and not self.requested_broadcasts
+                and not self._handling_broadcast_statuses
+                and not self.requested_broadcast_history
+                and not self._stale_broadcast_history
 
                 and self.status_queue.empty()
                 and self.asset_status_queue.empty()
                 and self.qualifier_tags_status_queue.empty()
                 and self.h160_tags_status_queue.empty()
                 and self.restricted_verifier_queue.empty()
-                and self.restricted_freeze_queue.empty())
+                and self.restricted_freeze_queue.empty()
+                and self.broadcast_status_queue.empty())
 
     async def _on_restricted_for_freeze_update(self, asset, data):
         data_id = f'{data["frozen"]}:{data["tx_hash"]}:{data["height"]}' if data else ''
@@ -469,6 +521,34 @@ class Synchronizer(SynchronizerBase):
             raise SynchronizerFailure(f'Server is trying to send old tag verifier string for {asset}')            
         self.adb.add_unverified_or_unconfirmed_verifier_string_for_restricted(asset, data)
         self.requested_restricted_for_verifier_results.discard((asset, data_id))
+
+    async def _on_broadcast_status(self, asset, status):
+        try:
+            broadcasts = self.adb.get_broadcasts_for_synchronizer(asset)
+            if broadcast_status(broadcasts) == status:
+                return
+            if (asset, status) in self.requested_broadcast_history:
+                return
+            self.requested_broadcast_history.add((asset, status))
+            self._stale_broadcast_history.pop(asset, asyncio.Future()).cancel()
+        finally:
+            self._handling_broadcast_statuses.discard(asset)
+        self._requests_sent += 1
+        async with self._network_request_semaphore:
+            result = await self.interface.get_broadcasts_for_asset(asset)
+        self._requests_answered += 1
+        self.logger.info(f'receiving broadcasts for {asset}: {status}')
+        if broadcast_status(result) != status:
+            self.logger.info(f'error: broadcast status mismatch {asset}. we\'ll wait a bit for status update.')
+            async def disconnect_if_still_stale():
+                timeout = self.network.get_network_timeout_seconds(NetworkTimeout.Generic)
+                await asyncio.sleep(timeout)
+                raise SynchronizerFailure(f'timeout reached waiting for broadcast {asset}: still stale')
+            self._stale_broadcast_history[asset] = await self.taskgroup.spawn(disconnect_if_still_stale)
+        else:
+            self._stale_broadcast_history.pop(asset, asyncio.Future()).cancel()
+            self.adb.add_unverified_or_unconfirmed_broadcasts(asset, {d['tx_hash']: {k: v for k, v in d.items() if k != 'tx_hash'} for d in result})
+        self.requested_broadcast_history.discard((asset, status))
 
     async def _on_h160_for_tags_status(self, h160, status):
         try:
@@ -698,6 +778,9 @@ class Synchronizer(SynchronizerBase):
                 await self._add_restricted_for_verifier(asset)
                 await self._add_restricted_for_freeze(asset)
 
+        for asset in random_shuffled_copy(self.adb.get_broadcasts_to_watch()):
+            await self._add_broadcast(asset)
+
         # main loop
         self._init_done = True
         prev_uptodate = False
@@ -715,18 +798,22 @@ class Synchronizer(SynchronizerBase):
                 await self._add_restricted_for_verifier(asset)
             for asset in self._adding_restricted_for_freeze.copy():
                 await self._add_restricted_for_freeze(asset)
+            for asset in self._adding_broadcasts.copy():
+                await self._add_broadcast(asset)
             up_to_date = self.adb.is_up_to_date()
             # see if status changed
             if (up_to_date != prev_uptodate
                     or up_to_date and (self._processed_some_notifications or self._processed_some_asset_notifications or
                                        self._processed_some_qualifier_for_tags_notifications or self._processed_some_h160_for_tags_notifications or
-                                       self._processed_some_restricted_for_verifier or self._processed_some_restricted_for_freeze)):
+                                       self._processed_some_restricted_for_verifier or self._processed_some_restricted_for_freeze or
+                                       self._processed_some_broadcasts)):
                 self._processed_some_notifications = False
                 self._processed_some_asset_notifications = False
                 self._processed_some_qualifier_for_tags_notifications = False
                 self._processed_some_h160_for_tags_notifications = False
                 self._processed_some_restricted_for_verifier = False
                 self._processed_some_restricted_for_freeze = False
+                self._processed_some_broadcasts = False
                 self.adb.up_to_date_changed()
             prev_uptodate = up_to_date
 

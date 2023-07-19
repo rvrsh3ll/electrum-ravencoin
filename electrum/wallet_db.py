@@ -595,14 +595,22 @@ class WalletDB(JsonDB):
             self.data['assets_to_watch'] = set()
         if 'asset_blacklist' not in self.data:
             self.data['asset_blacklist'] = set()
+        if 'broadcasts_to_watch' not in self.data:
+            self.data['broadcasts_to_watch'] = set()
         self.assets_to_watch = self.get('assets_to_watch')  # type: Set[str]
+        self.broadcasts_to_watch = self.get('broadcasts_to_watch')  # type: Set[str]
         self.verified_asset_metadata = self.get_dict('verified_asset_metadata')  # type: Dict[str, Tuple[AssetMetadata, Tuple[TxOutpoint, int], Tuple[TxOutpoint, int] | None, Tuple[TxOutpoint, int] | None]]       
         self.non_deterministic_vouts = self.get_dict('non_deterministic_txo_scriptpubkey')
         self.verified_tags_for_qualifiers = self.get_dict('verified_qualifier_tags')
         self.verified_tags_for_h160s = self.get_dict('verified_h160_tags')
         self.verified_restricted_verifiers = self.get_dict('verified_verifier_strings')
         self.verified_restricted_freezes = self.get_dict('verified_freezes')
+        self.verified_broadcasts = self.get_dict('verified_broadcasts')
         self.asset_blacklist = self.get('asset_blacklist')  # type: Set[str]
+
+    @locked
+    def get_broadcasts_to_watch(self) -> Sequence[str]:
+        return sorted((asset for asset in self.broadcasts_to_watch))
 
     @locked
     def get_asset_blacklist_regex_list(self) -> Sequence[str]:
@@ -700,7 +708,7 @@ class WalletDB(JsonDB):
     @locked
     def get_verified_restricted_verifier(self, asset: str) -> Optional[Dict[str, Any]]:
         assert isinstance(asset, str)
-        return self.verified_restricted_verifiers.get(asset, None)
+        return dict(self.verified_restricted_verifiers.get(asset, dict()))
 
     @modifier
     def remove_verified_restricted_verifier(self, asset: str):
@@ -729,7 +737,7 @@ class WalletDB(JsonDB):
     @locked
     def get_verified_restricted_freeze(self, asset: str) -> Optional[Dict[str, Any]]:
         assert isinstance(asset, str)
-        return self.verified_restricted_freezes.get(asset, None)
+        return dict(self.verified_restricted_freezes.get(asset, dict()))
 
     @modifier
     def remove_verified_restricted_freeze(self, asset: str):
@@ -755,15 +763,56 @@ class WalletDB(JsonDB):
         return s
 
     @locked
+    def get_verified_broadcasts(self, asset: str) -> Dict[str, Dict[str, Any]]:
+        assert isinstance(asset, str)
+        return dict(self.verified_broadcasts.get(asset, dict()))
+
+    @locked
+    def get_verified_broadcast(self, asset: str, tx_hash: str) -> Optional[Dict]:
+        assert isinstance(asset, str)
+        assert isinstance(tx_hash, str)
+        return self.verified_broadcasts.get(asset, dict()).get(tx_hash, None)
+
+    @modifier
+    def remove_verified_broadcast(self, asset: str, tx_hash: str):
+        assert isinstance(asset, str)
+        assert isinstance(tx_hash, str)
+        self.verified_broadcasts.get(asset, dict()).pop(tx_hash, None)
+
+    @modifier
+    def add_verified_broadcast(self, asset: str, tx_hash: str, d):
+        assert isinstance(asset, str)
+        assert isinstance(tx_hash, str)
+        assert isinstance(d['tx_pos'], int)
+        assert isinstance(d['height'], int)
+        assert isinstance(d['data'], str)
+        assert isinstance(d.get('expiration', 0), int)
+        if asset not in self.verified_broadcasts:
+            self.verified_broadcasts[asset] = dict()
+        self.verified_broadcasts[asset][tx_hash] = d
+
+    @locked
+    def get_verified_broadcasts_after_height(self, height: int) -> Dict[str, Set[str]]:
+        assert isinstance(height, int)
+        d = dict()
+        for asset, d1 in self.verified_broadcasts.items():
+            for tx_hash, d2 in d1.items():
+                if d2['height'] > height:
+                    if asset not in d:
+                        d[asset] = set()
+                    d[asset].add(tx_hash)
+        return d
+
+    @locked
     def get_verified_qualifier_tags(self, asset: str) -> Dict[str, Dict[str, Any]]:
         assert isinstance(asset, str)
-        return self.verified_tags_for_qualifiers.get(asset, None)
+        return dict(self.verified_tags_for_qualifiers.get(asset, dict()))
 
     @locked
     def get_verified_qualifier_tag(self, asset: str, h160: str) -> Optional[Dict[str, Any]]:
         assert isinstance(asset, str)
         assert isinstance(h160, str)
-        return self.verified_tags_for_qualifiers.get(asset, dict()).get(h160)
+        return dict(self.verified_tags_for_qualifiers.get(asset, dict()).get(h160, dict()))
 
     @locked
     def is_qualified_checked(self, asset: str) -> bool:
@@ -802,13 +851,13 @@ class WalletDB(JsonDB):
     @locked
     def get_verified_h160_tags(self, h160: str) -> Dict[str, Dict[str, Any]]:
         assert isinstance(h160, str)
-        return self.verified_tags_for_h160s.get(h160, None)
+        return dict(self.verified_tags_for_h160s.get(h160, dict()))
 
     @locked
     def get_verified_h160_tag(self, h160: str, asset: str) -> Optional[Dict[str, Any]]:
         assert isinstance(asset, str)
         assert isinstance(h160, str)
-        return self.verified_tags_for_h160s.get(h160, dict()).get(asset)
+        return dict(self.verified_tags_for_h160s.get(h160, dict()).get(asset, dict()))
 
     @locked
     def is_h160_checked(self, h160: str) -> bool:

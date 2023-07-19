@@ -67,9 +67,11 @@ class MakeBroadcastPanel(QWidget, Logger):
         associated_data_message = _('Associated Data') + '\n\n' \
                             + _('Data that is associated with this broadcast. Typically an IPFS hash, but can be a TXID.')
         associated_data_label = HelpLabel(_('Associated Data'), associated_data_message)
-
         self.associated_data_e = ValidatedDelayedCallbackEditor(get_asyncio_loop, associated_data_fast_fail, 0, lambda: asyncio.sleep(0))
 
+        timestamp_message = _('Timestamp') + '\n\n' \
+                        + _('A timestamp associated with this broadcast. Traditionally used as an expiration timestamp.')
+        timestamp_label = HelpLabel(_('Timestamp'), timestamp_message)
         self.timestamp = OnlyNumberAmountEdit(None, 0, int.from_bytes(b'\xff' * 7 + b'\x7f', 'little'), callback=self.set_date)
 
         self.calendar_button = QPushButton(_('None'))
@@ -84,6 +86,7 @@ class MakeBroadcastPanel(QWidget, Logger):
         grid.addWidget(associated_data_label, 1, 0, 1, 1, Qt.AlignRight)
         grid.addWidget(self.associated_data_e.line_edit, 1, 1, 1, 3)
         grid.addWidget(self.associated_data_e.error_button, 1, 4)
+        grid.addWidget(timestamp_label, 2, 0, 1, 1, Qt.AlignRight)
         grid.addWidget(self.timestamp, 2, 1)
         grid.addWidget(self.calendar_button, 2, 2)
         grid.addWidget(self.send_button, 2, 3)

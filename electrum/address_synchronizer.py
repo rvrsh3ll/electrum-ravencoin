@@ -111,6 +111,9 @@ class AddressSynchronizer(Logger, EventListener):
         self.unverified_freeze_for_restricted = defaultdict(dict)
         self.unconfirmed_freeze_for_restricted = defaultdict(dict)
 
+        self.unverified_broadcast = defaultdict(dict)
+        self.unconfirmed_broadcast = defaultdict(dict)
+
         self._get_balance_cache = {}
         self._get_asset_balance_cache = {}
         self._get_assets_in_mempool_cache = {}
@@ -144,6 +147,9 @@ class AddressSynchronizer(Logger, EventListener):
 
     def get_assets_to_watch(self):
         return sorted(self.db.get_assets_to_watch())
+
+    def get_broadcasts_to_watch(self):
+        return sorted(self.db.get_broadcasts_to_watch())
 
     def get_address_history(self, addr: str) -> Dict[str, int]:
         """Returns the history for the address, as a txid->height dict.
@@ -718,8 +724,6 @@ class AddressSynchronizer(Logger, EventListener):
             if source_height > 0:
                 self.unverified_asset_metadata[asset] = metadata, source, source_divisions, source_ipfs
             else:
-                if not self.config.HANDLE_UNCONFIRMED_METADATA:
-                    return
                 self.unconfirmed_asset_metadata[asset] = metadata, source, source_divisions, source_ipfs
                 util.trigger_callback('adb_added_unconfirmed_asset_metadata', self, asset)
 
@@ -764,7 +768,7 @@ class AddressSynchronizer(Logger, EventListener):
     def get_asset_metadata(self, asset: str) -> Optional[Tuple[AssetMetadata, int]]:
         with self.lock:
             unconfirmed = self.unconfirmed_asset_metadata.get(asset, None)
-            if unconfirmed:
+            if unconfirmed and self.config.HANDLE_UNCONFIRMED_METADATA:
                 return unconfirmed[0], METADATA_UNCONFIRMED
             verified = self.db.get_verified_asset_metadata(asset)
             if verified:
@@ -794,8 +798,6 @@ class AddressSynchronizer(Logger, EventListener):
             if data['height'] > 0:
                 self.unverified_verifier_for_restricted[asset] = data
             else:
-                if not self.config.HANDLE_UNCONFIRMED_METADATA:
-                    return
                 self.unconfirmed_verifier_for_restricted[asset] = data
 
     def get_restricted_verifier_string_for_synchronizer(self, asset: str) -> Dict[str, object]:
@@ -811,7 +813,7 @@ class AddressSynchronizer(Logger, EventListener):
     def get_restricted_verifier_string(self, asset: str) -> Optional[Tuple[dict, int]]:
         with self.lock:
             unconfirmed = self.unconfirmed_verifier_for_restricted.get(asset, dict())
-            if unconfirmed:
+            if unconfirmed and self.config.HANDLE_UNCONFIRMED_METADATA:
                 return unconfirmed, METADATA_UNCONFIRMED
             verified = self.db.get_verified_restricted_verifier(asset)
             if verified:
@@ -838,6 +840,67 @@ class AddressSynchronizer(Logger, EventListener):
             self.db.add_verified_restricted_verifier(asset, d)
         util.trigger_callback('adb_added_verified_restricted_verifier', self, asset, d['string'])
 
+    def add_unverified_or_unconfirmed_broadcasts(self, asset: str, tx_map: Dict):
+        with self.lock:
+            self.unconfirmed_broadcast.pop(asset, None)
+            self.unverified_broadcast.pop(asset, None)
+
+            verified = self.db.get_verified_broadcasts(asset)
+
+            for tx_hash, d in tx_map.items():
+                if d['height'] > 0:
+                    if d == verified.get(tx_hash, None): continue
+                    self.unverified_broadcast[asset][tx_hash] = d
+                else:
+                    self.unconfirmed_broadcast[asset][tx_hash] = d
+
+    def get_broadcasts_for_synchronizer(self, asset: str) -> Dict[str, Dict[str, object]]:
+        with self.lock:
+            d = self.db.get_verified_broadcasts(asset)
+            d.update(self.unverified_broadcast.get(asset, dict()))
+            d.update(self.unconfirmed_broadcast.get(asset, dict()))
+            return [{'tx_hash': tx_hash, **d_i} for tx_hash, d_i in d.items()]
+
+    def get_broadcasts(self, asset: str) -> Sequence[Tuple[str, int, int, str, int]]:
+        with self.lock:
+            combined = {}
+            combined.update(self.db.get_verified_broadcasts(asset))
+            combined.update(self.unverified_broadcast.get(asset, dict()))
+            if self.config.HANDLE_UNCONFIRMED_METADATA:
+                combined.update(self.unconfirmed_broadcast.get(asset, dict()))
+
+            def mempool_key(tup):
+                if tup['height'] < 0:
+                    return -1
+                else:
+                    return 1
+
+            result = [(d['data'], d['expiration'], d['height'], tx_hash, d['tx_pos']) for tx_hash, d in combined.items()]
+            result.sort(key=lambda x: x[2], reverse=True)
+            return sorted(result, key=mempool_key)
+
+    def get_unverified_broadcasts(self) -> Dict[str, Dict[str, object]]:
+        with self.lock:
+            return {k: dict(v) for k, v in self.unverified_broadcast.items()}
+
+    def remove_unverified_broadcast(self, asset: str, tx_hash: str, source_height: int):
+        with self.lock:
+            d1 = self.unverified_broadcast.get(asset, dict())
+            d2 = d1.get(tx_hash, dict())
+            if d2 and d2['height'] == source_height:
+                self.unverified_broadcast.get(asset, dict()).pop(tx_hash)
+                if not self.unverified_broadcast.get(asset, None):
+                    self.unverified_broadcast.pop(asset)
+
+    def add_verified_broadcast(self, asset: str, tx_hash: str, data: Dict):
+        # Remove from the unverified map and add to the verified map
+        with self.lock:
+            self.unverified_broadcast.get(asset, dict()).pop(tx_hash, None)
+            if not self.unverified_broadcast.get(asset, None):
+                self.unverified_broadcast.pop(asset)
+            self.db.add_verified_broadcast(asset, tx_hash, data)
+        util.trigger_callback('adb_added_verified_broadcast', self, asset, tx_hash)
+
     def add_unverified_or_unconfirmed_freeze_for_restricted(self, asset: str, data):
         with self.lock:
             self.unconfirmed_freeze_for_restricted.pop(asset, None)
@@ -845,8 +908,6 @@ class AddressSynchronizer(Logger, EventListener):
             if data['height'] > 0:
                 self.unverified_freeze_for_restricted[asset] = data
             else:
-                if not self.config.HANDLE_UNCONFIRMED_METADATA:
-                    return
                 self.unconfirmed_freeze_for_restricted[asset] = data
 
     def get_restricted_freeze_for_synchronizer(self, asset: str) -> Dict[str, object]:
@@ -862,7 +923,7 @@ class AddressSynchronizer(Logger, EventListener):
     def get_restricted_freeze(self, asset: str) -> Optional[Tuple[dict, int]]:
         with self.lock:
             unconfirmed = self.unconfirmed_freeze_for_restricted.get(asset, dict())
-            if unconfirmed:
+            if unconfirmed and self.config.HANDLE_UNCONFIRMED_METADATA:
                 return unconfirmed, METADATA_UNCONFIRMED
             verified = self.db.get_verified_restricted_freeze(asset)
             if verified:
@@ -909,8 +970,6 @@ class AddressSynchronizer(Logger, EventListener):
                             continue
                     self.unverified_tags_for_h160[h160][asset] = d
                 else:
-                    if not self.config.HANDLE_UNCONFIRMED_METADATA:
-                        return
                     self.unconfirmed_tags_for_h160[h160][asset] = d
 
     def get_h160_tags_for_synchronizer(self, h160: str) -> Dict[str, Dict[str, object]]:
@@ -930,12 +989,12 @@ class AddressSynchronizer(Logger, EventListener):
 
     def is_h160_tagged(self, h160: str, asset: str) -> Optional[bool]:
         with self.lock:
-            unconfirmed_tags = self.unconfirmed_tags_for_h160.get(h160)
-            if unconfirmed_tags and asset in unconfirmed_tags:
-                return unconfirmed_tags[asset]['flag']
-            unconfirmed_tags = self.unconfirmed_tags_for_qualifier.get(asset)
-            if unconfirmed_tags and h160 in unconfirmed_tags:
-                return unconfirmed_tags[h160]['flag']
+            #unconfirmed_tags = self.unconfirmed_tags_for_h160.get(h160)
+            #if unconfirmed_tags and asset in unconfirmed_tags:
+            #    return unconfirmed_tags[asset]['flag']
+            #unconfirmed_tags = self.unconfirmed_tags_for_qualifier.get(asset)
+            #if unconfirmed_tags and h160 in unconfirmed_tags:
+            #    return unconfirmed_tags[h160]['flag']
             unverified_tags = self.unverified_tags_for_h160.get(h160)
             if unverified_tags and asset in unverified_tags:
                 return unverified_tags[asset]['flag']
@@ -998,8 +1057,6 @@ class AddressSynchronizer(Logger, EventListener):
                             continue
                     self.unverified_tags_for_qualifier[asset][h160] = d
                 else:
-                    if not self.config.HANDLE_UNCONFIRMED_METADATA:
-                        return
                     self.unconfirmed_tags_for_qualifier[asset][h160] = d
 
     def get_qualifier_tags_for_synchronizer(self, asset: str) -> Dict[str, Dict[str, object]]:
@@ -1050,7 +1107,7 @@ class AddressSynchronizer(Logger, EventListener):
             for h160, data in self.unverified_tags_for_qualifier.get(asset, dict()).items():
                 data['type'] = METADATA_UNVERIFIED
                 d[h160] = data
-            if include_mempool:
+            if include_mempool and self.config.HANDLE_UNCONFIRMED_METADATA:
                 for h160, data in self.unconfirmed_tags_for_qualifier.get(asset, dict()).items():
                     data['type'] = METADATA_UNCONFIRMED
                     d[h160] = data
@@ -1065,7 +1122,7 @@ class AddressSynchronizer(Logger, EventListener):
             for asset, data in self.unverified_tags_for_h160.get(h160, dict()).items():
                 data['type'] = METADATA_UNVERIFIED
                 d[asset] = data
-            if include_mempool:
+            if include_mempool and self.config.HANDLE_UNCONFIRMED_METADATA:
                 for asset, data in self.unconfirmed_tags_for_h160.get(h160, dict()).items():
                     data['type'] = METADATA_UNCONFIRMED
                     d[asset] = data
@@ -1142,6 +1199,15 @@ class AddressSynchronizer(Logger, EventListener):
                     
                     self.db.remove_verified_h160_tag(h160, asset)
                     txs.add(tag_data['tx_hash'])
+            for asset, tx_hashes in self.db.get_verified_broadcasts_after_height(above_height).items():
+                for tx_hash in tx_hashes:
+                    broadcast = self.db.get_verified_broadcast(asset, tx_hash)
+                    verified_info = self.db.get_verified_tx(tx_hash)
+                    header = blockchain.read_header(broadcast['height'])
+                    if header and verified_info and hash_header(header) == verified_info.header_hash: continue
+
+                    self.db.remove_verified_broadcast(asset, tx_hash)
+                    txs.add(tx_hash)
             for tx_hash in self.db.list_verified_tx():
                 info = self.db.get_verified_tx(tx_hash)
                 tx_height = info.height

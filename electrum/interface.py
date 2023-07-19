@@ -1204,6 +1204,11 @@ class Interface(Logger):
         res = await self.session.send_request('blockchain.tag.h160.list', [h160, include_mempool])
         return res
 
+    async def get_broadcasts_for_asset(self, asset: str) -> dict:
+        assert isinstance(asset, str)
+        res = await self.session.send_request('blockchain.asset.broadcasts', [asset])
+        return res
+
     async def check_tag_for_h160(self, asset: str, h160: str) -> dict:
         assert isinstance(h160, str)
         assert isinstance(asset, str)

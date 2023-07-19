@@ -236,7 +236,7 @@ class MetadataInfo(QWidget, QtEventListener):
         if asset[-1] == '!':
             type_text = 'Owner'
         elif '~' in asset:
-            type_text = 'Message'
+            type_text = 'Message Channel'
         elif asset[0] == '#':
             type_text = 'Qualifier'
         elif asset[0] == '$':
