@@ -388,16 +388,6 @@ class AddressSynchronizer(Logger, EventListener):
                 self.db.add_prevout_by_scripthash(scripthash, prevout=TxOutpoint.from_str(ser), value=asset_data.amount or v, asset=asset_data.asset)
                 addr = txo.address
                 if addr and self.is_mine(addr):
-                    if asset_data.asset:
-                        self.watch_asset(asset_data.asset)
-                    if not asset_data.is_deterministic():
-                        outpoint = TxOutpoint(txid=bytes.fromhex(tx.txid()), out_idx=n)
-                        if asset_data.well_formed_script:
-                            self.logger.info(f'{outpoint.to_str()} is non-deterministic; saving scriptpubkey')
-                        else:
-                            self.logger.info(f'{outpoint.to_str()} is not well-formed; saving scriptpubkey')
-                        self.db.add_non_deterministic_txo_lockingscript(outpoint, txo.scriptpubkey)
-                    
                     self.db.add_txo_addr(tx_hash, addr, n, asset_data.amount or v, asset_data.asset, is_coinbase)
                     self._get_balance_cache.clear()  # invalidate cache
                     self._get_asset_balance_cache.clear()
@@ -407,6 +397,17 @@ class AddressSynchronizer(Logger, EventListener):
                     if next_tx is not None:
                         self.db.add_txi_addr(next_tx, addr, ser, asset_data.amount or v, asset_data.asset)
                         self._add_tx_to_local_history(next_tx)
+                    else:
+                        if asset_data.asset:
+                            self.watch_asset(asset_data.asset)
+                        if not asset_data.is_deterministic():
+                            outpoint = TxOutpoint(txid=bytes.fromhex(tx.txid()), out_idx=n)
+                            if asset_data.well_formed_script:
+                                self.logger.info(f'{outpoint.to_str()} is non-deterministic; saving scriptpubkey')
+                            else:
+                                self.logger.info(f'{outpoint.to_str()} is not well-formed; saving scriptpubkey')
+                            self.db.add_non_deterministic_txo_lockingscript(outpoint, txo.scriptpubkey)
+
             # add to local history
             self._add_tx_to_local_history(tx_hash)
             # save
@@ -422,7 +423,8 @@ class AddressSynchronizer(Logger, EventListener):
             self.synchronizer.add_asset(asset)
         if asset[-1] == '!' and not get_error_for_asset_typed(asset[:-1], AssetType.ROOT):
             # Check for any restricted assets
-            self.watch_asset(f'${asset[:-1]}')
+            r_asset = f'${asset[:-1]}'
+            self.watch_asset(r_asset)
 
     def remove_transaction(self, tx_hash: str) -> None:
         """Removes a transaction AND all its dependents/children
