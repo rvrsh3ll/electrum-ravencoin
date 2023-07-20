@@ -11,17 +11,15 @@ from PyQt5.QtWidgets import (QLabel, QVBoxLayout, QSplitter, QScrollArea,
                              QTextEdit, QGridLayout, QCheckBox)
 
 from electrum import constants
-from electrum.asset import AssetMetadata, get_error_for_asset_typed, AssetType, generate_null_tag
-from electrum.bitcoin import base_encode, hash160_to_b58_address, is_b58_address, b58_address_to_hash160, COIN
+from electrum.asset import get_error_for_asset_typed, AssetType, generate_null_tag
+from electrum.bitcoin import hash160_to_b58_address, is_b58_address, b58_address_to_hash160, COIN
 from electrum.i18n import _
-from electrum.util import format_satoshis_plain, profiler, ipfs_explorer_URL, get_asyncio_loop, SearchableListGrouping
+from electrum.util import profiler, get_asyncio_loop, SearchableListGrouping
 from electrum.address_synchronizer import METADATA_UNCONFIRMED, METADATA_UNVERIFIED
 from electrum.logging import Logger
 from electrum.transaction import PartialTxOutput
 
-from electrum.ipfs_db import IPFSDB
-
-from .util import HelpLabel, ColorScheme, HelpButton, ValidatedDelayedCallbackEditor, char_width_in_lineedit
+from .util import HelpLabel, HelpButton, ValidatedDelayedCallbackEditor, char_width_in_lineedit
 from .util import QHSeperationLine, read_QIcon, MONOSPACE_FONT, font_height, EnterButton
 from .my_treeview import MyTreeView
 from .confirm_tx_dialog import ConfirmTxDialog
@@ -36,7 +34,6 @@ class TaggedAddressList(MyTreeView):
         ADDRESS = enum.auto()
         TAGGED = enum.auto()
 
-    #// TODO: STATUS!
     headers = {
         Columns.ADDRESS: _('Address'),
         Columns.TAGGED: _('Flag')

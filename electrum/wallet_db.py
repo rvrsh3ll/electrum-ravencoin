@@ -612,6 +612,14 @@ class WalletDB(JsonDB):
     def get_broadcasts_to_watch(self) -> Sequence[str]:
         return sorted((asset for asset in self.broadcasts_to_watch))
 
+    @modifier
+    def remove_broadcast_to_watch(self, asset):
+        self.broadcasts_to_watch.discard(asset)
+
+    @modifier
+    def add_broadcast_to_watch(self, asset):
+        self.broadcasts_to_watch.add(asset)
+
     @locked
     def get_asset_blacklist_regex_list(self) -> Sequence[str]:
         return sorted((regex for regex in self.asset_blacklist))
@@ -797,7 +805,9 @@ class WalletDB(JsonDB):
         assert isinstance(d['tx_pos'], int)
         assert isinstance(d['height'], int)
         assert isinstance(d['data'], str)
-        assert isinstance(d.get('expiration', 0), int)
+        expiration = d.get('expiration', None)
+        if expiration is not None:
+            assert isinstance(expiration, int)
         if asset not in self.verified_broadcasts:
             self.verified_broadcasts[asset] = dict()
         self.verified_broadcasts[asset][tx_hash] = d
@@ -1003,7 +1013,7 @@ class WalletDB(JsonDB):
             v = ChannelType(v)
         elif key == 'db_metadata':
             v = DBMetadata(**v)
-        elif key in ('assets_to_watch', 'asset_blacklist'):
+        elif key in ('assets_to_watch', 'asset_blacklist', 'broadcasts_to_watch'):
             v = set(v)
         return v
 

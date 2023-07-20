@@ -39,6 +39,7 @@ from .blockchain import hash_header, Blockchain
 from .i18n import _
 from .logging import Logger
 from .util import EventListener, event_listener
+from .ipfs_db import IPFSDB
 
 if TYPE_CHECKING:
     from .network import Network
@@ -150,6 +151,18 @@ class AddressSynchronizer(Logger, EventListener):
 
     def get_broadcasts_to_watch(self):
         return sorted(self.db.get_broadcasts_to_watch())
+    
+    def add_broadcast_to_watch(self, asset):
+        self.db.add_broadcast_to_watch(asset)
+        if self.synchronizer:
+            self.synchronizer.add_broadcast(asset)
+
+    def remove_broadcast_to_watch(self, asset):
+        with self.lock:
+            for associated_data, _, _, tx_hash, _ in [x for x in self.get_broadcasts(asset)]:
+                IPFSDB.get_instance().dissociate_asset_with_ipfs(asset, associated_data)
+                self.db.remove_verified_broadcast(asset, tx_hash)
+            self.db.remove_broadcast_to_watch(asset)
 
     def get_address_history(self, addr: str) -> Dict[str, int]:
         """Returns the history for the address, as a txid->height dict.
@@ -877,6 +890,7 @@ class AddressSynchronizer(Logger, EventListener):
                     self.unverified_broadcast[asset][tx_hash] = d
                 else:
                     self.unconfirmed_broadcast[asset][tx_hash] = d
+                    util.trigger_callback('adb_added_unconfirmed_broadcast', self, asset, tx_hash)
 
     def get_broadcasts_for_synchronizer(self, asset: str) -> Dict[str, Dict[str, object]]:
         with self.lock:
@@ -894,7 +908,7 @@ class AddressSynchronizer(Logger, EventListener):
                 combined.update(self.unconfirmed_broadcast.get(asset, dict()))
 
             def mempool_key(tup):
-                if tup['height'] < 0:
+                if tup[2] < 0:
                     return -1
                 else:
                     return 1
@@ -912,16 +926,16 @@ class AddressSynchronizer(Logger, EventListener):
             d1 = self.unverified_broadcast.get(asset, dict())
             d2 = d1.get(tx_hash, dict())
             if d2 and d2['height'] == source_height:
-                self.unverified_broadcast.get(asset, dict()).pop(tx_hash)
+                self.unverified_broadcast.get(asset, dict()).pop(tx_hash, None)
                 if not self.unverified_broadcast.get(asset, None):
-                    self.unverified_broadcast.pop(asset)
+                    self.unverified_broadcast.pop(asset, None)
 
     def add_verified_broadcast(self, asset: str, tx_hash: str, data: Dict):
         # Remove from the unverified map and add to the verified map
         with self.lock:
             self.unverified_broadcast.get(asset, dict()).pop(tx_hash, None)
             if not self.unverified_broadcast.get(asset, None):
-                self.unverified_broadcast.pop(asset)
+                self.unverified_broadcast.pop(asset, None)
             self.db.add_verified_broadcast(asset, tx_hash, data)
         util.trigger_callback('adb_added_verified_broadcast', self, asset, tx_hash)
 
@@ -965,7 +979,7 @@ class AddressSynchronizer(Logger, EventListener):
         with self.lock:
             d = self.unverified_freeze_for_restricted.get(asset, dict())
             if d and d['height'] == source_height:
-                self.unverified_freeze_for_restricted.pop(asset)
+                self.unverified_freeze_for_restricted.pop(asset, None)
 
     def add_verified_restricted_freeze(self, asset: str, d):
         # Remove from the unverified map and add to the verified map
@@ -1048,9 +1062,9 @@ class AddressSynchronizer(Logger, EventListener):
                 maybe_tag = maybe_tags.get(asset)
                 if maybe_tag:
                     if maybe_tag['height'] == source_height:
-                        self.unverified_tags_for_h160[h160].pop(asset)
+                        self.unverified_tags_for_h160[h160].pop(asset, None)
                         if not self.unverified_tags_for_h160[h160]:
-                            self.unverified_tags_for_h160.pop(h160)
+                            self.unverified_tags_for_h160.pop(h160, None)
 
     def add_verified_tag_for_h160(self, h160: str, asset: str, d):
         # Remove from the unverified map and add to the verified map
@@ -1109,9 +1123,9 @@ class AddressSynchronizer(Logger, EventListener):
                 maybe_tag = maybe_tags.get(h160)
                 if maybe_tag:
                     if maybe_tag['height'] == source_height:
-                        self.unverified_tags_for_qualifier[asset].pop(h160)
+                        self.unverified_tags_for_qualifier[asset].pop(h160, None)
                         if not self.unverified_tags_for_qualifier[asset]:
-                            self.unverified_tags_for_qualifier.pop(asset)
+                            self.unverified_tags_for_qualifier.pop(asset, None)
 
     def add_verified_tag_for_qualifier(self, asset: str, h160: str, d):
         # Remove from the unverified map and add to the verified map

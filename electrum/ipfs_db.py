@@ -6,9 +6,9 @@ import attr
 import asyncio
 import time
 
-from typing import Optional, Tuple, TYPE_CHECKING, Set, Dict
+from typing import TYPE_CHECKING, Set, Dict
 
-from aiohttp import ClientResponse, ClientResponseError
+from aiohttp import ClientResponse, ClientError
 
 from .bitcoin import base_decode
 from .json_db import JsonDB, locked, modifier, StoredObject, StoredDict
@@ -21,6 +21,8 @@ if TYPE_CHECKING:
     from .address_synchronizer import AddressSynchronizer
 
 _VIEWABLE_MIMES = ('image/*', 'text/plain', 'application/json')
+
+_LOOKUP_COOLDOWN_SEC = 60 * 5
 
 def is_mime_viewable(mime_type: str) -> bool:
     if not mime_type: return False
@@ -161,8 +163,7 @@ class IPFSDB(JsonDB, EventListener):
         ipfs_url = ipfs_explorer_URL(network.config, 'ipfs', ipfs_hash)
         
         async def on_finish(resp: ClientResponse):
-            m = self.get_metadata(ipfs_hash) or IPFSMetadata()
-            curr_time = int(time.time())
+            m = self.get_metadata(ipfs_hash)
             try:
                 resp.raise_for_status()
                 # Ensure we aren't appending to something thats already there
@@ -171,7 +172,7 @@ class IPFSDB(JsonDB, EventListener):
                 while chunk := await resp.content.read(8192):
                     downloaded_length += len(chunk)
                     if downloaded_length > network.config.MAX_IPFS_DOWNLOAD_SIZE:
-                        self.logger.warn(f'oversized ipfs data for {ipfs_hash}')
+                        self.logger.warning(f'oversized ipfs data for {ipfs_hash}')
                         m.over_sized = True
                         m.known_size = downloaded_length
                         self.remove_ipfs_data(ipfs_hash)
@@ -181,50 +182,63 @@ class IPFSDB(JsonDB, EventListener):
                     self.logger.info(f'successfully downloaded ipfs data for {ipfs_hash}')
                     m.known_size = downloaded_length
                     m.is_client_side = True
-                    util.trigger_callback('ipfs_download', ipfs_hash)
-            except ClientResponseError as e:
-                self.logger.warn(f'failed to download ipfs data for {ipfs_hash}: {str(e)}')
+            except ClientError as e:
+                self.logger.warning(f'failed to download ipfs data for {ipfs_hash}: {str(e)}')
             finally:
-                self._ipfs_download_current.discard(ipfs_hash)
                 resp.close()
-                m.last_attemped_query = curr_time
-                self.data[ipfs_hash] = m
 
         # Rate limit ourselves :)
         async with self._ipfs_lookup_semaphore:
             await asyncio.sleep(0.25)
             self.logger.info(f'downloading ipfs data for {ipfs_hash}')
-            await Network.async_send_http_on_proxy('get', ipfs_url, on_finish=on_finish, timeout=60)
+            try:
+                await Network.async_send_http_on_proxy('get', ipfs_url, on_finish=on_finish, timeout=60)
+            except asyncio.TimeoutError:
+                self.logger.warning(f'timeout trying to download ipfs data for {ipfs_hash}')
+            finally:
+                curr_time = int(time.time())
+                m = self.get_metadata(ipfs_hash)
+                m.last_attemped_query = curr_time
+                self._ipfs_download_current.discard(ipfs_hash)
+                util.trigger_callback('ipfs_download', ipfs_hash)
 
     async def _download_ipfs_information(self, network: Network, ipfs_hash: str):
         ipfs_url = ipfs_explorer_URL(network.config, 'ipfs', ipfs_hash)
 
         async def on_finish(resp: ClientResponse):
-            m = self.get_metadata(ipfs_hash) or IPFSMetadata()
-            curr_time = int(time.time())
+            m = self.get_metadata(ipfs_hash)
             try:
                 resp.raise_for_status()
                 m.known_mime = resp.content_type
                 m.known_size = resp.content_length
                 m.info_lookup_successful = True
                 self.logger.info(f'downloaded information for ipfs {ipfs_hash}: {resp.content_type} {resp.content_length}')
+                                
+                # Lookup current needs to be cleared here because
+                # its checked in download data
                 self._ipfs_lookup_current.discard(ipfs_hash)
                 await self.maybe_download_data_for_ipfs_hash(network, ipfs_hash)
-            except ClientResponseError as e:
-                self.logger.warn(f'failed to download information for ipfs {ipfs_hash}: {str(e)}')
-            finally:
+            except ClientError as e:
                 self._ipfs_lookup_current.discard(ipfs_hash)
+                self.logger.warning(f'failed to download information for ipfs {ipfs_hash}: {str(e)}')
+            finally:
                 resp.close()
-                m.last_attemped_query = curr_time
-                self.data[ipfs_hash] = m
-                util.trigger_callback('ipfs_download', ipfs_hash)
 
         # Rate limit ourselves :)
         async with self._ipfs_lookup_semaphore:
             await asyncio.sleep(0.25)
             self.logger.info(f'looking up ipfs information {ipfs_hash}')
-            await Network.async_send_http_on_proxy('head', ipfs_url, on_finish=on_finish, timeout=30)
+            try:
+                await Network.async_send_http_on_proxy('head', ipfs_url, on_finish=on_finish, timeout=30)
+            except asyncio.TimeoutError:
+                self.logger.warning(f'timeout trying to download ipfs information for {ipfs_hash}')
+            finally:
+                curr_time = int(time.time())
+                m = self.get_metadata(ipfs_hash)
+                m.last_attemped_query = curr_time
+                util.trigger_callback('ipfs_download', ipfs_hash)
 
+    @modifier
     async def maybe_download_data_for_ipfs_hash(self, network: 'Network', ipfs_hash: str):
         assert isinstance(ipfs_hash, str)
         if not network:
@@ -240,10 +254,20 @@ class IPFSDB(JsonDB, EventListener):
                 return
             if ipfs_hash in self._ipfs_download_current:
                 return
-            if m and not m.is_client_side and is_mime_viewable(m.known_mime) and (m.known_size is None or m.known_size < network.config.MAX_IPFS_DOWNLOAD_SIZE):
+            
+            if m and not m.is_client_side and \
+                is_mime_viewable(m.known_mime) and (m.known_size is None or \
+                                                     m.known_size < network.config.MAX_IPFS_DOWNLOAD_SIZE):
+                
+                curr_time = int(time.time())
+                if m and m.last_attemped_query is not None and m.last_attemped_query + _LOOKUP_COOLDOWN_SEC < curr_time:
+                    self.logger.info('Not downloading data: cooling down')
+                    return
+            
                 self._ipfs_download_current.add(ipfs_hash)
                 await network.taskgroup.spawn(self._download_ipfs_data(network, ipfs_hash))
 
+    @modifier
     async def maybe_get_info_for_ipfs_hash(self, network: 'Network', ipfs_hash: str, asset: str):
         assert isinstance(ipfs_hash, str)
         assert isinstance(asset, str)
@@ -251,7 +275,7 @@ class IPFSDB(JsonDB, EventListener):
             return
         raw_hash = base_decode(ipfs_hash, base=58)
         if len(raw_hash) != 34 or raw_hash[:2] != b'\x12\x20':
-            raise ValueError(f'Invalid ipfs hash: {ipfs_hash}')
+            raise ValueError(f'Invalid ipfs hash: {ipfs_hash} ({ipfs_hash.__class__})')
         self.associate_asset_with_ipfs(ipfs_hash, asset)
         if not network.config.DOWNLOAD_IPFS: return
         with self.lock:
@@ -259,6 +283,10 @@ class IPFSDB(JsonDB, EventListener):
             if m.info_lookup_successful:
                 return
             if ipfs_hash in self._ipfs_lookup_current:
+                self.logger.info('Not downloading information: cooling down')
+                return
+            curr_time = int(time.time())
+            if m.last_attemped_query and (m.last_attemped_query + _LOOKUP_COOLDOWN_SEC) > curr_time:
                 return
             self._ipfs_lookup_current.add(ipfs_hash)
             util.trigger_callback('ipfs_download', ipfs_hash)
@@ -277,6 +305,20 @@ class IPFSDB(JsonDB, EventListener):
             metadata = metadata_tup[0]
             if metadata.is_associated_data_ipfs():
                 await self.maybe_get_info_for_ipfs_hash(adb.network, metadata.associated_data_as_ipfs(), asset)
+
+    @event_listener
+    async def on_event_adb_added_verified_broadcast(self, adb: 'AddressSynchronizer', asset, tx_hash):
+        broadcast = adb.db.get_verified_broadcast(asset, tx_hash)
+        maybe_ipfs = broadcast['data']
+        if maybe_ipfs[:2] == 'Qm':
+            await self.maybe_get_info_for_ipfs_hash(adb.network, maybe_ipfs, asset)
+
+    @event_listener
+    async def on_event_adb_added_unconfirmed_broadcast(self, adb: 'AddressSynchronizer', asset, tx_hash):
+        broadcast = adb.get_unverified_broadcasts()[asset][tx_hash]
+        maybe_ipfs = broadcast['data']
+        if maybe_ipfs[:2] == 'Qm':
+            await self.maybe_get_info_for_ipfs_hash(adb.network, maybe_ipfs, asset)
 
     @event_listener
     def on_event_ipfs_hash_dissociate_asset(self, ipfs_hash: str, asset: str):

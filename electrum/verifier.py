@@ -181,8 +181,8 @@ class SPV(NetworkJobOnDefaultServer):
                 self._requests_sent += 1
                 async with self._network_request_semaphore:
                     raw_tx = await self.interface.get_transaction(tx_hash)
-                    tx = Transaction(raw_tx)
                 self._requests_answered += 1
+                tx = Transaction(raw_tx)
             idx = d['tx_pos']
             asset_info = get_asset_info_from_script(tx.outputs()[idx].scriptpubkey)
             if _type := asset_info.get_type() != AssetVoutType.TRANSFER:
@@ -194,20 +194,24 @@ class SPV(NetworkJobOnDefaultServer):
             if asset_info.asset_memo_timestamp != d['expiration']:
                 raise AssetException(f'bad timestamp: {asset_info.asset_memo_timestamp}')
             for input in tx.inputs():
+
                 in_txid = input.prevout.txid.hex()
                 in_tx = self.wallet.get_transaction(in_txid)
                 if not in_tx:
                     self._requests_sent += 1
                     async with self._network_request_semaphore:
-                        raw_tx = await self.interface.get_transaction(tx_hash)
-                        in_tx = Transaction(raw_tx)
+                        raw_tx = await self.interface.get_transaction(in_txid)
                     self._requests_answered += 1
+                    in_tx = Transaction(raw_tx)
+
                 if in_tx.outputs()[input.prevout.out_idx].address == tx.outputs()[idx].address and \
                     in_tx.outputs()[input.prevout.out_idx].asset == tx.outputs()[idx].asset:
                     break
             else:
                 raise AssetException(f'no same vin address found')
         except (aiorpcx.jsonrpc.RPCError, RequestCorrupted, AssetException, IndexError) as e:
+            import traceback
+            traceback.print_exc()
             self.logger.info(f'bad broadcast {asset} {d["data"]}: {repr(e)}')
             self.wallet.remove_unverified_broadcast(asset, tx_hash, height)
             raise GracefulDisconnect(e) from e

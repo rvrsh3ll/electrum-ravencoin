@@ -43,7 +43,7 @@ if TYPE_CHECKING:
     from .main_window import ElectrumWindow
     from .installwizard import InstallWizard
     from electrum.simple_config import SimpleConfig
-    from electrum.asset import BooleanExprAST, AssetMetadata
+    from electrum.asset import BooleanExprAST
 
 if platform.system() == 'Windows':
     MONOSPACE_FONT = 'Lucida Console'
@@ -1474,7 +1474,7 @@ class BooleanExprASTTableViewer(QDialog, MessageBoxMixin):
         self.setMaximumWidth(400)
         self.setMaximumHeight(500)
 
-class IPFSViewer(QWidget):
+class IPFSViewer(QWidget, QtEventListener):
     def __init__(self, window: 'ElectrumWindow'):
         QWidget.__init__(self)
 
@@ -1531,6 +1531,11 @@ class IPFSViewer(QWidget):
         vbox.addLayout(associated_data_info_layout)
         vbox.addLayout(associated_data_view_layout)
         self.clear()
+        self.register_callbacks()
+
+    @qt_event_listener
+    def on_event_ipfs_download(self, ipfs_hash):
+        self.update_associated_data_info(ipfs_hash)
 
     def _view_associated_data(self):
         associated_data = self.associated_data
@@ -1553,7 +1558,7 @@ class IPFSViewer(QWidget):
         for x in [self.predicted_mime_type_label, self.predicted_mime_type_text,
                   self.predicted_size_label, self.predicted_size_text,
                   self.associated_data_text, self.associated_data_view_image, 
-                  self.associated_data_view_text]:
+                  self.associated_data_view_text, self.view_associated_data_button]:
             x.setVisible(False)
 
         for x in [self.associated_data_view_image, self.associated_data_view_text]:
@@ -1578,12 +1583,12 @@ class IPFSViewer(QWidget):
             with open(resource_path, 'r') as f:
                 return f.read()
 
-    def update(self, asset: str, metadata: 'AssetMetadata'):
+    def update(self, asset: str, associated_data: Optional[bytes]):
         for x in [self.associated_data_view_image, self.associated_data_view_text]:
             x.setVisible(False)
             x.clear()
 
-        if metadata.associated_data is None:
+        if associated_data is None:
             self.associated_data_type_text.setText('None')
             for x in [self.associated_data_text, self.view_associated_data_button, 
                       self.predicted_mime_type_label, self.predicted_size_label, 
@@ -1596,10 +1601,10 @@ class IPFSViewer(QWidget):
         else:
             self.associated_data_text.setVisible(True)
             self.view_associated_data_button.setVisible(True)
-            if metadata.associated_data[:2] == b'\x54\x20':
+            if associated_data[:2] == b'\x54\x20':
                 self.view_associated_data_button.setText(_('Search Blockchain Transactions'))
                 self.associated_data_type_text.setText('TXID')
-                self.associated_data_text.setText(metadata.associated_data[2:].hex())
+                self.associated_data_text.setText(associated_data[2:].hex())
                 for x in [self.predicted_mime_type_label, self.predicted_size_label, 
                           self.predicted_mime_type_text, self.predicted_size_text,
                           self.associated_data_view_image, self.associated_data_view_text]:
@@ -1607,7 +1612,7 @@ class IPFSViewer(QWidget):
                 for x in [self.associated_data_view_image, self.associated_data_view_text]:
                     x.clear()
             else:
-                ipfs_str = base_encode(metadata.associated_data, base=58)
+                ipfs_str = base_encode(associated_data, base=58)
                 self.associated_data_type_text.setText('IPFS')
                 self.associated_data_text.setText(ipfs_str)
                 self.view_associated_data_button.setText(_('View in Browser'))
@@ -1654,8 +1659,8 @@ class IPFSViewer(QWidget):
                             await IPFSDB.get_instance().maybe_get_info_for_ipfs_hash(self.window.network, ipfs_str, asset)
                             await IPFSDB.get_instance().maybe_download_data_for_ipfs_hash(self.window.network, ipfs_str)
 
-                        self.window.run_coroutine_from_thread(download_all_ipfs_data(), ipfs_str)
-
+                        self.window.network.run_from_another_thread(download_all_ipfs_data())
+                        #self.window.run_coroutine_from_thread(download_all_ipfs_data(), ipfs_str)
 
     def update_associated_data_info(self, ipfs_hash: str):
         if self.associated_data != ipfs_hash:

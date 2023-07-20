@@ -13,7 +13,7 @@ from electrum.util import format_satoshis_plain, profiler
 from electrum.address_synchronizer import METADATA_UNCONFIRMED, METADATA_UNVERIFIED
 from electrum.logging import Logger
 
-from .util import HelpLabel, ColorScheme, HelpButton, AutoResizingTextEdit, qt_event_listener, QtEventListener
+from .util import HelpLabel, ColorScheme, HelpButton, AutoResizingTextEdit
 from .util import QHSeperationLine, read_QIcon, MONOSPACE_FONT, IPFSViewer, EnterButton
 from .my_treeview import MyTreeView
 
@@ -130,7 +130,7 @@ class AssetList(MyTreeView):
         menu.addAction(_('Mark asset{} as junk').format('s' if len(assets) > 1 else ''), mark_as_junk)
         menu.exec_(self.viewport().mapToGlobal(position))
         
-class MetadataInfo(QWidget, QtEventListener):
+class MetadataInfo(QWidget):
     def __init__(self, window: 'ElectrumWindow'):
         QWidget.__init__(self)
 
@@ -261,15 +261,10 @@ class MetadataInfo(QWidget, QtEventListener):
         self.clear()
 
         self.current_asset = None
-        self.register_callbacks()
 
     def _show_source_tx(self, txid_widget):
         txid = txid_widget.toPlainText()
         self.window.do_process_from_txid(txid=txid)
-
-    @qt_event_listener
-    def on_event_ipfs_download(self, ipfs_hash):
-        self.ipfs_viewer.update_associated_data_info(ipfs_hash)
 
     def update(self, asset: str, type_text: Optional[str], metadata: AssetMetadata,
                metadata_sources: Optional[Tuple[bytes, Optional[bytes], Optional[bytes]]],
@@ -299,7 +294,7 @@ class MetadataInfo(QWidget, QtEventListener):
 
         self.divisions_text.setText(str(metadata.divisions))
         self.reissuable_text.setText(str(metadata.reissuable))
-        self.ipfs_viewer.update(asset, metadata)
+        self.ipfs_viewer.update(asset, metadata.associated_data)
         
         if verifier_string_data:
             for x in [self.verifier_string_label, self.verifier_string_text]:
