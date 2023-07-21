@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 _VIEWABLE_MIMES = ('image/*', 'text/plain', 'application/json')
 
-_LOOKUP_COOLDOWN_SEC = 60 * 5
+_LOOKUP_COOLDOWN_SEC = 60
 
 def is_mime_viewable(mime_type: str) -> bool:
     if not mime_type: return False
@@ -90,7 +90,7 @@ class IPFSDB(JsonDB, EventListener):
         self.raw_ipfs_path = standardize_path(raw_path)
         make_dir(self.raw_ipfs_path, False)
 
-        self._ipfs_lookup_semaphore = asyncio.Semaphore()
+        self._ipfs_lookup_semaphore = asyncio.Semaphore(5)
         self._ipfs_lookup_current = set()
         self._ipfs_download_current = set()
 
@@ -221,7 +221,6 @@ class IPFSDB(JsonDB, EventListener):
                 self._ipfs_lookup_current.discard(ipfs_hash)
                 await self.maybe_download_data_for_ipfs_hash(network, ipfs_hash)
             except ClientError as e:
-                self._ipfs_lookup_current.discard(ipfs_hash)
                 self.logger.warning(f'failed to download information for ipfs {ipfs_hash}: {str(e)}')
             finally:
                 resp.close()
@@ -238,6 +237,7 @@ class IPFSDB(JsonDB, EventListener):
                 curr_time = int(time.time())
                 m = self.get_metadata(ipfs_hash)
                 m.last_attemped_query = curr_time
+                self._ipfs_lookup_current.discard(ipfs_hash)
                 util.trigger_callback('ipfs_download', ipfs_hash)
 
     @modifier
@@ -263,7 +263,7 @@ class IPFSDB(JsonDB, EventListener):
                 
                 curr_time = int(time.time())
                 if m and m.last_attemped_query is not None and m.last_attemped_query + _LOOKUP_COOLDOWN_SEC < curr_time:
-                    self.logger.info('Not downloading data: cooling down')
+                    self.logger.info(f'Not downloading data for {ipfs_hash}: cooling down')
                     return
             
                 self._ipfs_download_current.add(ipfs_hash)
@@ -284,10 +284,10 @@ class IPFSDB(JsonDB, EventListener):
             if m.info_lookup_successful:
                 return
             if ipfs_hash in self._ipfs_lookup_current:
-                self.logger.info('Not downloading information: cooling down')
                 return
             curr_time = int(time.time())
             if m.last_attemped_query and (m.last_attemped_query + _LOOKUP_COOLDOWN_SEC) > curr_time:
+                self.logger.info(f'Not downloading information for {ipfs_hash}: cooling down')
                 return
             self._ipfs_lookup_current.add(ipfs_hash)
             util.trigger_callback('ipfs_download', ipfs_hash)

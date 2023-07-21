@@ -125,7 +125,7 @@ class BroadcastList(MyTreeView):
 
     headers = {
         Columns.HEIGHT: _('Height'),
-        Columns.DATA: _('Associated Data'),
+        Columns.DATA: _('Message'),
         Columns.TIMESTAMP: _('Timestamp')
     }
 
@@ -175,7 +175,11 @@ class BroadcastList(MyTreeView):
         for idx, (associated_data, timestamp, height, tx_hash, tx_pos) in enumerate(broadcasts):
             labels = [""] * len(self.Columns)
             labels[self.Columns.HEIGHT] = str(height)
-            labels[self.Columns.DATA] = associated_data
+            if associated_data[:2] == 'Qm':
+                converted_message = associated_data
+            else:
+                converted_message = base_decode(associated_data, base=58)[2:].hex()
+            labels[self.Columns.DATA] = converted_message
             labels[self.Columns.TIMESTAMP] = str(timestamp)
             row_item = [QStandardItem(x) for x in labels]
             id = f'{tx_hash}:{tx_pos}'
@@ -183,7 +187,7 @@ class BroadcastList(MyTreeView):
             row_item[self.Columns.HEIGHT].setData(tx_hash, self.ROLE_TXID_STR)
             row_item[self.Columns.DATA].setData(associated_data, self.ROLE_ASSOCIATED_DATA_STR)
             self.model().insertRow(idx, row_item)
-            self.refresh_row(associated_data, idx)
+            self.refresh_row(converted_message, idx)
             if id == self.last_selected_broadcast_id:
                 self.selectionModel().select(self.model().createIndex(idx, 0), QItemSelectionModel.Rows | QItemSelectionModel.SelectCurrent)
         self.current_broadcasts = broadcasts
@@ -300,6 +304,7 @@ class ViewBroadcastTab(QWidget, Logger, MessageBoxMixin):
     def switch_asset(self, asset: str):
         self.broadcast_list.current_asset = asset
         self.broadcast_list.update()
+        self.switch_associcated_data(None, None, None)
 
     def switch_associcated_data(self, asset: str, associated_data: str, tx_hash: str):
         if not asset or not associated_data or not tx_hash:
