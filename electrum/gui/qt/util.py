@@ -1400,6 +1400,7 @@ class AutoResizingTextEdit(QTextEdit):
         document = self.document()
         fontMetrics = QFontMetrics(document.defaultFont())
         self.fontSpacing = fontMetrics.lineSpacing()
+        self.setSizePolicy(QtWidgets.QSizePolicy.MinimumExpanding, QtWidgets.QSizePolicy.Fixed)
 
     def hasHeightForWidth(self):
         return True

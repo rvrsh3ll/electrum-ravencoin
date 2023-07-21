@@ -4,10 +4,10 @@ from typing import TYPE_CHECKING
 from PyQt5.QtGui import QStandardItemModel, QStandardItem
 from PyQt5.QtCore import Qt, pyqtSignal, QItemSelectionModel, QPoint
 from PyQt5.QtWidgets import (QAbstractItemView, QWidget, QHBoxLayout, QVBoxLayout, QToolButton, QMenu,
-                             QLineEdit)
+                             QLineEdit, QScrollArea, QLabel)
 
 from .my_treeview import MyTreeView, MyMenu
-from .util import IPFSViewer, read_QIcon, EnterButton, MessageBoxMixin
+from .util import IPFSViewer, read_QIcon, EnterButton, MessageBoxMixin, QHSeperationLine, AutoResizingTextEdit
 
 from electrum.asset import get_error_for_asset_typed, AssetType
 from electrum.bitcoin import base_decode
@@ -98,7 +98,7 @@ class BroadcastAssetList(MyTreeView):
             for asset in assets:
                 self.main_window.wallet.adb.remove_broadcast_to_watch(asset)
             self.parent.update_asset_trigger.emit(None)
-            self.parent.update_associated_data_trigger.emit(None, None)
+            self.parent.update_associated_data_trigger.emit(None, None, None)
             self.update()
 
         if not multi_select:
@@ -133,6 +133,7 @@ class BroadcastList(MyTreeView):
 
     ROLE_ID_STR = Qt.UserRole + 1001
     ROLE_ASSOCIATED_DATA_STR = Qt.UserRole + 1002
+    ROLE_TXID_STR = Qt.UserRole + 1003
     key_role = ROLE_ID_STR
 
     def __init__(self, parent: 'ViewBroadcastTab', main_window: 'ElectrumWindow'):
@@ -152,14 +153,15 @@ class BroadcastList(MyTreeView):
         def selectionChange(new, old):
             rows = [x.row() for x in new.indexes()]
             if not rows:
-                parent.update_associated_data_trigger.emit(None, None)
+                parent.update_associated_data_trigger.emit(None, None, None)
                 return
             first_row = min(rows)
             m = self.model().index(first_row, self.Columns.HEIGHT)
             self.last_selected_broadcast_id = m.data(self.ROLE_ID_STR)
+            tx_hash = m.data(self.ROLE_TXID_STR)
             m = self.model().index(first_row, self.Columns.DATA)
             associated_data = m.data(self.ROLE_ASSOCIATED_DATA_STR)
-            parent.update_associated_data_trigger.emit(self.current_asset, associated_data)
+            parent.update_associated_data_trigger.emit(self.current_asset, associated_data, tx_hash)
 
         self.selectionModel().selectionChanged.connect(selectionChange)
     
@@ -178,6 +180,7 @@ class BroadcastList(MyTreeView):
             row_item = [QStandardItem(x) for x in labels]
             id = f'{tx_hash}:{tx_pos}'
             row_item[self.Columns.HEIGHT].setData(id, self.ROLE_ID_STR)
+            row_item[self.Columns.HEIGHT].setData(tx_hash, self.ROLE_TXID_STR)
             row_item[self.Columns.DATA].setData(associated_data, self.ROLE_ASSOCIATED_DATA_STR)
             self.model().insertRow(idx, row_item)
             self.refresh_row(associated_data, idx)
@@ -194,12 +197,13 @@ class BroadcastList(MyTreeView):
 
 class ViewBroadcastTab(QWidget, Logger, MessageBoxMixin):
     update_asset_trigger = pyqtSignal(str)
-    update_associated_data_trigger = pyqtSignal(str, str)
+    update_associated_data_trigger = pyqtSignal(str, str, str)
 
     def __init__(self, window: 'ElectrumWindow'):
         QWidget.__init__(self)
         Logger.__init__(self)
 
+        self.window = window
         hbox = QHBoxLayout()
         vbox = QVBoxLayout()
         self.asset_list = BroadcastAssetList(self, window)
@@ -208,14 +212,41 @@ class ViewBroadcastTab(QWidget, Logger, MessageBoxMixin):
         vbox = QVBoxLayout()
         self.broadcast_list = BroadcastList(self, window)
         vbox.addWidget(self.broadcast_list, stretch=1)
+
         self.ipfs_viewer = IPFSViewer(window)
-        vbox.addWidget(self.ipfs_viewer, stretch=1)
+        self.source_seperator = QHSeperationLine()
+        self.source_seperator.setVisible(False)
+        self.main_source_label = QLabel(_('Broadcast Source'))
+        self.main_source_label.setVisible(False)
+        self.main_source_txid = AutoResizingTextEdit()
+        self.main_source_txid.setReadOnly(True)
+        self.main_source_txid.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.main_source_txid.setAlignment(Qt.AlignVCenter)
+        self.main_source_txid.setVisible(False)
+        self.main_source_button = EnterButton(_('View Transaction'), lambda: self._show_source_tx(self.main_source_txid))
+        self.main_source_button.setVisible(False)
+
+        scroll_widget = QWidget()
+        scroll_box = QVBoxLayout(scroll_widget)
+        scroll_box.addWidget(self.ipfs_viewer)
+        scroll_box.addWidget(self.source_seperator)
+        scroll_box.addWidget(self.main_source_label)
+        scroll_box.addWidget(self.main_source_txid)
+        scroll_box.addWidget(self.main_source_button)
+        scroll_box.addStretch()
+
+        scroll = QScrollArea()
+        scroll.setWidget(scroll_widget)
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+        vbox.addWidget(scroll, stretch=1)
         hbox.addLayout(vbox)
 
         menu = MyMenu(window.config)
         menu.addConfig(_('Download IPFS'), window.config.cv.DOWNLOAD_IPFS, callback=self.ipfs_viewer.update_visibility)
         menu.addConfig(_('Display Downloaded IPFS'), window.config.cv.SHOW_IPFS, callback=self.ipfs_viewer.update_visibility)
-        menu.addConfig(_('Show Metadata Sources'), window.config.cv.SHOW_METADATA_SOURCE, callback=lambda: None)
+        menu.addConfig(_('Show Metadata Sources'), window.config.cv.SHOW_METADATA_SOURCE, callback=self.update_visibility)
 
         toolbar_button = QToolButton()
         toolbar_button.setIcon(read_QIcon("preferences.png"))
@@ -247,21 +278,34 @@ class ViewBroadcastTab(QWidget, Logger, MessageBoxMixin):
         vbox.addLayout(hbox)
 
         self.update_asset_trigger.connect(lambda x: self.switch_asset(x))
-        self.update_associated_data_trigger.connect(lambda x, y: self.switch_associcated_data(x, y))
+        self.update_associated_data_trigger.connect(lambda x, y, z: self.switch_associcated_data(x, y, z))
 
         self.searchable_list = SearchableListGrouping(self.asset_list, self.broadcast_list)
+
+    def _show_source_tx(self, txid_widget):
+        txid = txid_widget.toPlainText()
+        self.window.do_process_from_txid(txid=txid)
 
     def update(self):
         self.asset_list.update()
         self.broadcast_list.update()
         self.ipfs_viewer.update_visibility()
+        self.update_visibility()
+
+    def update_visibility(self):
+        for x in [self.source_seperator, self.main_source_button,
+                  self.main_source_label, self.main_source_txid]:
+            x.setVisible(self.window.config.SHOW_METADATA_SOURCE and bool(self.main_source_txid.toPlainText()))
 
     def switch_asset(self, asset: str):
         self.broadcast_list.current_asset = asset
         self.broadcast_list.update()
 
-    def switch_associcated_data(self, asset: str, associated_data: str):
-        if not asset or not associated_data:
+    def switch_associcated_data(self, asset: str, associated_data: str, tx_hash: str):
+        if not asset or not associated_data or not tx_hash:
             self.ipfs_viewer.clear()
-            return
-        self.ipfs_viewer.update(asset, base_decode(associated_data, base=58))
+            self.main_source_txid.clear()
+        else:
+            self.ipfs_viewer.update(asset, base_decode(associated_data, base=58))
+            self.main_source_txid.setText(tx_hash)
+        self.update_visibility()

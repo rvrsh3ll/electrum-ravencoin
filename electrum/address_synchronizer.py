@@ -160,7 +160,7 @@ class AddressSynchronizer(Logger, EventListener):
     def remove_broadcast_to_watch(self, asset):
         with self.lock:
             for associated_data, _, _, tx_hash, _ in [x for x in self.get_broadcasts(asset)]:
-                IPFSDB.get_instance().dissociate_asset_with_ipfs(asset, associated_data)
+                IPFSDB.get_instance().dissociate_asset_with_ipfs(associated_data, asset)
                 self.db.remove_verified_broadcast(asset, tx_hash)
             self.db.remove_broadcast_to_watch(asset)
 

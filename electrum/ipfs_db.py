@@ -159,6 +159,7 @@ class IPFSDB(JsonDB, EventListener):
         except (FileNotFoundError, OSError):
             pass
 
+    @modifier
     async def _download_ipfs_data(self, network: Network, ipfs_hash: str):
         ipfs_url = ipfs_explorer_URL(network.config, 'ipfs', ipfs_hash)
         
@@ -202,6 +203,7 @@ class IPFSDB(JsonDB, EventListener):
                 self._ipfs_download_current.discard(ipfs_hash)
                 util.trigger_callback('ipfs_download', ipfs_hash)
 
+    @modifier
     async def _download_ipfs_information(self, network: Network, ipfs_hash: str):
         ipfs_url = ipfs_explorer_URL(network.config, 'ipfs', ipfs_hash)
 
@@ -267,7 +269,6 @@ class IPFSDB(JsonDB, EventListener):
                 self._ipfs_download_current.add(ipfs_hash)
                 await network.taskgroup.spawn(self._download_ipfs_data(network, ipfs_hash))
 
-    @modifier
     async def maybe_get_info_for_ipfs_hash(self, network: 'Network', ipfs_hash: str, asset: str):
         assert isinstance(ipfs_hash, str)
         assert isinstance(asset, str)
@@ -329,6 +330,8 @@ class IPFSDB(JsonDB, EventListener):
         m = self.data.get(ipfs_hash, None)
         if m:
             m.associated_assets.discard(asset)
+            if not m.associated_assets:
+                self.remove_ipfs_info(ipfs_hash)
 
     @modifier
     def associate_asset_with_ipfs(self, ipfs_hash: str, asset: str):
