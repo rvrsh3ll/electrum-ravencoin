@@ -172,7 +172,7 @@ class SettingsDialog(QDialog, QtEventListener):
         msat_cb.stateChanged.connect(on_msat_checked)
 
         # units
-        units = base_units_list
+        units = base_units_list()
         msg = (_('Base unit of your wallet.')
                + '\n1 BTC = 1000 mBTC. 1 mBTC = 1000 bits. 1 bit = 100 sat.\n'
                + _('This setting affects the Send tab, and all balance related fields.'))

@@ -60,7 +60,8 @@ class TxEditor(WindowModalDialog):
                  window: 'ElectrumWindow',
                  make_tx,
                  output_value: Union[int, str] = None,
-                 allow_preview=True):
+                 allow_preview=True,
+                 allow_edit_locktime=True):
 
         WindowModalDialog.__init__(self, window, title=title)
         self.main_window = window
@@ -79,6 +80,7 @@ class TxEditor(WindowModalDialog):
         # preview is disabled for lightning channel funding
         self.allow_preview = allow_preview
         self.is_preview = False
+        self.allow_edit_locktime = allow_edit_locktime
 
         self.locktime_e = LockTimeEdit(self)
         self.locktime_e.valueEdited.connect(self.trigger_update)
@@ -104,7 +106,7 @@ class TxEditor(WindowModalDialog):
 
         self.set_io_visible(self.config.GUI_QT_TX_EDITOR_SHOW_IO)
         self.set_fee_edit_visible(self.config.GUI_QT_TX_EDITOR_SHOW_FEE_DETAILS)
-        self.set_locktime_visible(self.config.GUI_QT_TX_EDITOR_SHOW_LOCKTIME)
+        self.set_locktime_visible(self.config.GUI_QT_TX_EDITOR_SHOW_LOCKTIME and self.allow_edit_locktime)
         self.update_fee_target()
         self.resize(self.layout().sizeHint())
 
@@ -376,11 +378,14 @@ class TxEditor(WindowModalDialog):
     def create_top_bar(self, text):
         self.pref_menu = QMenu()
         self.pref_menu.setToolTipsVisible(True)
-        def add_pref_action(b, action, text, tooltip):
+        def add_pref_action(b, action, text, tooltip, *, enabled=True):
             m = self.pref_menu.addAction(text, action)
             m.setCheckable(True)
             m.setChecked(b)
             m.setToolTip(tooltip)
+            if not enabled:
+                m.setChecked(False)
+                m.setEnabled(False)
             return m
         add_pref_action(
             self.config.GUI_QT_TX_EDITOR_SHOW_IO,
@@ -398,7 +403,7 @@ class TxEditor(WindowModalDialog):
         add_pref_action(
             self.config.GUI_QT_TX_EDITOR_SHOW_LOCKTIME,
             self.toggle_locktime,
-            _('Edit Locktime'), '')
+            _('Edit Locktime'), '', enabled=self.allow_edit_locktime)
         self.pref_menu.addSeparator()
         add_pref_action(
             self.wallet.use_change,
@@ -480,7 +485,6 @@ class TxEditor(WindowModalDialog):
         b = not self.config.WALLET_SPEND_CONFIRMED_ONLY
         self.config.WALLET_SPEND_CONFIRMED_ONLY = b
         self.trigger_update()
-
     def toggle_io_visibility(self):
         b = not self.config.GUI_QT_TX_EDITOR_SHOW_IO
         self.config.GUI_QT_TX_EDITOR_SHOW_IO = b
@@ -617,7 +621,7 @@ class TxEditor(WindowModalDialog):
 class ConfirmTxDialog(TxEditor):
     help_text = ''#_('Set the mining fee of your transaction')
 
-    def __init__(self, *, window: 'ElectrumWindow', make_tx, output_value: Union[int, str, Mapping[Optional[str], Union[int, str]]], allow_preview=True):
+    def __init__(self, *, window: 'ElectrumWindow', make_tx, output_value: Union[int, str, Mapping[Optional[str], Union[int, str]]], allow_preview=True, allow_edit_locktime=True):
 
         TxEditor.__init__(
             self,
@@ -625,7 +629,8 @@ class ConfirmTxDialog(TxEditor):
             make_tx=make_tx,
             output_value=output_value,
             title=_("New Transaction"), # todo: adapt title for channel funding tx, swaps
-            allow_preview=allow_preview)
+            allow_preview=allow_preview,
+            allow_edit_locktime=allow_edit_locktime)
 
         BlockingWaitingDialog(window, _("Preparing transaction..."), self.update)
 

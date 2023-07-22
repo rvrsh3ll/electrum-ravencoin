@@ -229,7 +229,7 @@ class TagAddress(QWidget):
             return None
 
         address_msg = (_("The address to target.") + "\n\n"
-               + _(""))
+               + _('This is the address that gets tagged by the asset.'))
         address_label = HelpLabel(_('Address to Tag'), address_msg)
         self.address_validator = ValidatedDelayedCallbackEditor(get_asyncio_loop, address_fast_fail, 0, lambda: asyncio.sleep(0))
 

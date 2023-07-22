@@ -1062,11 +1062,11 @@ class Interface(Logger):
             raise RequestCorrupted(f"server history has non-unique txids for sh={sh}")
         return res
 
-    async def listunspent_for_scripthash(self, sh: str) -> List[dict]:
+    async def listunspent_for_scripthash(self, sh: str, asset) -> List[dict]:
         if not is_hash256_str(sh):
             raise Exception(f"{repr(sh)} is not a scripthash")
         # do request
-        res = await self.session.send_request('blockchain.scripthash.listunspent', [sh])
+        res = await self.session.send_request('blockchain.scripthash.listunspent', [sh, asset])
         # check response
         assert_list_or_tuple(res)
         for utxo_item in res:

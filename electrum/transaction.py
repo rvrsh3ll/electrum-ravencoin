@@ -1250,10 +1250,9 @@ class Transaction:
 
     def input_value(self, *, asset_aware=False) -> Union[int, Mapping[Optional[str], int]]:
         if asset_aware:
-            input_values = ((txin.asset, txin.value_sats(asset_aware=True)) for txin in self.inputs())
-            if any(((val is None) for asset, val in input_values)):
+            input_values = [(txin.asset, txin.value_sats(asset_aware=True)) for txin in self.inputs()]
+            if any(val is None for asset, val in input_values):
                 raise MissingTxInputAmount()
-        
             ret_val = defaultdict(int)
             for asset, val in input_values:
                 ret_val[asset] += val
@@ -1466,6 +1465,8 @@ class PartialTxInput(TxInput, PSBTSection):
         self._is_p2sh_segwit = None  # type: Optional[bool]  # None means unknown
         self._is_native_segwit = None  # type: Optional[bool]  # None means unknown
         self.witness_sizehint = None  # type: Optional[int]  # byte size of serialized complete witness, for tx size est
+
+        self._for_swap = False
 
     @property
     def witness_utxo(self):
@@ -2138,6 +2139,7 @@ class PartialTransaction(Transaction):
     def set_rbf(self, rbf: bool) -> None:
         nSequence = 0xffffffff - (2 if rbf else 1)
         for txin in self.inputs():
+            if txin._for_swap: continue
             txin.nsequence = nSequence
         self.invalidate_ser_cache()
 

@@ -128,6 +128,10 @@ class RavencoinMainnet(AbstractNet):
     KawpowActivationHeight = 1219736
     nDGWActivationBlock = 338778
 
+    DEFAULT_MESSAGE_CHANNELS = ['ELECTRUM_RAVENCOIN~notifications']
+    ASSET_PREFIX = b'rvn'
+    SHORT_NAME = 'RVN'
+
     XPRV_HEADERS = {
         'standard': 0x0488ade4,  # xprv
         'p2wpkh-p2sh': 0x049d7878,  # yprv
@@ -198,6 +202,10 @@ class RavencoinTestnet(AbstractNet):
     KawpowActivationTS = 1585159200
     KawpowActivationHeight = 231544
     nDGWActivationBlock = 1
+
+    DEFAULT_MESSAGE_CHANNELS = []
+    ASSET_PREFIX = b'rvn'
+    SHORT_NAME = 'tRVN'
 
     XPRV_HEADERS = {
         'standard': 0x04358394,  # tprv

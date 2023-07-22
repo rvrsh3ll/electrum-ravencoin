@@ -1146,10 +1146,10 @@ class Network(Logger, NetworkRetryManager[ServerAddr]):
 
     @best_effort_reliable
     @catch_server_exceptions
-    async def listunspent_for_scripthash(self, sh: str) -> List[dict]:
+    async def listunspent_for_scripthash(self, sh: str, *, asset=False) -> List[dict]:
         if self.interface is None:  # handled by best_effort_reliable
             raise RequestTimedOut()
-        return await self.interface.listunspent_for_scripthash(sh)
+        return await self.interface.listunspent_for_scripthash(sh, asset)
 
     @best_effort_reliable
     @catch_server_exceptions

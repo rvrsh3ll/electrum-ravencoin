@@ -30,27 +30,27 @@ subprocess.check_output(cmd, shell=True)
 
 
 # add QML translations
-cmd = "find electrum/gui/qml -type f -name '*.qml'"
-files = subprocess.check_output(cmd, shell=True)
+#cmd = "find electrum/gui/qml -type f -name '*.qml'"
+#files = subprocess.check_output(cmd, shell=True)
 
-with open("electrum/locale/qml.lst", "wb") as f:
-    f.write(files)
+#with open("electrum/locale/qml.lst", "wb") as f:
+#    f.write(files)
 
-print("Found {} QML files to translate".format(len(files.splitlines())))
+#print("Found {} QML files to translate".format(len(files.splitlines())))
 
-cmd = "lupdate @electrum/locale/qml.lst -ts electrum/locale/qml.ts"
-print('Collecting strings')
-subprocess.check_output(cmd, shell=True)
+#cmd = "lupdate @electrum/locale/qml.lst -ts electrum/locale/qml.ts"
+#print('Collecting strings')
+#subprocess.check_output(cmd, shell=True)
 
-cmd = "lconvert -of po -o electrum/locale/messages_qml.pot electrum/locale/qml.ts"
-print('Convert to gettext')
-subprocess.check_output(cmd, shell=True)
+#cmd = "lconvert -of po -o electrum/locale/messages_qml.pot electrum/locale/qml.ts"
+#print('Convert to gettext')
+#subprocess.check_output(cmd, shell=True)
 
-cmd = "msgcat -u -o electrum/locale/messages.pot electrum/locale/messages_gettext.pot electrum/locale/messages_qml.pot"
+cmd = "msgcat -u -o electrum/locale/messages.pot electrum/locale/messages_gettext.pot"# electrum/locale/messages_qml.pot"
 print('Generate template')
 subprocess.check_output(cmd, shell=True)
 
-
+sys.exit()
 # prepare uploading to crowdin
 os.chdir(os.path.join(project_root, "electrum"))
 

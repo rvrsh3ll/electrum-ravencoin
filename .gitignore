@@ -5,8 +5,10 @@
 build/
 dist/
 *.egg/
+Electrum-Ravencoin.egg-info/
 Electrum.egg-info/
 electrum/locale/
+!electrum/locale/messages.pot
 .devlocaltmp/
 *_trial_temp
 packages

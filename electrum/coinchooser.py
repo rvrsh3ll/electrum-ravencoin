@@ -197,7 +197,9 @@ class CoinChooserBase(Logger):
                 output_counts[asset] = 1
                 change_amounts.append((asset, change))
 
-        addrs_left = count - len(change_amounts)
+        # Remove all added change addresses for the possible assets
+        keys = set(assets_in.keys()).union(set(assets_out.keys())).difference({None})
+        addrs_left = count - len(keys)
         assert addrs_left > 0
 
         # RVN starts here
@@ -285,6 +287,14 @@ class CoinChooserBase(Logger):
             # note: this is not necessarily the final "first input address"
             # because the inputs had not been sorted at this point
             assert is_address(change_addrs[0])
+        
+        input_amounts = base_tx.input_value(asset_aware=True)
+        output_amounts = base_tx.output_value(asset_aware=True)
+        keys = set(input_amounts.keys()).union(set(output_amounts.keys())).union({None})
+        index = 0
+        while len(change_addrs) < len(keys):
+            change_addrs.append(change_addrs[index])
+            index += 1
 
         # This takes a count of change outputs and returns a tx fee
         output_weight = 4 * Transaction.estimated_output_size_for_address(change_addrs[0])

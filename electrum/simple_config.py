@@ -818,7 +818,7 @@ class SimpleConfig(Logger):
         return decimal_point_to_base_unit_name(self.decimal_point)
 
     def set_base_unit(self, unit):
-        assert unit in base_units.keys()
+        assert unit in base_units().keys()
         self.decimal_point = base_unit_name_to_decimal_point(unit)
         self.BTC_AMOUNTS_DECIMAL_POINT = self.decimal_point
 
@@ -928,6 +928,7 @@ class SimpleConfig(Logger):
     GUI_QT_SHOW_TAB_CONTACTS = ConfigVar('show_contacts_tab', default=False, type_=bool)
     GUI_QT_SHOW_TAB_CONSOLE = ConfigVar('show_console_tab', default=False, type_=bool)
     GUI_QT_SHOW_TAB_BROADCASTS = ConfigVar('show_broadcasts_tab', default=True, type_=bool)
+    GUI_QT_SHOW_TAB_ATOMIC_SWAPS = ConfigVar('show_atomic_swap_tab', default=True, type_=bool)
 
     GUI_QML_PREFERRED_REQUEST_TYPE = ConfigVar('preferred_request_type', default='bolt11', type_=str)
     GUI_QML_USER_KNOWS_PRESS_AND_HOLD = ConfigVar('user_knows_press_and_hold', default=False, type_=bool)

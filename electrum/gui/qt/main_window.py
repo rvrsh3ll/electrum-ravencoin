@@ -214,6 +214,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         self.console_tab = self.create_console_tab()
         self.contacts_tab = self.create_contacts_tab()
         self.broadcast_view_tab = self.create_view_broadcasts_tab()
+        self.atomic_swap_tab = self.create_atomic_swap_tab()
         #self.channels_tab = self.create_channels_tab()
         tabs.addTab(self.create_history_tab(), read_QIcon("tab_history.png"), _('History'))
         tabs.addTab(self.send_tab, read_QIcon("tab_send.png"), _('Send'))
@@ -228,7 +229,8 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
                 tabs.addTab(tab, icon, description.replace("&", ""))
 
         add_optional_tab(tabs, self.broadcast_view_tab, read_QIcon("broadcast_recv.png"), _("&Broadcasts"))
-        add_optional_tab(tabs, self.addresses_tab, read_QIcon("tab_addresses.png"), _("&Addresses"))
+        add_optional_tab(tabs, self.atomic_swap_tab, read_QIcon("swap.png"), _("A&tomic Swaps"))
+        add_optional_tab(tabs, self.addresses_tab, read_QIcon("tab_addresses.png"), _("A&ddresses"))
         #add_optional_tab(tabs, self.channels_tab, read_QIcon("lightning.png"), _("Channels"))
         add_optional_tab(tabs, self.utxo_tab, read_QIcon("tab_coins.png"), _("Co&ins"))
         add_optional_tab(tabs, self.contacts_tab, read_QIcon("tab_contacts.png"), _("Con&tacts"))
@@ -710,6 +712,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
 
         view_menu = menubar.addMenu(_("&View"))
         add_toggle_action(view_menu, self.broadcast_view_tab)
+        add_toggle_action(view_menu, self.atomic_swap_tab)
         add_toggle_action(view_menu, self.addresses_tab)
         add_toggle_action(view_menu, self.utxo_tab)
         #add_toggle_action(view_menu, self.channels_tab)
@@ -1021,6 +1024,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         #self.channels_list.update_rows.emit(wallet)
         self.asset_tab.update()
         self.broadcast_view_tab.update()
+        self.atomic_swap_tab.update()
         self.update_completions()
 
     def refresh_tabs(self, wallet=None):
@@ -1118,6 +1122,12 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         from .broadcast_view_tab import ViewBroadcastTab
         tab = ViewBroadcastTab(self)
         tab.is_shown_cv = self.config.cv.GUI_QT_SHOW_TAB_BROADCASTS
+        return tab
+
+    def create_atomic_swap_tab(self):
+        from .atomic_swap_tab import AtomicSwapTab
+        tab = AtomicSwapTab(self)
+        tab.is_shown_cv = self.config.cv.GUI_QT_SHOW_TAB_ATOMIC_SWAPS
         return tab
 
     def get_contact_payto(self, key):

@@ -35,7 +35,7 @@ import time
 
 import attr
 
-from . import util, bitcoin
+from . import util, bitcoin, constants
 from .asset import AssetMetadata, get_error_for_asset_name
 from .util import profiler, WalletFileException, multisig_type, TxMinedInfo, bfh
 from .invoices import Invoice, Request
@@ -596,7 +596,7 @@ class WalletDB(JsonDB):
         if 'asset_blacklist' not in self.data:
             self.data['asset_blacklist'] = set()
         if 'broadcasts_to_watch' not in self.data:
-            self.data['broadcasts_to_watch'] = {'ELECTRUM_RAVENCOIN~notifications'}
+            self.data['broadcasts_to_watch'] = set(constants.net.DEFAULT_MESSAGE_CHANNELS)
         self.assets_to_watch = self.get('assets_to_watch')  # type: Set[str]
         self.broadcasts_to_watch = self.get('broadcasts_to_watch')  # type: Set[str]
         self.verified_asset_metadata = self.get_dict('verified_asset_metadata')  # type: Dict[str, Tuple[AssetMetadata, Tuple[TxOutpoint, int], Tuple[TxOutpoint, int] | None, Tuple[TxOutpoint, int] | None]]       

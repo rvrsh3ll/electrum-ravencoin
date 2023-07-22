@@ -1678,6 +1678,7 @@ class Abstract_Wallet(ABC, Logger, EventListener):
 
     def get_change_addresses_for_new_transaction(
             self, preferred_change_addr=None, *, allow_reusing_used_change_addrs: bool = True,
+            additional_change_addresses = 0
     ) -> List[str]:
         change_addrs = []
         if preferred_change_addr:
@@ -1704,7 +1705,7 @@ class Abstract_Wallet(ABC, Logger, EventListener):
             # note that change addresses are not necessarily ismine
             # in which case this is a no-op
             self.check_address_for_corruption(addr)
-        max_change = self.max_change_outputs if self.multiple_change else 1
+        max_change = (self.max_change_outputs if self.multiple_change else 1) + additional_change_addresses
         return change_addrs[:max_change]
 
     def get_single_change_address_for_new_transaction(
@@ -1749,6 +1750,7 @@ class Abstract_Wallet(ABC, Logger, EventListener):
     def make_unsigned_transaction(
             self, *,
             coins: Sequence[PartialTxInput],
+            fixed_inputs: Sequence[PartialTxInput] = None,
             outputs: List[PartialTxOutput],
             fee=None,
             change_addr: str = None,
@@ -1757,6 +1759,8 @@ class Abstract_Wallet(ABC, Logger, EventListener):
             fee_mixin=None) -> PartialTransaction:
         """Can raise NotEnoughFunds or NoDynamicFeeEstimates."""
 
+        if not fixed_inputs:
+            fixed_inputs = []
         if not coins:  # any bitcoin tx must have at least 1 input by consensus
             raise NotEnoughFunds()
         if any([c.already_has_some_signatures() for c in coins]):
@@ -1824,10 +1828,11 @@ class Abstract_Wallet(ABC, Logger, EventListener):
                 txo = []
                 old_change_addrs = []
             # change address. if empty, coin_chooser will set it
-            change_addrs = self.get_change_addresses_for_new_transaction(change_addr or old_change_addrs)
+            possible_change_addresses_needed = {i.asset for i in txi + fixed_inputs}.union({o.asset for o in outputs + txo}).difference({None})
+            change_addrs = self.get_change_addresses_for_new_transaction(change_addr or old_change_addrs, additional_change_addresses=len(possible_change_addresses_needed))
             tx = coin_chooser.make_tx(
                 coins=coins,
-                inputs=txi,
+                inputs=txi + fixed_inputs,
                 outputs=list(outputs) + txo,
                 change_addrs=change_addrs,
                 fee_estimator_vb=fee_estimator,

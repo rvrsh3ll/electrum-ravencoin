@@ -5,6 +5,7 @@ import hashlib
 from enum import Enum, auto
 from typing import Optional, Sequence, Mapping, Union, TYPE_CHECKING
 
+from . import constants
 from .bitcoin import address_to_script, construct_script, int_to_hex, opcodes, COIN, base_decode, base_encode, _op_push
 from .i18n import _
 
@@ -24,7 +25,6 @@ DEFAULT_ASSET_AMOUNT_MAX = 21_000_000_000
 UNIQUE_ASSET_AMOUNT_MAX = 1
 QUALIFIER_ASSET_AMOUNT_MAX = 10
 
-RVN_ASSET_PREFIX = b'rvn'
 RVN_ASSET_TYPE_CREATE = b'q'
 RVN_ASSET_TYPE_CREATE_INT = RVN_ASSET_TYPE_CREATE[0]
 RVN_ASSET_TYPE_OWNER = b'o'
@@ -217,7 +217,7 @@ def generate_create_script(address: str, asset: str, amount: int, divisions: int
     if associated_data and len(associated_data) != 34:
         raise AssetException('Bad data')
 
-    asset_data = (f'{RVN_ASSET_PREFIX.hex()}{RVN_ASSET_TYPE_CREATE.hex()}'
+    asset_data = (f'{constants.net.ASSET_PREFIX.hex()}{RVN_ASSET_TYPE_CREATE.hex()}'
                   f'{int_to_hex(len(asset))}{asset.encode().hex()}'
                   f'{int_to_hex(amount, 8)}{int_to_hex(divisions)}'
                   f"{'01' if reissuable else '00'}{'01' if associated_data else '00'}"
@@ -236,7 +236,7 @@ def generate_reissue_script(address: str, asset: str, amount: int, divisions: in
     if associated_data and len(associated_data) != 34:
         raise AssetException('Bad data')
 
-    asset_data = (f'{RVN_ASSET_PREFIX.hex()}{RVN_ASSET_TYPE_REISSUE.hex()}'
+    asset_data = (f'{constants.net.ASSET_PREFIX.hex()}{RVN_ASSET_TYPE_REISSUE.hex()}'
                   f'{int_to_hex(len(asset))}{asset.encode().hex()}'
                   f'{int_to_hex(amount, 8)}{int_to_hex(divisions)}'
                   f"{'01' if reissuable else '00'}"
@@ -255,14 +255,14 @@ def generate_owner_script_from_base(asset: str, base_script: str) -> 'str':
     if error := get_error_for_asset_name(asset):
         raise AssetException(f'Bad asset: {asset} {error}')
     
-    asset_data = (f'{RVN_ASSET_PREFIX.hex()}{RVN_ASSET_TYPE_OWNER.hex()}'
+    asset_data = (f'{constants.net.ASSET_PREFIX.hex()}{RVN_ASSET_TYPE_OWNER.hex()}'
                   f'{int_to_hex(len(asset))}{asset.encode().hex()}')
     
     asset_script = construct_script([opcodes.OP_ASSET, asset_data, opcodes.OP_DROP])
     return base_script + asset_script
 
 def _asset_portion_of_transfer_script(asset: str, amount: int, *, memo: 'AssetMemo' = None) -> str:
-    asset_data = (f'{RVN_ASSET_PREFIX.hex()}{RVN_ASSET_TYPE_TRANSFER.hex()}'
+    asset_data = (f'{constants.net.ASSET_PREFIX.hex()}{RVN_ASSET_TYPE_TRANSFER.hex()}'
                   f'{int_to_hex(len(asset))}{asset.encode().hex()}'
                   f'{int_to_hex(amount, 8)}{memo.hex() if memo else ""}')
     asset_script = construct_script([opcodes.OP_ASSET, asset_data, opcodes.OP_DROP])
@@ -477,10 +477,10 @@ def get_asset_info_from_script(script: bytes) -> BaseAssetVoutInformation:
                             remaining_matches = (op_push_prefix + decoded[i+1][1] + b'\x75') == asset_portion
                     well_formed = decoded_has_good_length and next_op_is_a_push and remaining_matches
                     
-                    asset_prefix_position = asset_portion.find(RVN_ASSET_PREFIX)
+                    asset_prefix_position = asset_portion.find(constants.net.ASSET_PREFIX)
                     if asset_prefix_position < 0: break
-                    if len(asset_portion) < len(RVN_ASSET_PREFIX) + 3: break
-                    reader = ByteReader(asset_portion[asset_prefix_position + len(RVN_ASSET_PREFIX):])
+                    if len(asset_portion) < len(constants.net.ASSET_PREFIX) + 3: break
+                    reader = ByteReader(asset_portion[asset_prefix_position + len(constants.net.ASSET_PREFIX):])
                     vout_type = reader.read_bytes(1)
                     if vout_type == RVN_ASSET_TYPE_CREATE:
                         asset_vout_type = AssetVoutType.CREATE
