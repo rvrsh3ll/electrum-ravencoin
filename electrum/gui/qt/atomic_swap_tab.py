@@ -22,6 +22,13 @@ class DummySearchableList:
     def filter(self, x):
         pass
 
+class CreateSwapWidget(QWidget, Logger):
+    def __init__(self, parent: 'AtomicSwapTab'):
+        QWidget.__init__(self)
+        Logger.__init__(self)
+
+        self.parent = parent
+
 class RedeemSwapWidget(QWidget, Logger):
     input_info_signal = pyqtSignal(str, str, bool)
 
@@ -247,6 +254,7 @@ class AtomicSwapTab(QWidget, MessageBoxMixin, Logger):
         self.network = window.network
 
         self.redeem_tab = RedeemSwapWidget(self)
+        self.create_tab = CreateSwapWidget(self)
 
         self.tabs = tabs = QTabWidget(self)
         tabs.addTab(self.redeem_tab, read_QIcon('redeem.png'), _('Redeem'))

@@ -131,6 +131,7 @@ class RavencoinMainnet(AbstractNet):
     DEFAULT_MESSAGE_CHANNELS = ['ELECTRUM_RAVENCOIN~notifications']
     ASSET_PREFIX = b'rvn'
     SHORT_NAME = 'RVN'
+    MULTISIG_ASSETS = False
 
     XPRV_HEADERS = {
         'standard': 0x0488ade4,  # xprv
@@ -206,7 +207,8 @@ class RavencoinTestnet(AbstractNet):
     DEFAULT_MESSAGE_CHANNELS = []
     ASSET_PREFIX = b'rvn'
     SHORT_NAME = 'tRVN'
-
+    MULTISIG_ASSETS = False
+    
     XPRV_HEADERS = {
         'standard': 0x04358394,  # tprv
         'p2wpkh-p2sh': 0x044a4e28,  # uprv

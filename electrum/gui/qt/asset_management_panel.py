@@ -525,7 +525,7 @@ class CreateAssetPanel(ManageAssetPanel):
             return _('Not a valid base58 address')
         if input:
             _type, h160 = b58_address_to_hash160(input)
-            if _type != constants.net.ADDRTYPE_P2PKH:
+            if _type != constants.net.ADDRTYPE_P2PKH and not constants.net.MULTISIG_ASSETS:
                 return _('Assets must be sent to a P2PKH address')
         verifier_string = self.verifier_e.line_edit.text()
         if asset_type[1] == AssetType.RESTRICTED and verifier_string and verifier_string != 'true':
@@ -1118,7 +1118,7 @@ class ReissueAssetPanel(ManageAssetPanel):
             return _('Not a valid address')
         if input:
             _type, h160 = b58_address_to_hash160(input)
-            if _type != constants.net.ADDRTYPE_P2PKH:
+            if _type != constants.net.ADDRTYPE_P2PKH and not constants.net.MULTISIG_ASSETS:
                 return _('Assets must be sent to a P2PKH address')
         verifier_string = self.verifier_e.line_edit.text()
         if selected_asset and selected_asset[0] == '$' and verifier_string and verifier_string != 'true':

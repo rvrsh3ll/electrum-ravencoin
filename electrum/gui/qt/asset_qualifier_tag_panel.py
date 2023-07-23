@@ -222,7 +222,7 @@ class TagAddress(QWidget):
             if not is_b58_address(input): 
                 return _('Not a valid address')
             _type, h160 = b58_address_to_hash160(input)
-            if _type != constants.net.ADDRTYPE_P2PKH:
+            if _type != constants.net.ADDRTYPE_P2PKH and not constants.net.MULTISIG_ASSETS:
                 return _('Must be a P2PKH address')
             self._address_is_ok = True
             self.send_button.setEnabled(not self.selected_asset_in_mempool and self._address_is_ok)
