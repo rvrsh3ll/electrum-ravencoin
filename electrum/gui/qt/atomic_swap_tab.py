@@ -150,7 +150,7 @@ class RedeemSwapWidget(QWidget, Logger):
             self.pay_edit.setText(pay_text)
 
         except Exception as e:
-            self.logger.info(f'Failed to parse transaction: {e}')
+            self.logger.info(f'Failed to parse transaction: {e} ({e.__class__})')
             self.input.setStyleSheet(ColorScheme.RED.as_stylesheet(True))
 
     def _redeem(self):

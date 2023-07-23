@@ -703,13 +703,6 @@ class CreateAssetPanel(ManageAssetPanel):
             output_amounts[f'{asset}!']: COIN
 
         def make_tx(fee_est, *, confirmed_only=False):
-            if not goto_address:
-                # Freeze a change address so it is seperate from the rvn change
-                self.parent.wallet.set_reserved_state_of_address(asset_change_address, reserved=True)
-
-            if parent_asset_change_address:
-                self.parent.wallet.set_reserved_state_of_address(parent_asset_change_address, reserved=True)
-
             appended_vouts = []
             if asset_type == AssetType.RESTRICTED:
                 # https://github.com/RavenProject/Ravencoin/blob/e48d932ec70267a62ec3541bdaf4fe022c149f0e/src/assets/assets.cpp#L4567
@@ -740,21 +733,27 @@ class CreateAssetPanel(ManageAssetPanel):
             
                 return new_fee_estimator
 
-            tx = self.parent.wallet.make_unsigned_transaction(
-                coins=self.parent.window.get_coins(nonlocal_only=False, confirmed_only=confirmed_only),
-                outputs=outputs,
-                fee=fee_est,
-                rbf=False,
-                fee_mixin=fee_mixin
-            )
+            try:
+                if not goto_address:
+                    # Freeze a change address so it is seperate from the rvn change
+                    self.parent.wallet.set_reserved_state_of_address(asset_change_address, reserved=True)
+                if parent_asset_change_address:
+                    self.parent.wallet.set_reserved_state_of_address(parent_asset_change_address, reserved=True)
+
+                tx = self.parent.wallet.make_unsigned_transaction(
+                    coins=self.parent.window.get_coins(nonlocal_only=False, confirmed_only=confirmed_only),
+                    outputs=outputs,
+                    fee=fee_est,
+                    rbf=False,
+                    fee_mixin=fee_mixin
+                )
+            finally:
+                if not goto_address:
+                    self.parent.wallet.set_reserved_state_of_address(asset_change_address, reserved=False)
+                if parent_asset_change_address:
+                    self.parent.wallet.set_reserved_state_of_address(parent_asset_change_address, reserved=False)
 
             tx.add_outputs(appended_vouts, do_sort=False)
-
-            if not goto_address:
-                self.parent.wallet.set_reserved_state_of_address(asset_change_address, reserved=False)
-            
-            if parent_asset_change_address:
-                self.parent.wallet.set_reserved_state_of_address(parent_asset_change_address, reserved=False)
 
             return tx
 
@@ -922,12 +921,6 @@ class ReissueAssetPanel(ManageAssetPanel):
             self.parent.wallet.set_reserved_state_of_address(asset_change_address, reserved=False)
 
         def make_tx(fee_est, *, confirmed_only=False):
-            if not goto_address:
-                # Freeze a change address so it is seperate from the rvn change
-                self.parent.wallet.set_reserved_state_of_address(asset_change_address, reserved=True)
-
-            self.parent.wallet.set_reserved_state_of_address(parent_asset_change_address, reserved=True)
-
             appended_vouts = []
             verifier_string = self.verifier_e.line_edit.text()
             if selected_asset[0] == '$':
@@ -961,21 +954,25 @@ class ReissueAssetPanel(ManageAssetPanel):
             
                 return new_fee_estimator
 
-            tx = self.parent.wallet.make_unsigned_transaction(
-                coins=self.parent.window.get_coins(nonlocal_only=False, confirmed_only=confirmed_only),
-                outputs=outputs,
-                fee=fee_est,
-                rbf=False,
-                fee_mixin=fee_mixin
-            )
+            try:
+                if not goto_address:
+                    # Freeze a change address so it is seperate from the rvn change
+                    self.parent.wallet.set_reserved_state_of_address(asset_change_address, reserved=True)
+                self.parent.wallet.set_reserved_state_of_address(parent_asset_change_address, reserved=True)
+
+                tx = self.parent.wallet.make_unsigned_transaction(
+                    coins=self.parent.window.get_coins(nonlocal_only=False, confirmed_only=confirmed_only),
+                    outputs=outputs,
+                    fee=fee_est,
+                    rbf=False,
+                    fee_mixin=fee_mixin
+                )
+            finally:
+                if not goto_address:
+                    self.parent.wallet.set_reserved_state_of_address(asset_change_address, reserved=False)
+                self.parent.wallet.set_reserved_state_of_address(parent_asset_change_address, reserved=False)
 
             tx.add_outputs(appended_vouts, do_sort=False)
-
-            if not goto_address:
-                self.parent.wallet.set_reserved_state_of_address(asset_change_address, reserved=False)
-            
-            if parent_asset_change_address:
-                self.parent.wallet.set_reserved_state_of_address(parent_asset_change_address, reserved=False)
 
             return tx
 

@@ -141,7 +141,6 @@ class FreezePanel(QWidget):
         outputs = [parent_change_output]
 
         def make_tx(fee_est, *, confirmed_only=False):
-            self.parent.parent.wallet.set_reserved_state_of_address(parent_asset_change_address, reserved=True)
 
             tag_vout_script = generate_freeze_tag(f'${self.current_asset[:-1]}', not self.current_frozen)
             tag_vout = PartialTxOutput(scriptpubkey=bytes.fromhex(tag_vout_script), value=0)
@@ -155,17 +154,19 @@ class FreezePanel(QWidget):
             
                 return new_fee_estimator
 
-            tx = self.parent.parent.wallet.make_unsigned_transaction(
-                coins=self.parent.parent.window.get_coins(nonlocal_only=False, confirmed_only=confirmed_only),
-                outputs=outputs,
-                fee=fee_est,
-                rbf=False,
-                fee_mixin=fee_mixin
-            )
+            try:
+                self.parent.parent.wallet.set_reserved_state_of_address(parent_asset_change_address, reserved=True)
+                tx = self.parent.parent.wallet.make_unsigned_transaction(
+                    coins=self.parent.parent.window.get_coins(nonlocal_only=False, confirmed_only=confirmed_only),
+                    outputs=outputs,
+                    fee=fee_est,
+                    rbf=False,
+                    fee_mixin=fee_mixin
+                )
+            finally:
+                self.parent.parent.wallet.set_reserved_state_of_address(parent_asset_change_address, reserved=False)
 
             tx.add_outputs([tag_vout], do_sort=False)
-
-            self.parent.parent.wallet.set_reserved_state_of_address(parent_asset_change_address, reserved=False)
 
             return tx
 

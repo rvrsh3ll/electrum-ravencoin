@@ -303,8 +303,6 @@ class TagAddress(QWidget):
         outputs = [burn_output, parent_change_output]
 
         def make_tx(fee_est, *, confirmed_only=False):
-            self.parent.wallet.set_reserved_state_of_address(parent_asset_change_address, reserved=True)
-
             tag_vout_script = generate_null_tag(tagger, h160.hex(), flag)
             tag_vout = PartialTxOutput(scriptpubkey=bytes.fromhex(tag_vout_script), value=0)
             tag_vout_size = len(tag_vout.serialize_to_network())
@@ -317,18 +315,20 @@ class TagAddress(QWidget):
             
                 return new_fee_estimator
 
-            tx = self.parent.wallet.make_unsigned_transaction(
-                coins=self.parent.parent.window.get_coins(nonlocal_only=False, confirmed_only=confirmed_only),
-                outputs=outputs,
-                fee=fee_est,
-                rbf=False,
-                fee_mixin=fee_mixin
-            )
+            try:
+                self.parent.wallet.set_reserved_state_of_address(parent_asset_change_address, reserved=True)
+
+                tx = self.parent.wallet.make_unsigned_transaction(
+                    coins=self.parent.parent.window.get_coins(nonlocal_only=False, confirmed_only=confirmed_only),
+                    outputs=outputs,
+                    fee=fee_est,
+                    rbf=False,
+                    fee_mixin=fee_mixin
+                )
+            finally:
+                self.parent.wallet.set_reserved_state_of_address(parent_asset_change_address, reserved=False)
 
             tx.add_outputs([tag_vout], do_sort=False)
-
-            self.parent.wallet.set_reserved_state_of_address(parent_asset_change_address, reserved=False)
-
             return tx
 
         conf_dlg = ConfirmTxDialog(window=self.parent.parent.window, make_tx=make_tx, output_value=output_amounts)
