@@ -993,15 +993,19 @@ def block_explorer_URL(config: 'SimpleConfig', kind: str, item: str) -> Optional
 
 
 ipfs_explorers = {
-    'ipfs.scalaproject.io': ('https://ipfs.scalaproject.io/',
-                {'ipfs': 'ipfs/'}),
     'cloudflare-ipfs.com': ('https://cloudflare-ipfs.com/',
                 {'ipfs': 'ipfs/'}),
-    'ipfs.scalaproject.io': ('https://ipfs.scalaproject.io/',
+    'dweb.link': ('https://dweb.link.com/',
                 {'ipfs': 'ipfs/'}),
-    'nftstorage.link': ('https://nftstorage.link/',
+    'ipfs.io': ('https://ipfs.io/',
                 {'ipfs': 'ipfs/'}),
     'ipfs.chaintek.net': ('https://ipfs.chaintek.net/',
+                {'ipfs': 'ipfs/'}),
+    'hardbin.com': ('https://hardbin.com/',
+                {'ipfs': 'ipfs/'}),
+    'cf-ipfs.com': ('https://cf-ipfs.com/',
+                {'ipfs': 'ipfs/'}),
+    'nftstorage.link': ('https://nftstorage.link/',
                 {'ipfs': 'ipfs/'})
 }
 
@@ -1011,23 +1015,23 @@ def ipfs_explorer_info():
     return ipfs_explorers
 
 
-def ipfs_explorer(config: 'SimpleConfig') -> Optional[str]:
+def ipfs_explorer(config: 'SimpleConfig', *, prefered_gateway=None) -> Optional[str]:
     """Returns name of selected ipfs explorer,
     or None if a custom one (not among hardcoded ones) is configured.
     """
-    if config.IPFS_EXPLORER_CUSTOM is not None:
+    if config.IPFS_EXPLORER_CUSTOM is not None and not prefered_gateway:
         return None
     be_key = config.IPFS_EXPLORER
-    be_tuple = ipfs_explorer_info().get(be_key)
+    be_tuple = ipfs_explorer_info().get(prefered_gateway or be_key)
     if be_tuple is None:
         be_key = config.cv.IPFS_EXPLORER.get_default_value()
     assert isinstance(be_key, str), f"{be_key!r} should be str"
-    return be_key
+    return prefered_gateway or be_key
 
 
-def ipfs_explorer_tuple(config: 'SimpleConfig') -> Optional[Tuple[str, dict]]:
+def ipfs_explorer_tuple(config: 'SimpleConfig', *, prefered_gateway=None) -> Optional[Tuple[str, dict]]:
     custom_be = config.IPFS_EXPLORER_CUSTOM
-    if custom_be:
+    if custom_be and not prefered_gateway:
         if isinstance(custom_be, str):
             return custom_be, _ipfs_explorer_default_api_loc
         if isinstance(custom_be, (tuple, list)) and len(custom_be) == 2:
@@ -1037,13 +1041,16 @@ def ipfs_explorer_tuple(config: 'SimpleConfig') -> Optional[Tuple[str, dict]]:
         return None
     else:
         # using one of the hardcoded ipfs explorers
-        return ipfs_explorer_info().get(ipfs_explorer(config))
+        return ipfs_explorer_info().get(ipfs_explorer(config, prefered_gateway=prefered_gateway))
 
 
 def ipfs_explorer_URL(config: 'SimpleConfig', kind: str, item: str) -> Optional[str]:
     be_tuple = ipfs_explorer_tuple(config)
     if not be_tuple:
         return
+    return ipfs_url_from_tuple(be_tuple, kind, item)
+    
+def ipfs_url_from_tuple(be_tuple, kind: str, item: str) -> Optional[str]:
     explorer_url, explorer_dict = be_tuple
     kind_str = explorer_dict.get(kind)
     if kind_str is None:
@@ -1053,6 +1060,17 @@ def ipfs_explorer_URL(config: 'SimpleConfig', kind: str, item: str) -> Optional[
     url_parts = [explorer_url, kind_str, item]
     return ''.join(url_parts)
 
+def ipfs_explorer_round_robin(config: 'SimpleConfig', kind: str, item: str, *, prefered_gateway=None) -> Iterable[Tuple[str, str]]:
+    be_tuple = ipfs_explorer_tuple(config, prefered_gateway=prefered_gateway)
+    current_explorer = ipfs_explorer(config, prefered_gateway=prefered_gateway)
+    if be_tuple:
+        yield current_explorer, ipfs_url_from_tuple(be_tuple, kind, item)
+    keys = [k for k in ipfs_explorer_info().keys()]
+    for k in keys:
+        if k == current_explorer: continue
+        tup = ipfs_explorer_info().get(k, None)
+        if tup:
+            yield k, ipfs_url_from_tuple(tup, kind, item)
 
 # URL decode
 #_ud = re.compile('%([0-9a-hA-H]{2})', re.MULTILINE)

@@ -33,6 +33,7 @@ import queue
 import traceback
 import os
 import webbrowser
+from collections import defaultdict
 from decimal import Decimal
 from functools import partial, lru_cache, wraps
 from typing import (NamedTuple, Callable, Optional, TYPE_CHECKING, Union, List, Dict, Any,
@@ -69,6 +70,7 @@ if TYPE_CHECKING:
 
 
 class MyMenu(QMenu):
+    duplicate_map = defaultdict(set)
 
     def __init__(self, config):
         QMenu.__init__(self)
@@ -84,18 +86,20 @@ class MyMenu(QMenu):
     def addConfig(self, text: str, configvar: 'ConfigVarWithConfig', *, tooltip='', callback=None) -> QAction:
         assert isinstance(configvar, ConfigVarWithConfig), configvar
         b = configvar.get()
-        m = self.addAction(text, lambda: self._do_toggle_config(configvar, callback=callback))
+        m = self.addAction(text, lambda: self._do_toggle_config(configvar))
         m.setCheckable(True)
         m.setChecked(bool(b))
         m.setToolTip(tooltip)
+        self.duplicate_map[configvar.key()].add((m, callback))
         return m
 
-    def _do_toggle_config(self, configvar: 'ConfigVarWithConfig', *, callback):
+    def _do_toggle_config(self, configvar: 'ConfigVarWithConfig'):
         b = configvar.get()
         configvar.set(not b)
-        if callback:
-            callback()
-
+        for m, c in self.duplicate_map[configvar.key()]:
+            m.setChecked(bool(not b))
+            if c:
+                c()
 
 def create_toolbar_with_menu(config: 'SimpleConfig', title):
     menu = MyMenu(config)

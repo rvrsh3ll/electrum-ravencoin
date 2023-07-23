@@ -251,6 +251,7 @@ class ViewBroadcastTab(QWidget, Logger, MessageBoxMixin):
         menu.addConfig(_('Download IPFS'), window.config.cv.DOWNLOAD_IPFS, callback=self.ipfs_viewer.update_visibility)
         menu.addConfig(_('Display Downloaded IPFS'), window.config.cv.SHOW_IPFS, callback=self.ipfs_viewer.update_visibility)
         menu.addConfig(_('Show Metadata Sources'), window.config.cv.SHOW_METADATA_SOURCE, callback=self.update_visibility)
+        menu.addConfig(_('Lookup IPFS using all gateways'), window.config.cv.ROUND_ROBIN_ALL_KNOWN_IPFS_GATEWAYS)
 
         toolbar_button = QToolButton()
         toolbar_button.setIcon(read_QIcon("preferences.png"))

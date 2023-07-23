@@ -37,6 +37,7 @@ import concurrent
 from concurrent import futures
 import copy
 import functools
+import urllib.parse
 from enum import IntEnum
 
 import aiorpcx
@@ -1377,6 +1378,9 @@ class Network(Logger, NetworkRetryManager[ServerAddr]):
             on_finish = default_on_finish
         network = cls.get_instance()
         proxy = network.proxy if network else None
+        if proxy and util.is_localhost(urllib.parse.urlparse(url).netloc.split(':')[0]):
+            get_logger('async_send_http_on_proxy').info('Looks like localhost: not using proxy for this url')
+            proxy = None
         async with make_aiohttp_session(proxy, timeout=timeout) as session:
             if method == 'get':
                 async with session.get(url, params=params, headers=headers) as resp:

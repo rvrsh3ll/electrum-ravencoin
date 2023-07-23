@@ -1400,7 +1400,7 @@ class AutoResizingTextEdit(QTextEdit):
         document = self.document()
         fontMetrics = QFontMetrics(document.defaultFont())
         self.fontSpacing = fontMetrics.lineSpacing()
-        self.setSizePolicy(QtWidgets.QSizePolicy.MinimumExpanding, QtWidgets.QSizePolicy.Fixed)
+        self.setSizePolicy(QtWidgets.QSizePolicy.MinimumExpanding, QtWidgets.QSizePolicy.MinimumExpanding)
 
     def hasHeightForWidth(self):
         return True
@@ -1502,11 +1502,11 @@ class IPFSViewer(QWidget, QtEventListener):
         self.associated_data_view_image.setVisible(False)
         self.associated_data_view_image.setAlignment(Qt.AlignLeft)
 
-        self.associated_data_view_text = AutoResizingTextEdit()
+        self.associated_data_view_text = AutoResizingTextEdit(max_rows=8)
         self.associated_data_view_text.setReadOnly(True)
         self.associated_data_view_text.setAlignment(Qt.AlignVCenter)
         self.associated_data_view_text.setVisible(False)
-        
+
         associated_data_info_layout = QVBoxLayout()
         associated_data_info_layout.addLayout(associated_data_type_layout)
         associated_data_info_layout.addWidget(self.associated_data_text)
