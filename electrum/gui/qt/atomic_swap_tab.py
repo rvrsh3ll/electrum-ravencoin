@@ -258,6 +258,7 @@ class AtomicSwapTab(QWidget, MessageBoxMixin, Logger):
 
         self.tabs = tabs = QTabWidget(self)
         tabs.addTab(self.redeem_tab, read_QIcon('redeem.png'), _('Redeem'))
+        tabs.addTab(self.create_tab, read_QIcon('unconfirmed.png'), _('Create'))
         tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         vbox = QVBoxLayout(self)
         vbox.addWidget(self.tabs)
@@ -266,4 +267,6 @@ class AtomicSwapTab(QWidget, MessageBoxMixin, Logger):
         
     def update(self):
         self.redeem_tab.update()
+        self.create_tab.update()
         super().update()
+    

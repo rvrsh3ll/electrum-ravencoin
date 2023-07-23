@@ -1657,8 +1657,8 @@ class IPFSViewer(QWidget, QtEventListener):
 
                         async def download_all_ipfs_data():
                             # Ensure data tries to download even if we have the info
-                            await IPFSDB.get_instance().maybe_get_info_for_ipfs_hash(self.window.network, ipfs_str, asset)
                             await IPFSDB.get_instance().maybe_download_data_for_ipfs_hash(self.window.network, ipfs_str)
+                            await IPFSDB.get_instance().maybe_get_info_for_ipfs_hash(self.window.network, ipfs_str, asset)
 
                         self.window.network.run_from_another_thread(download_all_ipfs_data())
                         #self.window.run_coroutine_from_thread(download_all_ipfs_data(), ipfs_str)

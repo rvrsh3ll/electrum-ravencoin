@@ -128,7 +128,7 @@ class RavencoinMainnet(AbstractNet):
     KawpowActivationHeight = 1219736
     nDGWActivationBlock = 338778
 
-    DEFAULT_MESSAGE_CHANNELS = ['ELECTRUM_RAVENCOIN~notifications']
+    DEFAULT_MESSAGE_CHANNELS = ['ELECTRUM_RAVENCOIN~notification']
     ASSET_PREFIX = b'rvn'
     SHORT_NAME = 'RVN'
     MULTISIG_ASSETS = False
