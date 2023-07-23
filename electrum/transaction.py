@@ -1466,7 +1466,7 @@ class PartialTxInput(TxInput, PSBTSection):
         self._is_native_segwit = None  # type: Optional[bool]  # None means unknown
         self.witness_sizehint = None  # type: Optional[int]  # byte size of serialized complete witness, for tx size est
 
-        self._for_swap = False
+        self._fixed_nsequence = False
 
     @property
     def witness_utxo(self):
@@ -2139,7 +2139,7 @@ class PartialTransaction(Transaction):
     def set_rbf(self, rbf: bool) -> None:
         nSequence = 0xffffffff - (2 if rbf else 1)
         for txin in self.inputs():
-            if txin._for_swap: continue
+            if txin._fixed_nsequence: continue
             txin.nsequence = nSequence
         self.invalidate_ser_cache()
 
@@ -2186,11 +2186,36 @@ class PartialTransaction(Transaction):
             nSequence = int_to_hex(txin.nsequence, 4)
             preimage = nVersion + hashPrevouts + hashSequence + outpoint + scriptCode + amount + nSequence + hashOutputs + nLocktime + nHashType
         else:
-            if sighash != Sighash.ALL:
-                raise Exception(f"SIGHASH_FLAG ({sighash}) not supported! (for legacy sighash)")
-            txins = var_int(len(inputs)) + ''.join(txin.serialize_to_network(script_sig=bfh(preimage_script) if txin_index==k else b"").hex()
-                                                   for k, txin in enumerate(inputs))
-            txouts = var_int(len(outputs)) + ''.join(o.serialize_to_network().hex() for o in outputs)
+            if sighash & Sighash.ANYONECANPAY:
+                txins = var_int(1) + txin.serialize_to_network(script_sig=bfh(preimage_script)).hex()
+            else:
+                input_serializations = []
+                for k, txin in enumerate(inputs):
+                    if ((sighash & 0x1f) == Sighash.NONE or (sighash & 0x1f) == Sighash.SINGLE) and txin_index != k:
+                        txin = PartialTxInput.from_txin(txin, strip_witness=False)
+                        txin.nsequence = 0
+                    serialization = txin.serialize_to_network(script_sig=bfh(preimage_script) if txin_index==k else b"").hex()
+                    input_serializations.append(serialization)
+
+                txins = var_int(len(inputs)) + ''.join(input_serializations)
+
+            if (sighash & 0x1f) == Sighash.NONE:
+                txouts = var_int(0)
+            elif (sighash & 0x1f) == Sighash.SINGLE:
+                if txin_index >= len(outputs):
+                    raise Exception('Not enough outputs for SIGHASH_SINGLE!')
+                output_serializations = []
+                for k, txout in enumerate(outputs):
+                    if k > txin_index: break
+                    if k < txin_index:
+                        txout = PartialTxOutput.from_txout(txout)
+                        txout.scriptpubkey = b''
+                        txout.value = (1 << 64) - 1
+                    serialization = txout.serialize_to_network().hex()
+                    output_serializations.append(serialization)
+                txouts = var_int(len(output_serializations) + ''.join(output_serializations))
+            else:
+                txouts = var_int(len(outputs)) + ''.join(o.serialize_to_network().hex() for o in outputs)
             preimage = nVersion + txins + txouts + nLocktime + nHashType
         return preimage
 

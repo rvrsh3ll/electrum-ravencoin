@@ -162,7 +162,7 @@ class RedeemSwapWidget(QWidget, Logger):
             p_in = PartialTxInput.from_txin(input, strip_witness=False)
             p_in._trusted_asset = asset
             p_in._trusted_value_sats = amount
-            p_in._for_swap = True
+            p_in._fixed_nsequence = True
             additional_inputs.append(p_in)
         
         psbt = PartialTransaction.from_tx(self.current_transaction)
