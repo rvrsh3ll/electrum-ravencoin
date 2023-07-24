@@ -228,14 +228,15 @@ class ManageAssetPanel(QWidget, Logger):
             for qualifier in qualifiers:
                 if not self.parent.network:
                     self.verifier_e.show_error(_("You are offline."))
+                    self.verifier_is_ok = True
+                    self._maybe_enable_pay_button()
                     return
                 try:
                     raw_metadata = await self.parent.network.get_asset_metadata(qualifier)
-                except UntrustedServerReturnedError as e:
-                    self.verifier_e.show_error(_("Error getting asset from network") + ":\n" + e.get_message_for_gui())
-                    return
                 except Exception as e:
                     self.verifier_e.show_error(_("Error getting asset from network") + ":\n" + repr(e))
+                    self.verifier_is_ok = True
+                    self._maybe_enable_pay_button()
                     return
                 if raw_metadata:
                     self.verifier_is_ok = True
@@ -477,14 +478,15 @@ class CreateAssetPanel(ManageAssetPanel):
 
         if not self.parent.network:
             self.asset_checker.show_error(_("You are offline."))
+            self.asset_is_ok = True
+            self._maybe_enable_pay_button()
             return
         try:
             raw_metadata = await self.parent.network.get_asset_metadata(asset)
-        except UntrustedServerReturnedError as e:
-            self.asset_checker.show_error(_("Error getting asset from network") + ":\n" + e.get_message_for_gui())
-            return
         except Exception as e:
             self.asset_checker.show_error(_("Error getting asset from network") + ":\n" + repr(e))
+            self.asset_is_ok = True
+            self._maybe_enable_pay_button()
             return
         if raw_metadata:
             # Cannot create
@@ -563,14 +565,15 @@ class CreateAssetPanel(ManageAssetPanel):
         elif maybe_flag is None:
             if not self.parent.network:
                 self.payto_e.show_error(_("You are offline."))
+                self.address_is_ok = True
+                self._maybe_enable_pay_button()
                 return
             try:
                 result = await self.parent.network.check_tag_for_h160(restricted_asset_name, h160_h)
-            except UntrustedServerReturnedError as e:
-                self.payto_e.show_error(_("Error getting restricted status from network") + ":\n" + e.get_message_for_gui())
-                return
             except Exception as e:
                 self.payto_e.show_error(_("Error getting restricted status from network") + ":\n" + repr(e))
+                self.address_is_ok = True
+                self._maybe_enable_pay_button()
                 return
             is_qual = result.get('flag', False)
             assert isinstance(is_qual, bool)
@@ -587,14 +590,15 @@ class CreateAssetPanel(ManageAssetPanel):
             
             if not self.parent.network:
                 self.payto_e.show_error(_("You are offline."))
+                self.address_is_ok = True
+                self._maybe_enable_pay_button()
                 return
             try:
                 result = await self.parent.network.get_tags_for_h160(h160_h)
-            except UntrustedServerReturnedError as e:
-                self.payto_e.show_error(_("Error getting qualifier status from network") + ":\n" + e.get_message_for_gui())
-                return
             except Exception as e:
                 self.payto_e.show_error(_("Error getting qualifier status from network") + ":\n" + repr(e))
+                self.address_is_ok = True
+                self._maybe_enable_pay_button()
                 return
             
             for asset, d in result.items():

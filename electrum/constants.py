@@ -28,9 +28,9 @@ import json
 
 from typing import NamedTuple, Union
 
-from .util import inv_dict, all_subclasses
-from . import bitcoin
-
+# Can't import from util due to circular
+def inv_dict(d):
+    return {v: k for k, v in d.items()}
 
 def read_json(filename, default):
     path = os.path.join(os.path.dirname(__file__), filename)
@@ -102,6 +102,7 @@ class AbstractNet:
 
     @classmethod
     def rev_genesis_bytes(cls) -> bytes:
+        from . import bitcoin
         return bytes.fromhex(bitcoin.rev_hex(cls.GENESIS))
 
 
@@ -131,6 +132,8 @@ class RavencoinMainnet(AbstractNet):
     DEFAULT_MESSAGE_CHANNELS = ['ELECTRUM_RAVENCOIN~notification']
     ASSET_PREFIX = b'rvn'
     SHORT_NAME = 'RVN'
+    LONG_NAME = 'Ravencoin'
+
     MULTISIG_ASSETS = False
 
     XPRV_HEADERS = {
@@ -207,6 +210,7 @@ class RavencoinTestnet(AbstractNet):
     DEFAULT_MESSAGE_CHANNELS = []
     ASSET_PREFIX = b'rvn'
     SHORT_NAME = 'tRVN'
+    LONG_NAME = 'Ravencoin'
     MULTISIG_ASSETS = False
     
     XPRV_HEADERS = {
@@ -251,6 +255,13 @@ class RavencoinTestnet(AbstractNet):
         GlobalBurnAddress='n1BurnXXXXXXXXXXXXXXXXXXXXXXU1qejP'
     )
 
+
+def all_subclasses(cls):
+    """Return all (transitive) subclasses of cls."""
+    res = set(cls.__subclasses__())
+    for sub in res.copy():
+        res |= all_subclasses(sub)
+    return res
 
 NETS_LIST = tuple(all_subclasses(AbstractNet))
 

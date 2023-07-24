@@ -28,11 +28,11 @@ from PyQt5.QtWidgets import (QPushButton, QLabel, QMessageBox, QHBoxLayout, QGri
                              QHeaderView, QApplication, QToolTip, QTreeWidget, QStyledItemDelegate,
                              QMenu, QStyleOptionViewItem, QLayout, QLayoutItem, QAbstractButton,
                              QGraphicsEffect, QGraphicsScene, QGraphicsPixmapItem, QSizePolicy, QCheckBox,
-                             QTextEdit)
+                             QTextEdit, QComboBox)
 
 from electrum.i18n import _, languages
 from electrum.util import FileImportFailed, FileExportFailed, make_aiohttp_session, resource_path, ipfs_explorer_URL
-from electrum.util import EventListener, event_listener
+from electrum.util import EventListener, event_listener, get_asyncio_loop
 from electrum.invoices import PR_UNPAID, PR_PAID, PR_EXPIRED, PR_INFLIGHT, PR_UNKNOWN, PR_FAILED, PR_ROUTING, PR_UNCONFIRMED, PR_BROADCASTING, PR_BROADCAST
 from electrum.logging import Logger
 from electrum.qrreader import MissingQrDetectionLib
@@ -1388,7 +1388,7 @@ class QHSeperationLine(QFrame):
         self.setFixedHeight(1)
         self.setFrameShape(QFrame.HLine)
         self.setFrameShadow(QFrame.Sunken)
-        self.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Minimum)
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
         self.setStyleSheet(ColorScheme.GRAY.as_stylesheet(True))
 
 class AutoResizingTextEdit(QTextEdit):
@@ -1400,7 +1400,7 @@ class AutoResizingTextEdit(QTextEdit):
         document = self.document()
         fontMetrics = QFontMetrics(document.defaultFont())
         self.fontSpacing = fontMetrics.lineSpacing()
-        self.setSizePolicy(QtWidgets.QSizePolicy.MinimumExpanding, QtWidgets.QSizePolicy.MinimumExpanding)
+        self.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.MinimumExpanding)
 
     def hasHeightForWidth(self):
         return True
@@ -1709,6 +1709,102 @@ class IPFSViewer(QWidget, QtEventListener):
         else:
             for x in [self.associated_data_text, self.view_associated_data_button]:
                 x.setVisible(True)
+
+
+class NonlocalAssetOrBasecoinSelector(QWidget):
+    def __init__(self, window: 'ElectrumWindow', *, check_callback=None, delayed_check_callback=None):
+        QWidget.__init__(self)
+
+        from electrum import constants
+        base_coin_option = constants.net.SHORT_NAME
+        asset_option = _('Asset')
+
+        combo = QComboBox()
+        combo.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        combo.addItems([base_coin_option, asset_option])
+
+        def error_for_asset_name(asset: str):
+            from electrum.asset import get_error_for_asset_name
+            error = get_error_for_asset_name(asset)
+            self.asset = asset
+            if check_callback:
+                check_callback(bool(not error))
+            return error
+
+        async def delayed_for_asset_name():
+            from electrum.asset import get_error_for_asset_name
+            
+            asset = line_edit.line_edit.text()
+            if get_error_for_asset_name(asset): return
+
+            metadata_tup = window.wallet.adb.get_asset_metadata(asset)
+            if metadata_tup:
+                metadata = metadata_tup[0]
+                if delayed_check_callback:
+                    delayed_check_callback({
+                        'divisions': metadata.divisions,
+                        'sats_in_circulation': metadata.sats_in_circulation
+                    })
+                return
+            
+            if not window.network:
+                line_edit.show_error(_("You are offline."))
+                if delayed_check_callback:
+                    delayed_check_callback(None)
+                return
+            try:
+                raw_metadata = await window.network.get_asset_metadata(asset)
+            except Exception as e:
+                line_edit.show_error(_("Error getting asset from network") + ":\n" + repr(e))
+                if delayed_check_callback:
+                    delayed_check_callback(None)
+                return
+            if raw_metadata:
+                if delayed_check_callback:
+                    delayed_check_callback(raw_metadata)
+            else:
+                line_edit.show_error(_("This asset does not exist."))
+                if delayed_check_callback:
+                    delayed_check_callback(False)
+
+
+        line_edit = ValidatedDelayedCallbackEditor(get_asyncio_loop, error_for_asset_name, 0.5, delayed_for_asset_name)
+        line_edit.line_edit.setVisible(False)
+        line_edit.error_button.setVisible(False)
+
+        def on_combo_update():
+            if combo.currentText() == asset_option:
+                line_edit.line_edit.setVisible(True)
+                self.asset = ''
+                if delayed_check_callback:
+                    delayed_check_callback(False)
+            else:
+                line_edit.line_edit.setVisible(False)
+                line_edit.line_edit.clear()
+                line_edit.error_button.setVisible(False)
+                self.asset = None
+                if delayed_check_callback:
+                    delayed_check_callback(None)
+
+        combo.currentIndexChanged.connect(on_combo_update)
+
+        hbox = QHBoxLayout(self)
+        hbox.setContentsMargins(0, 0, 0, 0)
+        hbox.setSpacing(0)
+        hbox.addWidget(combo)
+        hbox.addWidget(line_edit.line_edit)
+        hbox.addWidget(line_edit.error_button)
+        hbox.addStretch()
+
+        self.asset = None
+
+    def short_name(self) -> str:
+        if self.asset is not None:
+            return self.asset[:4]
+        else:
+            from electrum import constants
+            base_coin_option = constants.net.SHORT_NAME
+            return base_coin_option[:4]
 
 if __name__ == "__main__":
     app = QApplication([])

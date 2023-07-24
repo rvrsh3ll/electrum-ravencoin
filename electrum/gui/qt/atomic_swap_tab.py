@@ -1,19 +1,21 @@
 from collections import defaultdict
+from decimal import Decimal
 from typing import TYPE_CHECKING, List, Optional
 
 from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtWidgets import QLabel, QVBoxLayout, QSizePolicy, QWidget, QTabWidget, QHBoxLayout, QToolButton, QTextEdit
+from PyQt5.QtWidgets import QLabel, QVBoxLayout, QSizePolicy, QWidget, QTabWidget, QHBoxLayout, QComboBox, QTextEdit
 
 from electrum import constants
-from electrum.bitcoin import opcodes, address_to_scripthash
+from electrum.bitcoin import opcodes, address_to_scripthash, COIN
+from electrum.asset import DEFAULT_ASSET_AMOUNT_MAX
 from electrum.logging import Logger
 from electrum.i18n import _
 from electrum.transaction import PartialTransaction, Transaction, script_GetOp, Sighash, TxOutpoint, PartialTxOutput, PartialTxInput
 from electrum.util import format_satoshis
 
+from .asset_management_panel import AssetAmountEdit
 from .confirm_tx_dialog import ConfirmTxDialog
-from .my_treeview import MyMenu
-from .util import MessageBoxMixin, read_QIcon, EnterButton, ColorScheme
+from .util import MessageBoxMixin, read_QIcon, EnterButton, ColorScheme, NonlocalAssetOrBasecoinSelector, QHSeperationLine
 
 if TYPE_CHECKING:
     from .main_window import ElectrumWindow
@@ -28,6 +30,155 @@ class CreateSwapWidget(QWidget, Logger):
         Logger.__init__(self)
 
         self.parent = parent
+        self.want_asset_is_good = True
+        self.want_amount_is_good = False
+        self.pay_amount_is_good = False
+
+        hbox = QHBoxLayout(self)
+        vbox = QVBoxLayout()
+        want_label = QLabel(_('I want') + ':')
+        def want_asset_name_valid(is_valid: bool):
+            self.want_amount_e.update()
+            self.want_amount_e.setEnabled(False)
+            self.want_asset_is_good = False
+            self._maybe_enable_create()
+
+        def want_asset_metadata(input):
+            self.want_amount_e.setEnabled(True)
+            self.want_asset_is_good = True
+            if not input:
+                self.want_amount_e.divisions = 8
+                self.want_amount_e.max_amount = DEFAULT_ASSET_AMOUNT_MAX
+                if input is False:
+                    self.want_amount_e.setEnabled(False)
+                    self.want_asset_is_good = False
+            else:
+                self.want_amount_e.divisions = input['divisions']
+                self.want_amount_e.max_amount = input['sats_in_circulation']
+            self.want_amount_e.is_int = self.want_amount_e.divisions == 0
+            self.want_amount_e.min_amount = Decimal('1' if self.want_amount_e.divisions == 0 else f'0.{"".join("0" for i in range(self.want_amount_e.divisions - 1))}1') * COIN
+            self.want_amount_e.numbify()
+            self.want_amount_e.update()
+            self._maybe_enable_create()
+
+        def want_amount_edit(amount: int):
+            self.want_amount_is_good = bool(amount)
+            self._maybe_enable_create()
+
+        self.want_selector = NonlocalAssetOrBasecoinSelector(parent.window, check_callback=want_asset_name_valid, delayed_check_callback=want_asset_metadata)
+        self.want_amount_e = AssetAmountEdit(self.want_selector.short_name, 0, DEFAULT_ASSET_AMOUNT_MAX, min_amount=COIN, callback=want_amount_edit)
+        want_amount_layout = QHBoxLayout()
+        want_amount_layout.addWidget(QLabel(_('In amount') + ':'))
+        want_amount_layout.addWidget(self.want_amount_e)
+        want_amount_layout.addStretch()
+
+        pay_label = QLabel(_('I\'ll pay') + ':')
+        
+        def pay_amount_edit(amount: int):
+            self.pay_amount_is_good = bool(amount)
+            self._maybe_enable_create()
+
+        self.pay_selector = QComboBox()
+        self.pay_selector.setMaxVisibleItems(10)
+        self.pay_selector.setStyleSheet("QComboBox { combobox-popup: 0; }")
+        self.current_balance = self.parent.wallet.get_balance(asset_aware=True)
+        assets = [constants.net.SHORT_NAME]
+        assets.extend(sorted(k for k in self.current_balance.keys() if k))
+        self.pay_selector.addItems(assets)
+        self.pay_selector.currentIndexChanged.connect(self._on_combo_update)
+        
+        self.pay_amount_e = AssetAmountEdit(lambda: self.pay_selector.currentText()[:4], 0, DEFAULT_ASSET_AMOUNT_MAX, min_amount=COIN, callback=pay_amount_edit)
+        pay_amount_layout = QHBoxLayout()
+        pay_amount_layout.addWidget(QLabel(_('In amount') + ':'))
+        pay_amount_layout.addWidget(self.pay_amount_e)
+        pay_amount_layout.addStretch()
+
+        self.create_swap = EnterButton(_('Create Swap...'), self._set_up_swap)
+        self.create_swap.setEnabled(False)
+
+        vbox.addWidget(want_label)
+        vbox.addWidget(self.want_selector)
+        vbox.addLayout(want_amount_layout)
+        vbox.addWidget(QHSeperationLine())
+        vbox.addWidget(pay_label)
+        vbox.addWidget(self.pay_selector)
+        vbox.addLayout(pay_amount_layout)
+        vbox.addWidget(self.create_swap)
+        vbox.addStretch()
+
+        hbox.addLayout(vbox, stretch=1)
+
+    def _on_combo_update(self):
+        divisions = 8
+        asset = None if self.pay_selector.currentIndex() == 0 else self.pay_selector.currentText()
+        if asset:
+            metadata_tup = self.parent.wallet.adb.get_asset_metadata(asset)
+            divisions = metadata_tup[0].divisions
+        balance = sum(self.current_balance[asset])
+        self.pay_amount_e.divisions = divisions
+        self.pay_amount_e.max_amount = balance
+        self.pay_amount_e.is_int = divisions == 0
+        self.pay_amount_e.min_amount = Decimal('1' if divisions == 0 else f'0.{"".join("0" for i in range(divisions - 1))}1') * COIN
+        self.pay_amount_e.numbify()
+        self.pay_amount_e.update()
+
+    def _maybe_enable_create(self):
+        self.create_swap.setEnabled(self.pay_amount_is_good and 
+                                    self.want_asset_is_good and self.want_amount_is_good)
+
+    def _set_up_swap(self):
+        pay_amount = self.pay_amount_e.get_amount()
+        pay_asset = None if self.pay_selector.currentIndex() == 0 else self.pay_selector.currentText()
+
+        for utxo in self.parent.wallet.get_spendable_coins():
+            if utxo.asset == pay_asset and utxo.value_sats(asset_aware=True) == pay_amount:
+                print('found')
+                self._create_swap(utxo)
+                return
+        else:
+            print('not found')
+
+    def _create_swap(self, utxo: PartialTxInput):
+        tx = PartialTransaction()
+
+        utxo._fixed_nsequence = True
+        utxo.sighash = Sighash.SINGLE | Sighash.ANYONECANPAY
+        utxo.nsequence = 0
+
+        my_address = self.parent.wallet.get_receiving_address()
+        my_amount = self.want_amount_e.get_amount()
+        my_asset = self.want_selector.asset
+        output = PartialTxOutput.from_address_and_value(my_address, my_amount, asset=my_asset)
+
+        tx.add_inputs([utxo])
+        tx.add_outputs([output])
+
+        def print_swap(success):
+            if success:
+                print(tx.serialize_to_network())
+
+        self.parent.window.sign_tx(tx, callback=print_swap, external_keypairs=None)
+
+        #self.parent.window.set_frozen_state_of_coins([utxo], True)
+        #self.parent.wallet.set_reserved_state_of_address(my_address, reserved=True)
+        #self.parent.wallet.set_label(my_address, _('Reserved For Atomic Swap'))
+
+    def update(self):
+        current_balance = self.parent.wallet.get_balance(asset_aware=True)
+        if self.current_balance.keys() != current_balance.keys():
+            assets = [constants.net.SHORT_NAME]
+            assets.extend(sorted(k for k in current_balance.keys() if k))
+            current_text = self.pay_selector.currentText()
+            self.pay_selector.clear()
+            self.pay_selector.addItems(assets)
+            try:
+                i = assets.index(current_text)
+                self.pay_selector.setCurrentIndex(i)
+            except ValueError:
+                pass
+        self.current_balance = current_balance
+        self._on_combo_update()
+        super().update()
 
 class RedeemSwapWidget(QWidget, Logger):
     input_info_signal = pyqtSignal(str, str, bool)

@@ -8,13 +8,13 @@ import time
 
 from typing import TYPE_CHECKING, Set, Dict
 
-from aiohttp import ClientResponse, ClientError
+from aiohttp import ClientResponse
 from collections import defaultdict
-from python_socks import ProxyError
 
 from .bitcoin import base_decode
 from .json_db import JsonDB, locked, modifier, StoredObject, StoredDict
-from .util import standardize_path, test_read_write_permissions, profiler, os_chmod, ipfs_explorer, ipfs_explorer_URL, ipfs_explorer_round_robin, event_listener, make_dir, EventListener
+from .util import (standardize_path, test_read_write_permissions, profiler, os_chmod, ipfs_explorer, 
+                   ipfs_explorer_URL, ipfs_explorer_round_robin, event_listener, make_dir, EventListener)
 from .network import Network
 
 from electrum import util
@@ -162,7 +162,6 @@ class IPFSDB(JsonDB, EventListener):
         except (FileNotFoundError, OSError):
             pass
 
-    @modifier
     async def _download_ipfs_data(self, network: Network, ipfs_hash: str, *, prefered_gateway=None):        
         async def on_finish(resp: ClientResponse):
             m = self.get_metadata(ipfs_hash)
@@ -208,11 +207,8 @@ class IPFSDB(JsonDB, EventListener):
                     except asyncio.TimeoutError:
                         self.logger.warning(f'timeout trying to download ipfs data from {url}')
                         continue
-                    except ClientError as e:
-                        self.logger.warning(f'failed to download ipfs data from {url}: {str(e)}')
-                        continue
-                    except ProxyError as e:
-                        self.logger.warning(f'failed to connect to {url}: {str(e)}')
+                    except Exception as e:
+                        self.logger.warning(f'failed to download data from {url}: {str(e)} ({e.__class__})')
                         continue
                     # Do not enter the next loop; we are successful
                     return
@@ -223,11 +219,8 @@ class IPFSDB(JsonDB, EventListener):
                     except asyncio.TimeoutError:
                         self.logger.warning(f'timeout trying to download ipfs data from {url}')
                         continue
-                    except ClientError as e:
-                        self.logger.warning(f'failed to download ipfs data from {url}: {str(e)}')
-                        continue
-                    except ProxyError as e:
-                        self.logger.warning(f'failed to connect to {url}: {str(e)}')
+                    except Exception as e:
+                        self.logger.warning(f'failed to download data from {url}: {str(e)} ({e.__class__})')
                         continue
                     # Do not enter the next loop; we are successful
                     return
@@ -237,18 +230,16 @@ class IPFSDB(JsonDB, EventListener):
                     await lookup_data(ipfs_explorer(network.config), url)
                 except asyncio.TimeoutError:
                     self.logger.warning(f'timeout trying to lookup ipfs info from {url}')
-                except ClientError as e:
-                    self.logger.warning(f'failed to download information from {url}: {str(e)}')
-                except ProxyError as e:
-                    self.logger.warning(f'failed to connect to {url}: {str(e)}')
+                except Exception as e:
+                    self.logger.warning(f'failed to download data from {url}: {str(e)} ({e.__class__})')
         finally:
             curr_time = int(time.time())
             m = self.get_metadata(ipfs_hash)
             m.last_attemped_data_download = curr_time
+            self._modified = True
             self._ipfs_download_current.discard(ipfs_hash)
             util.trigger_callback('ipfs_download', ipfs_hash)
 
-    @modifier
     async def _download_ipfs_information(self, network: Network, ipfs_hash: str):
         current_gateway = None
         async def on_finish(resp: ClientResponse):
@@ -290,11 +281,8 @@ class IPFSDB(JsonDB, EventListener):
                     except asyncio.TimeoutError:
                         self.logger.warning(f'timeout trying to lookup ipfs info from {url}')
                         continue
-                    except ClientError as e:
-                        self.logger.warning(f'failed to download information from {url}: {str(e)}')
-                        continue
-                    except ProxyError as e:
-                        self.logger.warning(f'failed to connect to {url}: {str(e)}')
+                    except Exception as e:
+                        self.logger.warning(f'failed to download information from {url}: {str(e)} ({e.__class__})')
                         continue
                     # Do not enter the next loop; we are successful
                     return
@@ -306,11 +294,8 @@ class IPFSDB(JsonDB, EventListener):
                     except asyncio.TimeoutError:
                         self.logger.warning(f'timeout trying to lookup ipfs info from {url}')
                         continue
-                    except ClientError as e:
-                        self.logger.warning(f'failed to download information from {url}: {str(e)}')
-                        continue
-                    except ProxyError as e:
-                        self.logger.warning(f'failed to connect to {url}: {str(e)}')
+                    except Exception as e:
+                        self.logger.warning(f'failed to download information from {url}: {str(e)} ({e.__class__})')
                         continue
                     # Do not enter the next loop; we are successful
                     return
@@ -320,14 +305,13 @@ class IPFSDB(JsonDB, EventListener):
                     await lookup_info(ipfs_explorer(network.config), url)
                 except asyncio.TimeoutError:
                     self.logger.warning(f'timeout trying to lookup ipfs info from {url}')
-                except ClientError as e:
-                    self.logger.warning(f'failed to download information from {url}: {str(e)}')
-                except ProxyError as e:
-                    self.logger.warning(f'failed to connect to {url}: {str(e)}')
+                except Exception as e:
+                    self.logger.warning(f'failed to download information from {url}: {str(e)} ({e.__class__})')
         finally:
             curr_time = int(time.time())
             m = self.get_metadata(ipfs_hash)
             m.last_attemped_info_query = curr_time
+            self._modified = True
             self._ipfs_lookup_current.discard(ipfs_hash)
             util.trigger_callback('ipfs_download', ipfs_hash)
 

@@ -2213,7 +2213,7 @@ class PartialTransaction(Transaction):
                         txout.value = (1 << 64) - 1
                     serialization = txout.serialize_to_network().hex()
                     output_serializations.append(serialization)
-                txouts = var_int(len(output_serializations) + ''.join(output_serializations))
+                txouts = var_int(len(output_serializations)) + ''.join(output_serializations)
             else:
                 txouts = var_int(len(outputs)) + ''.join(o.serialize_to_network().hex() for o in outputs)
             preimage = nVersion + txins + txouts + nLocktime + nHashType

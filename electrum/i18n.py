@@ -46,11 +46,12 @@ else:
 
 def ravencoinifier(func):
     def converter(*args, **kwargs):
+        from . import constants
         result = func(*args, **kwargs)
-        result = result.replace('bitcoin', 'ravencoin')
-        result = result.replace('Bitcoin', 'Ravencoin')
-        result = result.replace('btc', 'rvn')
-        result = result.replace('BTC', 'RVN')
+        result = result.replace('bitcoin', constants.net.LONG_NAME)
+        result = result.replace('Bitcoin', constants.net.LONG_NAME)
+        result = result.replace('btc', constants.net.SHORT_NAME.lower())
+        result = result.replace('BTC', constants.net.SHORT_NAME)
         #result = result.replace('electrum', 'electrum-ravencoin')
         #result = result.replace('Electrum', 'Electrum-Ravencoin')
         return result
