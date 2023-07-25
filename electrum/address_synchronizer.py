@@ -416,10 +416,10 @@ class AddressSynchronizer(Logger, EventListener):
                         if not asset_data.is_deterministic():
                             outpoint = TxOutpoint(txid=bytes.fromhex(tx.txid()), out_idx=n)
                             if asset_data.well_formed_script:
-                                self.logger.info(f'{outpoint.to_str()} is non-deterministic; saving scriptpubkey')
+                                self.logger.info(f'{outpoint.to_str()} is non-deterministic')
                             else:
-                                self.logger.info(f'{outpoint.to_str()} is not well-formed; saving scriptpubkey')
-                            self.db.add_non_deterministic_txo_lockingscript(outpoint, txo.scriptpubkey)
+                                self.logger.info(f'{outpoint.to_str()} is not well-formed')
+                            self.db.add_non_deterministic_txo_lockingscript(outpoint)
 
             # add to local history
             self._add_tx_to_local_history(tx_hash)

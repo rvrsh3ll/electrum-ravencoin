@@ -80,7 +80,8 @@ class SPV(NetworkJobOnDefaultServer):
         if tx_hash in self.requested_merkle:
             return True
         if tx_hash in self.merkle_roots:
-            if for_tx and self.wallet.db.get_verified_tx(tx_hash): return True
+            if for_tx and not self.wallet.db.get_verified_tx(tx_hash): 
+                return False
             else:
                 return True
         # or before headers are available

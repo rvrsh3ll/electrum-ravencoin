@@ -1,3 +1,5 @@
+import asyncio
+
 from collections import defaultdict
 from decimal import Decimal
 from typing import TYPE_CHECKING, List, Optional
@@ -16,7 +18,7 @@ from electrum.util import format_satoshis
 from .asset_management_panel import AssetAmountEdit
 from .confirm_tx_dialog import ConfirmTxDialog
 from .util import (MessageBoxMixin, read_QIcon, EnterButton, ColorScheme, NonlocalAssetOrBasecoinSelector, 
-                   QHSeperationLine, Buttons, QtEventListener, qt_event_listener)
+                   QHSeperationLine, Buttons, QtEventListener, qt_event_listener, WaitingDialog)
 
 if TYPE_CHECKING:
     from .main_window import ElectrumWindow
@@ -185,13 +187,14 @@ class CreateSwapWidget(QWidget, Logger, MessageBoxMixin, QtEventListener):
                         if tx.is_complete():
                             self.pay_amount_e.setEnabled(False)
                             # Mark false for any delayed checks
-                            self.pay_amount_is_good = False
+                            self.want_asset_is_good = False
                             self.want_amount_e.setEnabled(False)
                             self.pay_selector.setEnabled(False)
                             self.want_selector.combo.setEnabled(False)
                             self.want_selector.line_edit.line_edit.setEnabled(False)
                             self.create_swap.setEnabled(False)
                             self.waiting_for_tx = tx.txid()
+                            self.output.setText(_('Please wait for the transaction to be successfully broadcast.'))
 
                 self.parent.window.sign_tx(
                     tx,
@@ -205,7 +208,7 @@ class CreateSwapWidget(QWidget, Logger, MessageBoxMixin, QtEventListener):
             pay_asset = None if self.pay_selector.currentIndex() == 0 else self.pay_selector.currentText()
 
             self.waiting_for_tx = None
-            self.parent.window.wallet.set_label(tx_hash, _('Preliminary Swap Transaction'))
+            self.parent.window.wallet.set_label(tx_hash, _('Preliminary Atomic Swap Transaction'))
             for i, output in enumerate(tx.outputs()):
                 if output.asset == pay_asset and output.asset_aware_value() == pay_amount:
                     input = PartialTxInput(prevout=TxOutpoint.from_str(f'{tx_hash}:{i}'))
@@ -223,7 +226,8 @@ class CreateSwapWidget(QWidget, Logger, MessageBoxMixin, QtEventListener):
         utxo.sighash = Sighash.SINGLE | Sighash.ANYONECANPAY
         utxo.nsequence = 0
 
-        my_address = self.parent.wallet.get_receiving_address()
+        my_address = self.parent.wallet.get_single_change_address_for_new_transaction() or \
+                        self.parent.wallet.get_receiving_address() # Fallback
         my_amount = self.want_amount_e.get_amount()
         my_asset = self.want_selector.asset
         output = PartialTxOutput.from_address_and_value(my_address, my_amount, asset=my_asset)
@@ -237,6 +241,9 @@ class CreateSwapWidget(QWidget, Logger, MessageBoxMixin, QtEventListener):
                 self.output.setText(swap_hex)
                 self.output_label.setVisible(True)
                 self.pay_amount_e.setEnabled(False)
+                # Mark false for any delayed checks
+                self.want_asset_is_good = False
+
                 self.want_amount_e.setEnabled(False)
                 self.pay_selector.setEnabled(False)
                 self.want_selector.combo.setEnabled(False)
@@ -248,6 +255,7 @@ class CreateSwapWidget(QWidget, Logger, MessageBoxMixin, QtEventListener):
                 self.parent.wallet.set_reserved_state_of_address(my_address, reserved=True)
                 self.parent.wallet.set_label(my_address, _('Reserved For Atomic Swap'))
 
+                # TODO: Make this better
                 self.parent.wallet.adb.db.my_swaps[tx.txid()] = swap_hex
 
         self.parent.window.sign_tx(tx, callback=print_swap, external_keypairs=None)
@@ -257,7 +265,7 @@ class CreateSwapWidget(QWidget, Logger, MessageBoxMixin, QtEventListener):
         self.want_amount_e.setEnabled(True)
         self.pay_selector.setEnabled(True)
         self.want_selector.combo.setEnabled(True)
-        self.want_selector.line_edit.line_edit.setEnabled(True)
+        self.want_selector.line_edit.line_edit.setEnabled(False)
         self.create_swap.setEnabled(True)
 
         self.pay_amount_e.clear()

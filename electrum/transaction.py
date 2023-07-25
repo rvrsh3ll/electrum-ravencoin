@@ -940,8 +940,8 @@ class Transaction:
 
     @classmethod
     def get_preimage_script(cls, txin: 'PartialTxInput', wallet: 'Abstract_Wallet') -> str:
-        if wallet is not None:
-            lockingscript = wallet.db.get_non_deterministic_txo_lockingscript(txin.prevout)
+        if wallet is not None and wallet.db.is_non_deterministic_txo_lockingscript(txin.prevout):
+            lockingscript = wallet.db.get_transaction(txin.prevout.txid.hex()).outputs()[txin.prevout.out_idx]
             if lockingscript is not None:
                 get_logger('get_preimage_script').info(f'non deterministic script found: {txin.prevout.to_str()}')
                 return lockingscript.hex()

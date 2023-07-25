@@ -597,10 +597,12 @@ class WalletDB(JsonDB):
             self.data['asset_blacklist'] = set()
         if 'broadcasts_to_watch' not in self.data:
             self.data['broadcasts_to_watch'] = set(constants.net.DEFAULT_MESSAGE_CHANNELS)
+        if 'non_deterministic_txo_scriptpubkey' not in self.data:
+            self.data['non_deterministic_txo_scriptpubkey'] = set()
         self.assets_to_watch = self.get('assets_to_watch')  # type: Set[str]
         self.broadcasts_to_watch = self.get('broadcasts_to_watch')  # type: Set[str]
         self.verified_asset_metadata = self.get_dict('verified_asset_metadata')  # type: Dict[str, Tuple[AssetMetadata, Tuple[TxOutpoint, int], Tuple[TxOutpoint, int] | None, Tuple[TxOutpoint, int] | None]]       
-        self.non_deterministic_vouts = self.get_dict('non_deterministic_txo_scriptpubkey')
+        self.non_deterministic_vouts = self.get('non_deterministic_txo_scriptpubkey')  # type: Set[str]
         self.verified_tags_for_qualifiers = self.get_dict('verified_qualifier_tags')
         self.verified_tags_for_h160s = self.get_dict('verified_h160_tags')
         self.verified_restricted_verifiers = self.get_dict('verified_verifier_strings')
@@ -636,20 +638,19 @@ class WalletDB(JsonDB):
         self.asset_blacklist.add(r)
 
     @locked
-    def get_non_deterministic_txo_lockingscript(self, outpoint: TxOutpoint) -> Optional[bytes]:
+    def is_non_deterministic_txo_lockingscript(self, outpoint: TxOutpoint) -> bool:
         assert isinstance(outpoint, TxOutpoint)
-        return self.non_deterministic_vouts.get(outpoint.to_str(), None)
+        return outpoint.to_str() in self.non_deterministic_vouts
 
     @modifier
-    def add_non_deterministic_txo_lockingscript(self, outpoint: TxOutpoint, script: bytes):
+    def add_non_deterministic_txo_lockingscript(self, outpoint: TxOutpoint):
         assert isinstance(outpoint, TxOutpoint)
-        assert isinstance(script, bytes)
-        self.non_deterministic_vouts[outpoint.to_str()] = script
+        self.non_deterministic_vouts.add(outpoint.to_str())
 
     @modifier
     def remove_non_deterministic_txo_lockingscript(self, outpoint: TxOutpoint):
         assert isinstance(outpoint, TxOutpoint)
-        self.non_deterministic_vouts.pop(outpoint.to_str(), None)
+        self.non_deterministic_vouts.discard(outpoint.to_str())
 
     @locked
     def get_assets_to_watch(self) -> Sequence[str]:
@@ -989,8 +990,6 @@ class WalletDB(JsonDB):
                 (TxOutpoint.from_json(tup2[0]), tup2[1]) if tup2 else None,
                 (TxOutpoint.from_json(tup3[0]), tup3[1]) if tup3 else None,
             )) for k, (metadata, tup1, tup2, tup3) in v.items())
-        elif key == 'non_deterministic_txo_scriptpubkey':
-            v = dict((k, bytes.fromhex(x)) for k, x in v.items())
         # convert htlc_id keys to int
         if key in ['adds', 'locked_in', 'settles', 'fails', 'fee_updates', 'buckets',
                    'unacked_updates', 'unfulfilled_htlcs', 'fail_htlc_reasons', 'onion_keys']:
@@ -1015,7 +1014,7 @@ class WalletDB(JsonDB):
             v = ChannelType(v)
         elif key == 'db_metadata':
             v = DBMetadata(**v)
-        elif key in ('assets_to_watch', 'asset_blacklist', 'broadcasts_to_watch'):
+        elif key in ('assets_to_watch', 'asset_blacklist', 'broadcasts_to_watch', 'non_deterministic_txo_scriptpubkey'):
             v = set(v)
         return v
 
