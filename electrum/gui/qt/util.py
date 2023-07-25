@@ -1719,9 +1719,9 @@ class NonlocalAssetOrBasecoinSelector(QWidget):
         base_coin_option = constants.net.SHORT_NAME
         asset_option = _('Asset')
 
-        combo = QComboBox()
-        combo.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        combo.addItems([base_coin_option, asset_option])
+        self.combo = QComboBox()
+        self.combo.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.combo.addItems([base_coin_option, asset_option])
 
         def error_for_asset_name(asset: str):
             from electrum.asset import get_error_for_asset_name
@@ -1734,7 +1734,7 @@ class NonlocalAssetOrBasecoinSelector(QWidget):
         async def delayed_for_asset_name():
             from electrum.asset import get_error_for_asset_name
             
-            asset = line_edit.line_edit.text()
+            asset = self.line_edit.line_edit.text()
             if get_error_for_asset_name(asset): return
 
             metadata_tup = window.wallet.adb.get_asset_metadata(asset)
@@ -1748,14 +1748,14 @@ class NonlocalAssetOrBasecoinSelector(QWidget):
                 return
             
             if not window.network:
-                line_edit.show_error(_("You are offline."))
+                self.line_edit.show_error(_("You are offline."))
                 if delayed_check_callback:
                     delayed_check_callback(None)
                 return
             try:
                 raw_metadata = await window.network.get_asset_metadata(asset)
             except Exception as e:
-                line_edit.show_error(_("Error getting asset from network") + ":\n" + repr(e))
+                self.line_edit.show_error(_("Error getting asset from network") + ":\n" + repr(e))
                 if delayed_check_callback:
                     delayed_check_callback(None)
                 return
@@ -1763,38 +1763,37 @@ class NonlocalAssetOrBasecoinSelector(QWidget):
                 if delayed_check_callback:
                     delayed_check_callback(raw_metadata)
             else:
-                line_edit.show_error(_("This asset does not exist."))
+                self.line_edit.show_error(_("This asset does not exist."))
                 if delayed_check_callback:
                     delayed_check_callback(False)
 
 
-        line_edit = ValidatedDelayedCallbackEditor(get_asyncio_loop, error_for_asset_name, 0.5, delayed_for_asset_name)
-        line_edit.line_edit.setVisible(False)
-        line_edit.error_button.setVisible(False)
+        self.line_edit = ValidatedDelayedCallbackEditor(get_asyncio_loop, error_for_asset_name, 0.5, delayed_for_asset_name)
+        self.line_edit.line_edit.setEnabled(False)
+        self.line_edit.error_button.setVisible(False)
 
         def on_combo_update():
-            if combo.currentText() == asset_option:
-                line_edit.line_edit.setVisible(True)
+            if self.combo.currentText() == asset_option:
+                self.line_edit.line_edit.setEnabled(True)
                 self.asset = ''
                 if delayed_check_callback:
                     delayed_check_callback(False)
             else:
-                line_edit.line_edit.setVisible(False)
-                line_edit.line_edit.clear()
-                line_edit.error_button.setVisible(False)
+                self.line_edit.line_edit.setEnabled(False)
+                self.line_edit.line_edit.clear()
+                self.line_edit.error_button.setVisible(False)
                 self.asset = None
                 if delayed_check_callback:
                     delayed_check_callback(None)
 
-        combo.currentIndexChanged.connect(on_combo_update)
+        self.combo.currentIndexChanged.connect(on_combo_update)
 
         hbox = QHBoxLayout(self)
         hbox.setContentsMargins(0, 0, 0, 0)
         hbox.setSpacing(0)
-        hbox.addWidget(combo)
-        hbox.addWidget(line_edit.line_edit)
-        hbox.addWidget(line_edit.error_button)
-        hbox.addStretch()
+        hbox.addWidget(self.combo)
+        hbox.addWidget(self.line_edit.line_edit)
+        hbox.addWidget(self.line_edit.error_button)
 
         self.asset = None
 

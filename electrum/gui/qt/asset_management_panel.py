@@ -337,21 +337,6 @@ class ManageAssetPanel(QWidget, Logger):
             if cb_checked:
                 self.parent.window.config.SHOW_REISSUABLE_WARNING = False
 
-    def get_text_not_enough_funds_mentioning_frozen(self) -> str:
-        text = _("Not enough funds")
-        frozen_str = self.get_frozen_balance_str()
-        if frozen_str:
-            text += " ({} {})".format(
-                frozen_str, _("are frozen")
-            )
-        return text
-
-    def get_frozen_balance_str(self) -> Optional[str]:
-        frozen_bal = sum(self.parent.wallet.get_frozen_balance())
-        if not frozen_bal:
-            return None
-        return self.parent.window.format_amount_and_units(frozen_bal)
-
     def _update_parent_assets(self, _type: AssetType):
         raise NotImplementedError()
 
@@ -766,7 +751,7 @@ class CreateAssetPanel(ManageAssetPanel):
             # note: use confirmed_only=False here, regardless of config setting,
             #       as the user needs to get to ConfirmTxDialog to change the config setting
             if not conf_dlg.can_pay_assuming_zero_fees(confirmed_only=False):
-                text = self.get_text_not_enough_funds_mentioning_frozen()
+                text = self.parent.window.get_text_not_enough_funds_mentioning_frozen()
                 self.parent.show_message(text)
                 return
         tx = conf_dlg.run()
@@ -985,7 +970,7 @@ class ReissueAssetPanel(ManageAssetPanel):
             # note: use confirmed_only=False here, regardless of config setting,
             #       as the user needs to get to ConfirmTxDialog to change the config setting
             if not conf_dlg.can_pay_assuming_zero_fees(confirmed_only=False):
-                text = self.get_text_not_enough_funds_mentioning_frozen()
+                text = self.parent.window.get_text_not_enough_funds_mentioning_frozen()
                 self.parent.show_message(text)
                 return
         tx = conf_dlg.run()

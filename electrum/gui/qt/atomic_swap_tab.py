@@ -10,12 +10,13 @@ from electrum.bitcoin import opcodes, address_to_scripthash, COIN
 from electrum.asset import DEFAULT_ASSET_AMOUNT_MAX
 from electrum.logging import Logger
 from electrum.i18n import _
-from electrum.transaction import PartialTransaction, Transaction, script_GetOp, Sighash, TxOutpoint, PartialTxOutput, PartialTxInput
+from electrum.transaction import PartialTransaction, Transaction, script_GetOp, Sighash, TxOutpoint, PartialTxOutput, PartialTxInput, TxInput
 from electrum.util import format_satoshis
 
 from .asset_management_panel import AssetAmountEdit
 from .confirm_tx_dialog import ConfirmTxDialog
-from .util import MessageBoxMixin, read_QIcon, EnterButton, ColorScheme, NonlocalAssetOrBasecoinSelector, QHSeperationLine
+from .util import (MessageBoxMixin, read_QIcon, EnterButton, ColorScheme, NonlocalAssetOrBasecoinSelector, 
+                   QHSeperationLine, Buttons, QtEventListener, qt_event_listener)
 
 if TYPE_CHECKING:
     from .main_window import ElectrumWindow
@@ -24,7 +25,7 @@ class DummySearchableList:
     def filter(self, x):
         pass
 
-class CreateSwapWidget(QWidget, Logger):
+class CreateSwapWidget(QWidget, Logger, MessageBoxMixin, QtEventListener):
     def __init__(self, parent: 'AtomicSwapTab'):
         QWidget.__init__(self)
         Logger.__init__(self)
@@ -68,7 +69,7 @@ class CreateSwapWidget(QWidget, Logger):
         self.want_selector = NonlocalAssetOrBasecoinSelector(parent.window, check_callback=want_asset_name_valid, delayed_check_callback=want_asset_metadata)
         self.want_amount_e = AssetAmountEdit(self.want_selector.short_name, 0, DEFAULT_ASSET_AMOUNT_MAX, min_amount=COIN, callback=want_amount_edit)
         want_amount_layout = QHBoxLayout()
-        want_amount_layout.addWidget(QLabel(_('In amount') + ':'))
+        want_amount_layout.addWidget(QLabel(_('Of amount') + ':'))
         want_amount_layout.addWidget(self.want_amount_e)
         want_amount_layout.addStretch()
 
@@ -89,12 +90,14 @@ class CreateSwapWidget(QWidget, Logger):
         
         self.pay_amount_e = AssetAmountEdit(lambda: self.pay_selector.currentText()[:4], 0, DEFAULT_ASSET_AMOUNT_MAX, min_amount=COIN, callback=pay_amount_edit)
         pay_amount_layout = QHBoxLayout()
-        pay_amount_layout.addWidget(QLabel(_('In amount') + ':'))
+        pay_amount_layout.addWidget(QLabel(_('Of amount') + ':'))
         pay_amount_layout.addWidget(self.pay_amount_e)
         pay_amount_layout.addStretch()
 
         self.create_swap = EnterButton(_('Create Swap...'), self._set_up_swap)
         self.create_swap.setEnabled(False)
+        self.clear_swap = EnterButton(_('Clear'), self._clear)
+        self.clear_swap.setEnabled(False)
 
         vbox.addWidget(want_label)
         vbox.addWidget(self.want_selector)
@@ -103,10 +106,22 @@ class CreateSwapWidget(QWidget, Logger):
         vbox.addWidget(pay_label)
         vbox.addWidget(self.pay_selector)
         vbox.addLayout(pay_amount_layout)
-        vbox.addWidget(self.create_swap)
+        vbox.addLayout(Buttons(self.create_swap, self.clear_swap))
         vbox.addStretch()
-
         hbox.addLayout(vbox, stretch=1)
+
+        vbox = QVBoxLayout()
+        vbox.addWidget(QLabel(_('Signed Partial') + ':'))
+        self.output = QTextEdit()
+        self.output.setReadOnly(True)
+        self.output_label = QLabel(_('Swap added to history...'))
+        self.output_label.setVisible(False)
+        vbox.addWidget(self.output)
+        vbox.addWidget(self.output_label)
+        hbox.addLayout(vbox, stretch=1)
+
+        self.waiting_for_tx = None
+        self.register_callbacks()
 
     def _on_combo_update(self):
         divisions = 8
@@ -132,12 +147,75 @@ class CreateSwapWidget(QWidget, Logger):
 
         for utxo in self.parent.wallet.get_spendable_coins():
             if utxo.asset == pay_asset and utxo.value_sats(asset_aware=True) == pay_amount:
-                print('found')
                 self._create_swap(utxo)
                 return
         else:
-            print('not found')
+            msg = _('No unspent transaction outputs found matching the pay parameters.') + '\n' + \
+                _('Broadcast a transaction to make one?')
+            if self.question(msg, self, _('Preliminary Transaction')):
+                new_output_address = self.parent.wallet.get_single_change_address_for_new_transaction() or \
+                        self.parent.wallet.get_receiving_address() # Fallback
+                def make_tx(fee_est, *, confirmed_only=False):
+                    try:
+                        self.parent.wallet.set_reserved_state_of_address(new_output_address, reserved=True)
+                        tx = self.parent.wallet.make_unsigned_transaction(
+                            coins=self.parent.window.get_coins(nonlocal_only=False, confirmed_only=confirmed_only),
+                            outputs=[PartialTxOutput.from_address_and_value(new_output_address, pay_amount, asset=pay_asset)],
+                            fee=fee_est,
+                            rbf=False,
+                        )
+                    finally:
+                        self.parent.wallet.set_reserved_state_of_address(new_output_address, reserved=False)
+                    return tx
+                
+                # TODO: Figure out a way to do this when allowing tx preview
+                conf_dlg = ConfirmTxDialog(window=self.parent.window, make_tx=make_tx, output_value={pay_asset: pay_amount}, allow_preview=False)
+                if conf_dlg.not_enough_funds:
+                    if not conf_dlg.can_pay_assuming_zero_fees(confirmed_only=False):
+                        text = self.parent.window.get_text_not_enough_funds_mentioning_frozen()
+                        self.parent.show_message(text)
+                        return
+                tx = conf_dlg.run()
+                if tx is None:
+                    return
+                
+                def sign_done(success):
+                    if success:
+                        self.parent.window.broadcast_or_show(tx)
+                        if tx.is_complete():
+                            self.pay_amount_e.setEnabled(False)
+                            # Mark false for any delayed checks
+                            self.pay_amount_is_good = False
+                            self.want_amount_e.setEnabled(False)
+                            self.pay_selector.setEnabled(False)
+                            self.want_selector.combo.setEnabled(False)
+                            self.want_selector.line_edit.line_edit.setEnabled(False)
+                            self.create_swap.setEnabled(False)
+                            self.waiting_for_tx = tx.txid()
 
+                self.parent.window.sign_tx(
+                    tx,
+                    callback=sign_done,
+                    external_keypairs=None)
+
+    @qt_event_listener
+    def on_event_adb_added_tx(self, adb, tx_hash, tx: Transaction):
+        if tx_hash == self.waiting_for_tx:
+            pay_amount = self.pay_amount_e.get_amount()
+            pay_asset = None if self.pay_selector.currentIndex() == 0 else self.pay_selector.currentText()
+
+            self.waiting_for_tx = None
+            self.parent.window.wallet.set_label(tx_hash, _('Preliminary Swap Transaction'))
+            for i, output in enumerate(tx.outputs()):
+                if output.asset == pay_asset and output.asset_aware_value() == pay_amount:
+                    input = PartialTxInput(prevout=TxOutpoint.from_str(f'{tx_hash}:{i}'))
+                    input.utxo = tx
+                    self._create_swap(input)
+                    return
+            else:
+                self.show_warning(_('Failed to find the outpoint that matches the pay amount in the new transaction'))
+                self._clear()
+                
     def _create_swap(self, utxo: PartialTxInput):
         tx = PartialTransaction()
 
@@ -155,13 +233,42 @@ class CreateSwapWidget(QWidget, Logger):
 
         def print_swap(success):
             if success:
-                print(tx.serialize_to_network())
+                swap_hex = tx.serialize_to_network()
+                self.output.setText(swap_hex)
+                self.output_label.setVisible(True)
+                self.pay_amount_e.setEnabled(False)
+                self.want_amount_e.setEnabled(False)
+                self.pay_selector.setEnabled(False)
+                self.want_selector.combo.setEnabled(False)
+                self.want_selector.line_edit.line_edit.setEnabled(False)
+                self.create_swap.setEnabled(False)
+                self.clear_swap.setEnabled(True)
+
+                self.parent.window.set_frozen_state_of_coins([utxo], True)
+                self.parent.wallet.set_reserved_state_of_address(my_address, reserved=True)
+                self.parent.wallet.set_label(my_address, _('Reserved For Atomic Swap'))
+
+                self.parent.wallet.adb.db.my_swaps[tx.txid()] = swap_hex
 
         self.parent.window.sign_tx(tx, callback=print_swap, external_keypairs=None)
 
-        #self.parent.window.set_frozen_state_of_coins([utxo], True)
-        #self.parent.wallet.set_reserved_state_of_address(my_address, reserved=True)
-        #self.parent.wallet.set_label(my_address, _('Reserved For Atomic Swap'))
+    def _clear(self):
+        self.pay_amount_e.setEnabled(True)
+        self.want_amount_e.setEnabled(True)
+        self.pay_selector.setEnabled(True)
+        self.want_selector.combo.setEnabled(True)
+        self.want_selector.line_edit.line_edit.setEnabled(True)
+        self.create_swap.setEnabled(True)
+
+        self.pay_amount_e.clear()
+        self.want_amount_e.clear()
+        self.pay_selector.setCurrentIndex(0)
+        self.want_selector.combo.setCurrentIndex(0)
+
+        self.clear_swap.setEnabled(False)
+
+        self.output.clear()
+        self.output_label.setVisible(False)
 
     def update(self):
         current_balance = self.parent.wallet.get_balance(asset_aware=True)
@@ -357,7 +464,7 @@ class RedeemSwapWidget(QWidget, Logger):
             # note: use confirmed_only=False here, regardless of config setting,
             #       as the user needs to get to ConfirmTxDialog to change the config setting
             if not conf_dlg.can_pay_assuming_zero_fees(confirmed_only=False):
-                text = self.get_text_not_enough_funds_mentioning_frozen()
+                text = self.parent.window.get_text_not_enough_funds_mentioning_frozen()
                 self.parent.show_message(text)
                 return
         tx = conf_dlg.run()
@@ -378,22 +485,6 @@ class RedeemSwapWidget(QWidget, Logger):
         
         self.input.clear()
         self._parse_psbt()
-
-    def get_text_not_enough_funds_mentioning_frozen(self) -> str:
-        text = _("Not enough funds")
-        frozen_str = self.get_frozen_balance_str()
-        if frozen_str:
-            text += " ({} {})".format(
-                frozen_str, _("are frozen")
-            )
-        return text
-
-    def get_frozen_balance_str(self) -> Optional[str]:
-        frozen_bal = sum(self.parent.wallet.get_frozen_balance())
-        if not frozen_bal:
-            return None
-        return self.parent.window.format_amount_and_units(frozen_bal)
-
 
 class AtomicSwapTab(QWidget, MessageBoxMixin, Logger):
     def __init__(self, window: 'ElectrumWindow'):

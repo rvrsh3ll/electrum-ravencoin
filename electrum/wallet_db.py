@@ -608,6 +608,8 @@ class WalletDB(JsonDB):
         self.verified_broadcasts = self.get_dict('verified_broadcasts')
         self.asset_blacklist = self.get('asset_blacklist')  # type: Set[str]
 
+        self.my_swaps = self.get_dict('my_atomic_swaps')
+
     @locked
     def get_broadcasts_to_watch(self) -> Sequence[str]:
         return sorted((asset for asset in self.broadcasts_to_watch))
