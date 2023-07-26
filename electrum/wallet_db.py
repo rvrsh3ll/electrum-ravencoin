@@ -830,7 +830,9 @@ class WalletDB(JsonDB):
     @locked
     def get_verified_qualifier_tags(self, asset: str) -> Dict[str, Dict[str, Any]]:
         assert isinstance(asset, str)
-        return dict(self.verified_tags_for_qualifiers.get(asset, dict()))
+        if asset not in self.verified_tags_for_qualifiers:
+            self.verified_tags_for_qualifiers[asset] = dict()
+        return dict(self.verified_tags_for_qualifiers[asset])
 
     @locked
     def get_verified_qualifier_tag(self, asset: str, h160: str) -> Optional[Dict[str, Any]]:

@@ -430,14 +430,21 @@ class AddressSynchronizer(Logger, EventListener):
                 util.trigger_callback('adb_added_tx', self, tx_hash, tx)
             return True
 
-    def watch_asset(self, asset: str):
+    def watch_asset(self, asset: str, restricted_check=False):
         if not self.db.is_watching_asset(asset):
-            self.db.add_asset_to_watch(asset)
             self.synchronizer.add_asset(asset)
-        if asset[-1] == '!' and not get_error_for_asset_typed(asset[:-1], AssetType.ROOT):
-            # Check for any restricted assets
-            r_asset = f'${asset[:-1]}'
-            self.watch_asset(r_asset)
+            if not restricted_check:
+                self.db.add_asset_to_watch(asset)
+                if asset[0] == '$':
+                    self.synchronizer.add_qualifier_for_tag(asset)
+                    self.synchronizer.add_restricted_for_verifier(asset)
+                    self.synchronizer.add_restricted_for_freeze(asset)
+                elif asset[0] == '#':
+                    self.synchronizer.add_qualifier_for_tag(asset)
+            if asset[-1] == '!' and get_error_for_asset_typed(asset[:-1], AssetType.ROOT) is None:
+                # Check for any restricted assets
+                r_asset = f'${asset[:-1]}'
+                self.watch_asset(r_asset, True)
 
     def remove_transaction(self, tx_hash: str) -> None:
         """Removes a transaction AND all its dependents/children

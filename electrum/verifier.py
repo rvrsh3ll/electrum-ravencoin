@@ -58,6 +58,7 @@ class SPV(NetworkJobOnDefaultServer):
         super()._reset()
         self.merkle_roots = {}  # txid -> merkle root (once it has been verified)
         self.requested_merkle = set()  # txid set of pending requests
+        self.verifying = set()
 
     async def _run_tasks(self, *, taskgroup):
         await super()._run_tasks(taskgroup=taskgroup)
@@ -74,15 +75,15 @@ class SPV(NetworkJobOnDefaultServer):
             await self._request_proofs()
             await asyncio.sleep(0.1)
 
-    async def _maybe_defer(self, tx_hash: str, tx_height: int, *, for_tx=False, add_to_requested_set=True) -> bool:
+    async def _maybe_defer(self, tx_hash: str, tx_height: int, *, for_tx=False, add_to_requested_set=True, alt_id=None) -> bool:
         local_height = self.blockchain.height()
+        if alt_id and alt_id in self.verifying:
+            return True
         # do not request merkle branch if we already requested it
         if tx_hash in self.requested_merkle:
             return True
         if tx_hash in self.merkle_roots:
-            if for_tx and not self.wallet.db.get_verified_tx(tx_hash): 
-                return False
-            else:
+            if for_tx and self.wallet.db.get_verified_tx(tx_hash): 
                 return True
         # or before headers are available
         if not (0 < tx_height <= local_height):
@@ -109,22 +110,16 @@ class SPV(NetworkJobOnDefaultServer):
         for asset, (metadata, source_tuple, divisions_tuple, associated_data_tuple) in unverified_assets.items():
             source_txid = source_tuple[0].txid.hex()
             source_height = source_tuple[1]
-            if source_txid not in self.merkle_roots and await self._maybe_defer(source_txid, source_height, add_to_requested_set=False): continue
+            verifying_id = f'm:{asset}'
+            if await self._maybe_defer(source_txid, source_height, add_to_requested_set=False, alt_id=verifying_id): continue
             if divisions_tuple:
                 source_txid = divisions_tuple[0].txid.hex()
                 source_height = divisions_tuple[1]
-                if source_txid not in self.merkle_roots and await self._maybe_defer(source_txid, source_height, add_to_requested_set=False): continue
+                if await self._maybe_defer(source_txid, source_height, add_to_requested_set=False, alt_id=verifying_id): continue
             if associated_data_tuple:
                 source_txid = associated_data_tuple[0].txid.hex()
                 source_height = associated_data_tuple[1]
-                if source_txid not in self.merkle_roots and await self._maybe_defer(source_txid, source_height, add_to_requested_set=False): continue
-            self.requested_merkle.add(source_txid)
-            if divisions_tuple:
-                source_txid = divisions_tuple[0].txid.hex()
-                self.requested_merkle.add(source_txid)
-            if associated_data_tuple:
-                source_txid = associated_data_tuple[0].txid.hex()
-                self.requested_merkle.add(source_txid)
+                if await self._maybe_defer(source_txid, source_height, add_to_requested_set=False, alt_id=verifying_id): continue
             self.logger.info(f'attempting to verify {asset}')
             await self.taskgroup.spawn(self._verify_unverified_asset_metadata(asset, metadata, source_tuple, divisions_tuple, associated_data_tuple))
                 
@@ -133,7 +128,9 @@ class SPV(NetworkJobOnDefaultServer):
             for h160, d in h160_dict.items():
                 txid = d['tx_hash']
                 height = d['height']
-                if txid not in self.merkle_roots and await self._maybe_defer(txid, height): continue
+                verifying_id = f't4q:{tx_hash}'
+
+                if await self._maybe_defer(txid, height, add_to_requested_set=False, alt_id=verifying_id): continue
                 self.logger.info(f'attempting to verify tag for {asset}, {h160}')
                 await self.taskgroup.spawn(self._verify_unverified_tags_for_qualifier(asset, h160, d))
 
@@ -142,7 +139,9 @@ class SPV(NetworkJobOnDefaultServer):
             for asset, d in asset_dict.items():
                 txid = d['tx_hash']
                 height = d['height']
-                if txid not in self.merkle_roots and await self._maybe_defer(txid, height): continue
+                verifying_id = f't4h:{txid}'
+                
+                if await self._maybe_defer(txid, height, add_to_requested_set=False, alt_id=verifying_id): continue
                 self.logger.info(f'attempting to verify tag for {h160}, {asset}')
                 await self.taskgroup.spawn(self._verify_unverified_tags_for_h160(h160, asset, d))
 
@@ -150,7 +149,9 @@ class SPV(NetworkJobOnDefaultServer):
         for asset, d in unverified_resticted_verifiers.items():
             txid = d['tx_hash']
             height = d['height']
-            if txid not in self.merkle_roots and await self._maybe_defer(txid, height): continue
+            verifying_id = f'rs:{txid}'
+            
+            if await self._maybe_defer(txid, height, add_to_requested_set=False, alt_id=verifying_id): continue
             self.logger.info(f'attempting to verify restricted verifier for {asset}: {d["string"]}')
             await self.taskgroup.spawn(self._verify_unverified_restricted_verifier(asset, d))
 
@@ -158,7 +159,9 @@ class SPV(NetworkJobOnDefaultServer):
         for asset, d in unverified_resticted_freezes.items():
             txid = d['tx_hash']
             height = d['height']
-            if txid not in self.merkle_roots and await self._maybe_defer(txid, height): continue
+            verifying_id = f'rf:{txid}'
+
+            if await self._maybe_defer(txid, height, add_to_requested_set=False, alt_id=verifying_id): continue
             self.logger.info(f'attempting to verify restricted freeze for {asset}: {d["frozen"]}')
             await self.taskgroup.spawn(self._verify_unverified_restricted_freeze(asset, d))
 
@@ -166,23 +169,27 @@ class SPV(NetworkJobOnDefaultServer):
         for asset, d1 in unverified_broadcasts.items():
             for tx_hash, d2 in d1.items():
                 height = d2['height']
-                if tx_hash not in self.merkle_roots and await self._maybe_defer(tx_hash, height): continue
+                verifying_id = f'b:{tx_hash}'
+
+                if await self._maybe_defer(tx_hash, height, add_to_requested_set=False, alt_id=verifying_id): continue
                 self.logger.info(f'attempting to verify broadcast for {asset}: {tx_hash}')
                 await self.taskgroup.spawn(self._verify_unverified_broadcast(asset, tx_hash, d2))
 
     async def _verify_unverified_broadcast(self, asset: str, tx_hash: str, d):
         height = d['height']
+
+        verifying_id = f'b:{tx_hash}'
+        self.verifying.add(verifying_id)
         try:
-            if not self.wallet.db.get_verified_tx(tx_hash) and tx_hash not in self.merkle_roots:
-                await self._request_and_verify_single_proof(tx_hash, height)
-            else:
-                self.requested_merkle.discard(tx_hash)
+            await self._request_and_verify_single_proof(tx_hash, height, quick_return=True)
             tx = self.wallet.get_transaction(tx_hash)
             if not tx:
                 self._requests_sent += 1
-                async with self._network_request_semaphore:
-                    raw_tx = await self.interface.get_transaction(tx_hash)
-                self._requests_answered += 1
+                try:
+                    async with self._network_request_semaphore:
+                        raw_tx = await self.interface.get_transaction(tx_hash)
+                finally:
+                    self._requests_answered += 1
                 tx = Transaction(raw_tx)
             idx = d['tx_pos']
             asset_info = get_asset_info_from_script(tx.outputs()[idx].scriptpubkey)
@@ -200,9 +207,11 @@ class SPV(NetworkJobOnDefaultServer):
                 in_tx = self.wallet.get_transaction(in_txid)
                 if not in_tx:
                     self._requests_sent += 1
-                    async with self._network_request_semaphore:
-                        raw_tx = await self.interface.get_transaction(in_txid)
-                    self._requests_answered += 1
+                    try:
+                        async with self._network_request_semaphore:
+                            raw_tx = await self.interface.get_transaction(in_txid)
+                    finally:
+                        self._requests_answered += 1
                     in_tx = Transaction(raw_tx)
 
                 if in_tx.outputs()[input.prevout.out_idx].address == tx.outputs()[idx].address and \
@@ -216,24 +225,29 @@ class SPV(NetworkJobOnDefaultServer):
             self.logger.info(f'bad broadcast {asset} {d["data"]}: {repr(e)}')
             self.wallet.remove_unverified_broadcast(asset, tx_hash, height)
             raise GracefulDisconnect(e) from e
+        finally:
+            self.verifying.discard(verifying_id)
+
         self.logger.info(f'verified broadcast for {asset} {d["data"]}')
         self.wallet.add_verified_broadcast(asset, tx_hash, d)
 
     async def _verify_unverified_restricted_freeze(self, asset: str, d):
         txid = d['tx_hash']
         height = d['height']
+
+        verifying_id = f'rf:{txid}'
+        self.verifying.add(verifying_id)
         try:
-            if not self.wallet.db.get_verified_tx(txid) and txid not in self.merkle_roots:
-                await self._request_and_verify_single_proof(txid, height)
-            else:
-                self.requested_merkle.discard(txid)
+            await self._request_and_verify_single_proof(txid, height, quick_return=True)
             tx = self.wallet.get_transaction(txid)
             if not tx:
                 self._requests_sent += 1
-                async with self._network_request_semaphore:
-                    raw_tx = await self.interface.get_transaction(txid)
+                try:
+                    async with self._network_request_semaphore:
+                        raw_tx = await self.interface.get_transaction(txid)
                     tx = Transaction(raw_tx)
-                self._requests_answered += 1
+                finally:
+                    self._requests_answered += 1
             idx = d['tx_pos']
             asset_info = get_asset_info_from_script(tx.outputs()[idx].scriptpubkey)
             if _type := asset_info.get_type() != AssetVoutType.FREEZE:
@@ -246,24 +260,29 @@ class SPV(NetworkJobOnDefaultServer):
             self.logger.info(f'bad freeze {asset} {d["frozen"]}: {repr(e)}')
             self.wallet.remove_unverified_restricted_freeze(asset, height)
             raise GracefulDisconnect(e) from e
+        finally:
+            self.verifying.discard(verifying_id)
+
         self.logger.info(f'verified freeze for {asset} {d["frozen"]}')
         self.wallet.add_verified_restricted_freeze(asset, d)
 
     async def _verify_unverified_restricted_verifier(self, asset: str, d):
         txid = d['tx_hash']
         height = d['height']
+
+        verifying_id = f'rs:{txid}'
+        self.verifying.add(verifying_id)
         try:
-            if not self.wallet.db.get_verified_tx(txid) and txid not in self.merkle_roots:
-                await self._request_and_verify_single_proof(txid, height)
-            else:
-                self.requested_merkle.discard(txid)
+            await self._request_and_verify_single_proof(txid, height, quick_return=True)
             tx = self.wallet.get_transaction(txid)
             if not tx:
                 self._requests_sent += 1
-                async with self._network_request_semaphore:
-                    raw_tx = await self.interface.get_transaction(txid)
+                try:
+                    async with self._network_request_semaphore:
+                        raw_tx = await self.interface.get_transaction(txid)
                     tx = Transaction(raw_tx)
-                self._requests_answered += 1
+                finally:
+                    self._requests_answered += 1
             idx_qual = d['qualifying_tx_pos']
             asset_info = get_asset_info_from_script(tx.outputs()[idx_qual].scriptpubkey)
             if _type := asset_info.get_type() != AssetVoutType.VERIFIER:
@@ -280,6 +299,8 @@ class SPV(NetworkJobOnDefaultServer):
             self.logger.info(f'bad verifier tag {asset} {d["string"]}: {repr(e)}')
             self.wallet.remove_unverified_restricted_verifier_string(asset, height)
             raise GracefulDisconnect(e) from e
+        finally:
+            self.verifying.discard(verifying_id)
             
         self.logger.info(f'verified verifier for {asset} {d["string"]}')
         self.wallet.add_verified_restricted_verifier_string(asset, d)
@@ -292,6 +313,9 @@ class SPV(NetworkJobOnDefaultServer):
             divisions_source: Tuple[TxOutpoint, int] | None, 
             associated_data_source: Tuple[TxOutpoint, int] | None):
         
+        verifying_id = f'm:{asset}'
+        self.verifying.add(verifying_id)
+
         verified_metadata = self.wallet.db.get_verified_asset_metadata(asset)
         if verified_metadata:
             if metadata.sats_in_circulation < verified_metadata.sats_in_circulation:
@@ -320,17 +344,16 @@ class SPV(NetworkJobOnDefaultServer):
             source_idx = divisions_source[0].out_idx
             source_height = divisions_source[1]
             try:
-                if not self.wallet.db.get_verified_tx(source_txid) and source_txid not in self.merkle_roots:
-                    await self._request_and_verify_single_proof(source_txid, source_height)
-                else:
-                    self.requested_merkle.discard(source_txid)
+                await self._request_and_verify_single_proof(source_txid, source_height, quick_return=True)
                 tx = self.wallet.get_transaction(source_txid)
                 if not tx:
                     self._requests_sent += 1
-                    async with self._network_request_semaphore:
-                        raw_tx = await self.interface.get_transaction(source_txid)
+                    try:
+                        async with self._network_request_semaphore:
+                            raw_tx = await self.interface.get_transaction(source_txid)
                         tx = Transaction(raw_tx)
-                    self._requests_answered += 1
+                    finally:
+                        self._requests_answered += 1
                 asset_info = get_asset_info_from_script(tx.outputs()[source_idx].scriptpubkey)
                 if not isinstance(asset_info, MetadataAssetVoutInformation):
                     raise AssetException('No metadata at this outpoint!(1)')
@@ -348,17 +371,16 @@ class SPV(NetworkJobOnDefaultServer):
             source_idx = associated_data_source[0].out_idx
             source_height = associated_data_source[1]
             try:
-                if not self.wallet.db.get_verified_tx(source_txid) and source_txid not in self.merkle_roots:
-                    await self._request_and_verify_single_proof(source_txid, source_height)
-                else:
-                    self.requested_merkle.discard(source_txid)
+                await self._request_and_verify_single_proof(source_txid, source_height, quick_return=True)
                 tx = self.wallet.get_transaction(source_txid)
                 if not tx:
                     self._requests_sent += 1
-                    async with self._network_request_semaphore:
-                        raw_tx = await self.interface.get_transaction(source_txid)
+                    try:
+                        async with self._network_request_semaphore:
+                            raw_tx = await self.interface.get_transaction(source_txid)
                         tx = Transaction(raw_tx)
-                    self._requests_answered += 1
+                    finally:
+                        self._requests_answered += 1
                 asset_info = get_asset_info_from_script(tx.outputs()[source_idx].scriptpubkey)
                 if not isinstance(asset_info, MetadataAssetVoutInformation):
                     raise AssetException('No metadata at this outpoint!(2)')
@@ -375,17 +397,16 @@ class SPV(NetworkJobOnDefaultServer):
         source_idx = source[0].out_idx
         source_height = source[1]
         try:
-            if not self.wallet.db.get_verified_tx(source_txid) and source_txid not in self.merkle_roots:
-                await self._request_and_verify_single_proof(source_txid, source_height)
-            else:
-                self.requested_merkle.discard(source_txid)
+            await self._request_and_verify_single_proof(source_txid, source_height, quick_return=True)
             tx = self.wallet.get_transaction(source_txid)
             if not tx:
                 self._requests_sent += 1
-                async with self._network_request_semaphore:
-                    raw_tx = await self.interface.get_transaction(source_txid)
+                try:
+                    async with self._network_request_semaphore:
+                        raw_tx = await self.interface.get_transaction(source_txid)
                     tx = Transaction(raw_tx)
-                self._requests_answered += 1
+                finally:
+                    self._requests_answered += 1
             asset_info = get_asset_info_from_script(tx.outputs()[source_idx].scriptpubkey)
             if not isinstance(asset_info, MetadataAssetVoutInformation):
                 if not isinstance(asset_info, OwnerAssetVoutInformation):
@@ -411,25 +432,29 @@ class SPV(NetworkJobOnDefaultServer):
             self.logger.info(f'bad asset metadata for {asset} (3): {repr(e)}')
             self.wallet.remove_unverified_asset_metadata(asset, source[1])
             raise GracefulDisconnect(e) from e
-        
+        finally:
+            self.verifying.discard(verifying_id)
+
         self.logger.info(f'verified metadata for {asset}')
         self.wallet.add_verified_asset_metadata(asset, metadata, source, divisions_source, associated_data_source)
 
     async def _verify_unverified_tags_for_qualifier(self, asset, h160, d):
         txid = d['tx_hash']
         height = d['height']
+
+        verifying_id = f't4q:{txid}'
+        self.verifying.add(verifying_id)
         try:
-            if not self.wallet.db.get_verified_tx(txid) and txid not in self.merkle_roots:
-                await self._request_and_verify_single_proof(txid, height)
-            else:
-                self.requested_merkle.discard(txid)
+            await self._request_and_verify_single_proof(txid, height, quick_return=True)
             tx = self.wallet.get_transaction(txid)
             if not tx:
                 self._requests_sent += 1
-                async with self._network_request_semaphore:
-                    raw_tx = await self.interface.get_transaction(txid)
+                try:
+                    async with self._network_request_semaphore:
+                        raw_tx = await self.interface.get_transaction(txid)
                     tx = Transaction(raw_tx)
-                self._requests_answered += 1
+                finally:
+                    self._requests_answered += 1
             idx = d['tx_pos']
             asset_info = get_asset_info_from_script(tx.outputs()[idx].scriptpubkey)
             if _type := asset_info.get_type() != AssetVoutType.NULL:
@@ -444,6 +469,8 @@ class SPV(NetworkJobOnDefaultServer):
                 self.logger.info(f'bad qualifier tag {asset} {h160}: {repr(e)}')
                 self.wallet.remove_unverified_tag_for_qualifier(asset, h160, height)
                 raise GracefulDisconnect(e) from e
+        finally:
+            self.verifying.discard(verifying_id)
             
         self.logger.info(f'verified tag for {asset} {h160}')
         self.wallet.add_verified_tag_for_qualifier(asset, h160, d)
@@ -452,18 +479,20 @@ class SPV(NetworkJobOnDefaultServer):
     async def _verify_unverified_tags_for_h160(self, h160, asset, d):
         txid = d['tx_hash']
         height = d['height']
+
+        verifying_id = f't4h:{txid}'
+        self.verifying.add(verifying_id)
         try:
-            if not self.wallet.db.get_verified_tx(txid) and txid not in self.merkle_roots:
-                await self._request_and_verify_single_proof(txid, height)
-            else:
-                self.requested_merkle.discard(txid)
+            await self._request_and_verify_single_proof(txid, height, quick_return=True)
             tx = self.wallet.get_transaction(txid)
             if not tx:
                 self._requests_sent += 1
-                async with self._network_request_semaphore:
-                    raw_tx = await self.interface.get_transaction(txid)
+                try:
+                    async with self._network_request_semaphore:
+                        raw_tx = await self.interface.get_transaction(txid)
                     tx = Transaction(raw_tx)
-                self._requests_answered += 1
+                finally:
+                    self._requests_answered += 1
             idx = d['tx_pos']
             asset_info = get_asset_info_from_script(tx.outputs()[idx].scriptpubkey)
             if _type := asset_info.get_type() != AssetVoutType.NULL:
@@ -478,6 +507,8 @@ class SPV(NetworkJobOnDefaultServer):
                 self.logger.info(f'bad qualifier tag {h160} {asset}: {repr(e)}')
                 self.wallet.remove_unverified_tag_for_h160(h160, asset, height)
                 raise GracefulDisconnect(e) from e
+        finally:
+            self.verifying.discard(verifying_id)
             
         self.logger.info(f'verified tag for {h160} {asset}')
         self.wallet.add_verified_tag_for_h160(h160, asset, d)
@@ -499,7 +530,9 @@ class SPV(NetworkJobOnDefaultServer):
         self.wallet.add_verified_tx(tx_hash, tx_info)
 
 
-    async def _request_and_verify_single_proof(self, tx_hash, tx_height):
+    async def _request_and_verify_single_proof(self, tx_hash, tx_height, *, quick_return=False):
+        if quick_return and tx_hash in self.merkle_roots:
+            return
         self.logger.info(f'requesting merkle {tx_hash}')
         try:
             self._requests_sent += 1
@@ -529,7 +562,6 @@ class SPV(NetworkJobOnDefaultServer):
                 raise GracefulDisconnect(e) from e
         # we passed all the tests
         self.merkle_roots[tx_hash] = header.get('merkle_root')
-        self.requested_merkle.discard(tx_hash)
         self.logger.info(f"verified {tx_hash}")    
 
         return pos, header

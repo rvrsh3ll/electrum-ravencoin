@@ -1,4 +1,6 @@
 import asyncio
+import attr
+import time
 
 from collections import defaultdict
 from decimal import Decimal
@@ -14,6 +16,7 @@ from electrum.logging import Logger
 from electrum.i18n import _
 from electrum.transaction import PartialTransaction, Transaction, script_GetOp, Sighash, TxOutpoint, PartialTxOutput, PartialTxInput, TxInput
 from electrum.util import format_satoshis
+from electrum.json_db import StoredObject
 
 from .asset_management_panel import AssetAmountEdit
 from .confirm_tx_dialog import ConfirmTxDialog
@@ -22,6 +25,17 @@ from .util import (MessageBoxMixin, read_QIcon, EnterButton, ColorScheme, Nonloc
 
 if TYPE_CHECKING:
     from .main_window import ElectrumWindow
+
+@attr.s
+class AtomicSwap(StoredObject):
+    timestamp = attr.ib(type=int, validator=attr.validators.instance_of(int))
+    is_mine = attr.ib(type=bool, validator=attr.validators.instance_of(bool))
+    redeemed = attr.ib(type=bool, validator=attr.validators.instance_of(bool))
+    in_assets = attr.ib(type=List[Optional[str]])
+    in_amounts = attr.ib(type=List[int])
+    out_assets = attr.ib(type=List[Optional[str]])
+    out_amounts = attr.ib(type=List[int])
+    swap_hex = attr.ib(type=str, validator=attr.validators.instance_of(str))
 
 class DummySearchableList:
     def filter(self, x):
@@ -116,7 +130,7 @@ class CreateSwapWidget(QWidget, Logger, MessageBoxMixin, QtEventListener):
         vbox.addWidget(QLabel(_('Signed Partial') + ':'))
         self.output = QTextEdit()
         self.output.setReadOnly(True)
-        self.output_label = QLabel(_('Swap added to history...'))
+        self.output_label = QLabel(_('Swap added to My Swaps...'))
         self.output_label.setVisible(False)
         vbox.addWidget(self.output)
         vbox.addWidget(self.output_label)
@@ -257,6 +271,16 @@ class CreateSwapWidget(QWidget, Logger, MessageBoxMixin, QtEventListener):
 
                 # TODO: Make this better
                 self.parent.wallet.adb.db.my_swaps[tx.txid()] = swap_hex
+                AtomicSwap(
+                    timestamp=int(time.time()),
+                    is_mine=True,
+                    redeemed=False,
+                    in_assets = [utxo.asset],
+                    in_amounts = [utxo.value_sats(asset_aware=True)],
+                    out_assets = [my_asset],
+                    out_amounts = [my_amount],
+                    swap_hex = swap_hex
+                )
 
         self.parent.window.sign_tx(tx, callback=print_swap, external_keypairs=None)
 

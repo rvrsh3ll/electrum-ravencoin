@@ -1007,23 +1007,23 @@ def ipfs_explorer_info():
     return ipfs_explorers
 
 
-def ipfs_explorer(config: 'SimpleConfig', *, prefered_gateway=None) -> Optional[str]:
+def ipfs_explorer(config: 'SimpleConfig') -> Optional[str]:
     """Returns name of selected ipfs explorer,
     or None if a custom one (not among hardcoded ones) is configured.
     """
-    if config.IPFS_EXPLORER_CUSTOM is not None and not prefered_gateway:
+    if config.IPFS_EXPLORER_CUSTOM is not None:
         return None
     be_key = config.IPFS_EXPLORER
-    be_tuple = ipfs_explorer_info().get(prefered_gateway or be_key)
+    be_tuple = ipfs_explorer_info().get(be_key)
     if be_tuple is None:
         be_key = config.cv.IPFS_EXPLORER.get_default_value()
     assert isinstance(be_key, str), f"{be_key!r} should be str"
-    return prefered_gateway or be_key
+    return be_key
 
 
-def ipfs_explorer_tuple(config: 'SimpleConfig', *, prefered_gateway=None) -> Optional[Tuple[str, dict]]:
+def ipfs_explorer_tuple(config: 'SimpleConfig') -> Optional[Tuple[str, dict]]:
     custom_be = config.IPFS_EXPLORER_CUSTOM
-    if custom_be and not prefered_gateway:
+    if custom_be:
         if isinstance(custom_be, str):
             return custom_be, _ipfs_explorer_default_api_loc
         if isinstance(custom_be, (tuple, list)) and len(custom_be) == 2:
@@ -1033,7 +1033,7 @@ def ipfs_explorer_tuple(config: 'SimpleConfig', *, prefered_gateway=None) -> Opt
         return None
     else:
         # using one of the hardcoded ipfs explorers
-        return ipfs_explorer_info().get(ipfs_explorer(config, prefered_gateway=prefered_gateway))
+        return ipfs_explorer_info().get(ipfs_explorer(config))
 
 
 def ipfs_explorer_URL(config: 'SimpleConfig', kind: str, item: str) -> Optional[str]:
@@ -1052,9 +1052,9 @@ def ipfs_url_from_tuple(be_tuple, kind: str, item: str) -> Optional[str]:
     url_parts = [explorer_url, kind_str, item]
     return ''.join(url_parts)
 
-def ipfs_explorer_round_robin(config: 'SimpleConfig', kind: str, item: str, *, prefered_gateway=None) -> Iterable[Tuple[str, str]]:
-    be_tuple = ipfs_explorer_tuple(config, prefered_gateway=prefered_gateway)
-    current_explorer = ipfs_explorer(config, prefered_gateway=prefered_gateway)
+def ipfs_explorer_round_robin(config: 'SimpleConfig', kind: str, item: str) -> Iterable[Tuple[str, str]]:
+    be_tuple = ipfs_explorer_tuple(config)
+    current_explorer = ipfs_explorer(config)
     if be_tuple:
         yield current_explorer, ipfs_url_from_tuple(be_tuple, kind, item)
     keys = [k for k in ipfs_explorer_info().keys()]

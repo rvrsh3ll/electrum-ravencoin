@@ -5,15 +5,16 @@ import stat
 import attr
 import asyncio
 import time
+import itertools
 
-from typing import TYPE_CHECKING, Set, Dict
+from typing import TYPE_CHECKING, Set, Dict, Optional
 
 from aiohttp import ClientResponse
 from collections import defaultdict
 
 from .bitcoin import base_decode
 from .json_db import JsonDB, locked, modifier, StoredObject, StoredDict
-from .util import (standardize_path, test_read_write_permissions, profiler, os_chmod, ipfs_explorer, 
+from .util import (standardize_path, test_read_write_permissions, profiler, os_chmod, 
                    ipfs_explorer_URL, ipfs_explorer_round_robin, event_listener, make_dir, EventListener)
 from .network import Network
 
@@ -50,14 +51,14 @@ def human_readable_size(size, decimal_places=3, greater_than=False):
 
 @attr.s
 class IPFSMetadata(StoredObject):
-    known_size = attr.ib(default=None, type=int, validator=attr.validators.optional(attr.validators.instance_of(int)))
+    known_size = attr.ib(default=None, type=Optional[int], validator=attr.validators.optional(attr.validators.instance_of(int)))
     over_sized = attr.ib(default=False, type=bool, validator=attr.validators.instance_of(bool))
-    known_mime = attr.ib(default=None, type=str, validator=attr.validators.optional(attr.validators.instance_of(str)))
+    known_mime = attr.ib(default=None, type=Optional[str], validator=attr.validators.optional(attr.validators.instance_of(str)))
     is_client_side = attr.ib(default=False, type=bool, validator=attr.validators.instance_of(bool))
-    last_attemped_info_query = attr.ib(default=None, type=int, validator=attr.validators.optional(attr.validators.instance_of(int)))
-    last_attemped_data_download = attr.ib(default=None, type=int, validator=attr.validators.optional(attr.validators.instance_of(int)))
+    last_attemped_info_query = attr.ib(default=None, type=Optional[int], validator=attr.validators.optional(attr.validators.instance_of(int)))
+    last_attemped_data_download = attr.ib(default=None, type=Optional[int], validator=attr.validators.optional(attr.validators.instance_of(int)))
     info_lookup_successful = attr.ib(default=False, type=bool, validator=attr.validators.instance_of(bool))
-    associated_assets = attr.ib(default=set(), type=Set[str], converter=set)
+    associated_assets = attr.ib(factory=set, type=Set[str], converter=set)
 
 class IPFSDBReadWriteError(Exception): pass
 
@@ -93,7 +94,8 @@ class IPFSDB(JsonDB, EventListener):
         self.raw_ipfs_path = standardize_path(raw_path)
         make_dir(self.raw_ipfs_path, False)
 
-        self._ipfs_lookup_semaphore = defaultdict(asyncio.Semaphore)
+        self._ipfs_single_gateway_semaphore = asyncio.Semaphore(5)
+        self._ipfs_gateway_locks = defaultdict(asyncio.Lock)
         self._ipfs_lookup_current = set()
         self._ipfs_download_current = set()
 
@@ -162,7 +164,7 @@ class IPFSDB(JsonDB, EventListener):
         except (FileNotFoundError, OSError):
             pass
 
-    async def _download_ipfs_data(self, network: Network, ipfs_hash: str, *, prefered_gateway=None):        
+    async def _download_ipfs_data(self, network: Network, ipfs_hash: str):        
         async def on_finish(resp: ClientResponse):
             m = self.get_metadata(ipfs_hash)
             try:
@@ -186,48 +188,55 @@ class IPFSDB(JsonDB, EventListener):
             finally:
                 resp.close()
 
-        async def lookup_data(gateway_name:str, ipfs_url: str):
-            async with self._ipfs_lookup_semaphore[gateway_name]:
-                await asyncio.sleep(0.25)
-                self.logger.info(f'attempting to download data from {ipfs_url}')
-                await Network.async_send_http_on_proxy('get', ipfs_url, on_finish=on_finish, timeout=60)
+        async def lookup_data(ipfs_url: str):
+            await asyncio.sleep(0.25)
+            self.logger.info(f'attempting to download data from {ipfs_url}')
+            await Network.async_send_http_on_proxy('get', ipfs_url, on_finish=on_finish, timeout=60)
 
         try:
             self.logger.info(f'downloading ipfs data for {ipfs_hash}')
             if network.config.ROUND_ROBIN_ALL_KNOWN_IPFS_GATEWAYS:
-                ipfs_urls = [url for url in ipfs_explorer_round_robin(network.config, 'ipfs', ipfs_hash, prefered_gateway=prefered_gateway)]
+                ipfs_urls = {name: url for name, url in ipfs_explorer_round_robin(network.config, 'ipfs', ipfs_hash)}
                 tried_gateways = set()
+                while tried_gateways != set(ipfs_urls.keys()):
+                    async def get_gateway(gateway: str, lock: asyncio.Lock):
+                        try:
+                            await lock.acquire()
+                        finally:
+                            return gateway
+                    
+                    # Need to populate default dict if doesnt exist
+                    locks = [asyncio.create_task(get_gateway(gateway, self._ipfs_gateway_locks[gateway])) 
+                             for gateway in ipfs_urls.keys() if gateway not in tried_gateways]
+                    completed, pending = await asyncio.wait(locks, return_when=asyncio.FIRST_COMPLETED)
+                    completed_l = list(completed)
 
-                for gateway_name, url in ipfs_urls:
-                    # If we can make a request immediately on any of the urls, do so
-                    if self._ipfs_lookup_semaphore[gateway_name].locked(): continue
-                    tried_gateways.add(gateway_name)
+                    # Immediately free unused locks for other tasks (is this needed?)
+                    for locking_task in itertools.chain(completed_l[1:], pending):
+                        def on_done(task: asyncio.Task):
+                            gateway = task.result()
+                            self._ipfs_gateway_locks[gateway].release()
+
+                        locking_task.add_done_callback(on_done)
+
+                    gateway = completed_l[0].result()
+                    url = ipfs_urls[gateway]
                     try:
-                        await lookup_data(gateway_name, url)
+                        await lookup_data(url)
+                        return
                     except asyncio.TimeoutError:
                         self.logger.warning(f'timeout trying to download ipfs data from {url}')
-                        continue
                     except Exception as e:
                         self.logger.warning(f'failed to download data from {url}: {str(e)} ({e.__class__})')
-                        continue
-                    # Do not enter the next loop; we are successful
-                    return
-                for gateway_name, url in ipfs_urls:
-                    if gateway_name in tried_gateways: continue
-                    try:
-                        await lookup_data(gateway_name, url)
-                    except asyncio.TimeoutError:
-                        self.logger.warning(f'timeout trying to download ipfs data from {url}')
-                        continue
-                    except Exception as e:
-                        self.logger.warning(f'failed to download data from {url}: {str(e)} ({e.__class__})')
-                        continue
-                    # Do not enter the next loop; we are successful
-                    return
+                    finally:
+                        tried_gateways.add(gateway)
+                        self._ipfs_gateway_locks[gateway].release()
+
             else:
                 url = ipfs_explorer_URL(network.config, 'ipfs', ipfs_hash)
                 try:
-                    await lookup_data(ipfs_explorer(network.config), url)
+                    async with self._ipfs_single_gateway_semaphore:
+                        await lookup_data(url)
                 except asyncio.TimeoutError:
                     self.logger.warning(f'timeout trying to lookup ipfs info from {url}')
                 except Exception as e:
@@ -241,7 +250,6 @@ class IPFSDB(JsonDB, EventListener):
             util.trigger_callback('ipfs_download', ipfs_hash)
 
     async def _download_ipfs_information(self, network: Network, ipfs_hash: str):
-        current_gateway = None
         async def on_finish(resp: ClientResponse):
             m = self.get_metadata(ipfs_hash)
             try:
@@ -254,59 +262,62 @@ class IPFSDB(JsonDB, EventListener):
                 # Lookup current needs to be cleared here because
                 # its checked in download data
                 self._ipfs_lookup_current.discard(ipfs_hash)
-                await self.maybe_download_data_for_ipfs_hash(network, ipfs_hash, prefered_gateway=current_gateway)
+                await self.maybe_download_data_for_ipfs_hash(network, ipfs_hash)
             finally:
                 resp.close()
 
-        async def lookup_info(gateway_name:str, ipfs_url: str):
-            async with self._ipfs_lookup_semaphore[gateway_name]:
-                await asyncio.sleep(0.25)
-                self.logger.info(f'attempting to download info from {ipfs_url}')
-                await Network.async_send_http_on_proxy('head', ipfs_url, on_finish=on_finish, timeout=60)
+        async def lookup_info(ipfs_url: str):
+            await asyncio.sleep(0.25)
+            self.logger.info(f'attempting to download info from {ipfs_url}')
+            await Network.async_send_http_on_proxy('head', ipfs_url, on_finish=on_finish, timeout=60)
 
         try:
             self.logger.info(f'looking up ipfs info for {ipfs_hash}')
 
             if network.config.ROUND_ROBIN_ALL_KNOWN_IPFS_GATEWAYS:
-                ipfs_urls = [url for url in ipfs_explorer_round_robin(network.config, 'ipfs', ipfs_hash)]
+                ipfs_urls = {name: url for name, url in ipfs_explorer_round_robin(network.config, 'ipfs', ipfs_hash)}
                 tried_gateways = set()
+                while tried_gateways != set(ipfs_urls.keys()):
+                    async def get_gateway(gateway: str, lock: asyncio.Lock):
+                        await lock.acquire()
+                        return gateway
+                    
+                    # Need to populate default dict if doesnt exist
+                    locks = [asyncio.create_task(get_gateway(gateway, self._ipfs_gateway_locks[gateway]))
+                             for gateway in ipfs_urls.keys() if gateway not in tried_gateways]
+                    completed, pending = await asyncio.wait(locks, return_when=asyncio.FIRST_COMPLETED)
+                    completed_l = list(completed)
 
-                for gateway_name, url in ipfs_urls:
-                    # If we can make a request immediately on any of the urls, do so
-                    if self._ipfs_lookup_semaphore[gateway_name].locked(): continue
-                    current_gateway = gateway_name
-                    tried_gateways.add(gateway_name)
+                    # Immediately free unused locks for other tasks (is this needed?)
+                    for locking_task in itertools.chain(completed_l[1:], pending):
+                        def on_done(task: asyncio.Task):
+                            gateway = task.result()
+                            self._ipfs_gateway_locks[gateway].release()
+
+                        locking_task.add_done_callback(on_done)
+
+                    gateway = completed_l[0].result()
+                    url = ipfs_urls[gateway]
                     try:
-                        await lookup_info(gateway_name, url)
+                        await lookup_info(url)
+                        return
                     except asyncio.TimeoutError:
-                        self.logger.warning(f'timeout trying to lookup ipfs info from {url}')
-                        continue
+                        self.logger.warning(f'timeout trying to download ipfs info from {url}')
                     except Exception as e:
-                        self.logger.warning(f'failed to download information from {url}: {str(e)} ({e.__class__})')
-                        continue
-                    # Do not enter the next loop; we are successful
-                    return
-                for gateway_name, url in ipfs_urls:
-                    if gateway_name in tried_gateways: continue
-                    current_gateway = gateway_name
-                    try:
-                        await lookup_info(gateway_name, url)
-                    except asyncio.TimeoutError:
-                        self.logger.warning(f'timeout trying to lookup ipfs info from {url}')
-                        continue
-                    except Exception as e:
-                        self.logger.warning(f'failed to download information from {url}: {str(e)} ({e.__class__})')
-                        continue
-                    # Do not enter the next loop; we are successful
-                    return
+                        self.logger.warning(f'failed to download info from {url}: {str(e)} ({e.__class__})')
+                    finally:
+                        tried_gateways.add(gateway)
+                        self._ipfs_gateway_locks[gateway].release()
+
             else:
                 url = ipfs_explorer_URL(network.config, 'ipfs', ipfs_hash)
                 try:
-                    await lookup_info(ipfs_explorer(network.config), url)
+                    async with self._ipfs_single_gateway_semaphore:
+                        await lookup_info(url)
                 except asyncio.TimeoutError:
                     self.logger.warning(f'timeout trying to lookup ipfs info from {url}')
                 except Exception as e:
-                    self.logger.warning(f'failed to download information from {url}: {str(e)} ({e.__class__})')
+                    self.logger.warning(f'failed to download info from {url}: {str(e)} ({e.__class__})')
         finally:
             curr_time = int(time.time())
             m = self.get_metadata(ipfs_hash)
@@ -316,7 +327,7 @@ class IPFSDB(JsonDB, EventListener):
             util.trigger_callback('ipfs_download', ipfs_hash)
 
     @modifier
-    async def maybe_download_data_for_ipfs_hash(self, network: 'Network', ipfs_hash: str, *, prefered_gateway=None):
+    async def maybe_download_data_for_ipfs_hash(self, network: 'Network', ipfs_hash: str):
         assert isinstance(ipfs_hash, str)
         if not network:
             return
@@ -342,7 +353,7 @@ class IPFSDB(JsonDB, EventListener):
                     return
             
                 self._ipfs_download_current.add(ipfs_hash)
-                await network.taskgroup.spawn(self._download_ipfs_data(network, ipfs_hash, prefered_gateway=prefered_gateway))
+                await network.taskgroup.spawn(self._download_ipfs_data(network, ipfs_hash))
 
     async def maybe_get_info_for_ipfs_hash(self, network: 'Network', ipfs_hash: str, asset: str):
         assert isinstance(ipfs_hash, str)

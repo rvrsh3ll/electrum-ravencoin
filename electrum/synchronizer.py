@@ -189,7 +189,7 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
         if error := get_error_for_asset_typed(asset, AssetType.RESTRICTED): raise ValueError(f'invalid asset: {error}')
         self._adding_restricted_for_verifier.add(asset)
 
-    def add_restricted_for_verifier(self, asset: str):
+    def add_restricted_for_freeze(self, asset: str):
         if error := get_error_for_asset_typed(asset, AssetType.RESTRICTED): raise ValueError(f'invalid asset: {error}')
         self._adding_restricted_for_freeze.add(asset)
 
@@ -768,12 +768,8 @@ class Synchronizer(SynchronizerBase):
                 # Watch for restricted of this asset
                 await self._add_asset(f'${asset[:-1]}')
             if asset[0] == '#':
-                if asset not in self.adb.db.verified_tags_for_qualifiers:
-                    self.adb.db.verified_tags_for_qualifiers[asset] = dict()
                 await self._add_qualifier_for_tags(asset)
             if asset[0] == '$':
-                if asset not in self.adb.db.verified_tags_for_qualifiers:
-                    self.adb.db.verified_tags_for_qualifiers[asset] = dict()
                 await self._add_qualifier_for_tags(asset)
                 await self._add_restricted_for_verifier(asset)
                 await self._add_restricted_for_freeze(asset)

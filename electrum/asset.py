@@ -326,7 +326,7 @@ class AssetMetadata(StoredObject):
     sats_in_circulation = attr.ib(type=int, validator=_validate_sats)
     divisions = attr.ib(type=int, validator=_validate_divisions)
     reissuable = attr.ib(type=bool)
-    associated_data = attr.ib(default=None, type=bytes, converter=_associated_data_converter)
+    associated_data = attr.ib(default=None, type=Optional[bytes], converter=_associated_data_converter)
 
     def is_associated_data_ipfs(self) -> bool:
         return self.associated_data and len(self.associated_data) == 34 and self.associated_data[:2] == b'\x12\x20'
