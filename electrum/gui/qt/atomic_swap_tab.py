@@ -16,26 +16,15 @@ from electrum.logging import Logger
 from electrum.i18n import _
 from electrum.transaction import PartialTransaction, Transaction, script_GetOp, Sighash, TxOutpoint, PartialTxOutput, PartialTxInput, TxInput
 from electrum.util import format_satoshis
-from electrum.json_db import StoredObject
+from electrum.atomic_swap import AtomicSwap, RESERVED_MESSAGE
 
 from .asset_management_panel import AssetAmountEdit
 from .confirm_tx_dialog import ConfirmTxDialog
 from .util import (MessageBoxMixin, read_QIcon, EnterButton, ColorScheme, NonlocalAssetOrBasecoinSelector, 
-                   QHSeperationLine, Buttons, QtEventListener, qt_event_listener, WaitingDialog)
+                   QHSeperationLine, Buttons, QtEventListener, qt_event_listener)
 
 if TYPE_CHECKING:
     from .main_window import ElectrumWindow
-
-@attr.s
-class AtomicSwap(StoredObject):
-    timestamp = attr.ib(type=int, validator=attr.validators.instance_of(int))
-    is_mine = attr.ib(type=bool, validator=attr.validators.instance_of(bool))
-    redeemed = attr.ib(type=bool, validator=attr.validators.instance_of(bool))
-    in_assets = attr.ib(type=List[Optional[str]])
-    in_amounts = attr.ib(type=List[int])
-    out_assets = attr.ib(type=List[Optional[str]])
-    out_amounts = attr.ib(type=List[int])
-    swap_hex = attr.ib(type=str, validator=attr.validators.instance_of(str))
 
 class DummySearchableList:
     def filter(self, x):
@@ -209,6 +198,8 @@ class CreateSwapWidget(QWidget, Logger, MessageBoxMixin, QtEventListener):
                             self.create_swap.setEnabled(False)
                             self.waiting_for_tx = tx.txid()
                             self.output.setText(_('Please wait for the transaction to be successfully broadcast.'))
+                        else:
+                            self.show_message(_('Please complete and broadcast the transaction before trying again.'))
 
                 self.parent.window.sign_tx(
                     tx,
@@ -267,11 +258,9 @@ class CreateSwapWidget(QWidget, Logger, MessageBoxMixin, QtEventListener):
 
                 self.parent.window.set_frozen_state_of_coins([utxo], True)
                 self.parent.wallet.set_reserved_state_of_address(my_address, reserved=True)
-                self.parent.wallet.set_label(my_address, _('Reserved For Atomic Swap'))
+                self.parent.wallet.set_label(my_address, RESERVED_MESSAGE)
 
-                # TODO: Make this better
-                self.parent.wallet.adb.db.my_swaps[tx.txid()] = swap_hex
-                AtomicSwap(
+                swap = AtomicSwap(
                     timestamp=int(time.time()),
                     is_mine=True,
                     redeemed=False,
@@ -281,6 +270,7 @@ class CreateSwapWidget(QWidget, Logger, MessageBoxMixin, QtEventListener):
                     out_amounts = [my_amount],
                     swap_hex = swap_hex
                 )
+                self.parent.wallet.adb.add_my_swap(swap)
 
         self.parent.window.sign_tx(tx, callback=print_swap, external_keypairs=None)
 
@@ -518,6 +508,7 @@ class RedeemSwapWidget(QWidget, Logger):
         self.input.clear()
         self._parse_psbt()
 
+# TODO: This needs a looking at for p2sh assets
 class AtomicSwapTab(QWidget, MessageBoxMixin, Logger):
     def __init__(self, window: 'ElectrumWindow'):
         QWidget.__init__(self, window)

@@ -49,7 +49,7 @@ from .json_db import StoredDict, JsonDB, locked, modifier, StoredObject
 from .plugin import run_hook, plugin_loaders
 from .submarine_swaps import SwapData
 from .version import ELECTRUM_VERSION
-from .ipfs_db import IPFSDB
+from .atomic_swap import AtomicSwap
 
 if TYPE_CHECKING:
     from .storage import WalletStorage
@@ -610,7 +610,41 @@ class WalletDB(JsonDB):
         self.verified_broadcasts = self.get_dict('verified_broadcasts')
         self.asset_blacklist = self.get('asset_blacklist')  # type: Set[str]
 
-        self.my_swaps = self.get_dict('my_atomic_swaps')
+        self.my_swaps = self.get_dict('atomic_swap')
+        self.my_output_to_swap_id = self.get_dict('outpoint_to_swap_id')
+
+    @locked
+    def get_swap_id_for_outpoint(self, outpoint: TxOutpoint) -> Optional[str]:
+        assert isinstance(outpoint, TxOutpoint)
+        return self.my_output_to_swap_id.get(outpoint.to_str(), None)
+
+    @modifier
+    def add_swap_id_for_outpoint(self, outpoint: TxOutpoint, swap_id: str):
+        assert isinstance(outpoint, TxOutpoint)
+        self.my_output_to_swap_id[outpoint.to_str()] = swap_id
+
+    @modifier
+    def remove_swap_id_outpoint(self, outpoint: TxOutpoint):
+        assert isinstance(outpoint, TxOutpoint)
+        self.my_output_to_swap_id.pop(outpoint.to_str(), None)
+
+    @locked
+    def get_my_swaps(self) -> Sequence[AtomicSwap]:
+        return sorted(self.my_swaps.values(), key=lambda x: x.timestamp)
+
+    @locked
+    def get_swap_for_id(self, id: str) -> Optional[AtomicSwap]:
+        assert isinstance(id, str)
+        return self.my_swaps.get(id, None)
+
+    @modifier
+    def remove_my_swap(self, swap_id: str):
+        assert isinstance(swap_id, str)
+        self.my_swaps.pop(swap_id, None)
+
+    @modifier
+    def add_my_swap(self, swap_id: str, swap: AtomicSwap):
+        self.my_swaps[swap_id] = swap
 
     @locked
     def get_broadcasts_to_watch(self) -> Sequence[str]:
@@ -992,6 +1026,8 @@ class WalletDB(JsonDB):
                 (TxOutpoint.from_json(tup2[0]), tup2[1]) if tup2 else None,
                 (TxOutpoint.from_json(tup3[0]), tup3[1]) if tup3 else None,
             )) for k, (metadata, tup1, tup2, tup3) in v.items())
+        elif key == 'atomic_swap':
+            v = dict((k, AtomicSwap(**swap)) for k, swap in v.items())
         # convert htlc_id keys to int
         if key in ['adds', 'locked_in', 'settles', 'fails', 'fee_updates', 'buckets',
                    'unacked_updates', 'unfulfilled_htlcs', 'fail_htlc_reasons', 'onion_keys']:

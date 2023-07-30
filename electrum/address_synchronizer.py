@@ -31,7 +31,7 @@ from .crypto import sha256
 from . import bitcoin, util
 from .bitcoin import COINBASE_MATURITY
 from .util import profiler, bfh, TxMinedInfo, UnrelatedTransactionException, with_lock, OldTaskGroup
-from .transaction import Transaction, TxOutput, TxInput, PartialTxInput, TxOutpoint, PartialTransaction
+from .transaction import Transaction, TxOutput, TxInput, PartialTxInput, TxOutpoint
 from .synchronizer import Synchronizer
 from .verifier import SPV
 from .asset import get_asset_info_from_script, AssetMetadata, get_error_for_asset_typed, AssetType
@@ -40,6 +40,7 @@ from .i18n import _
 from .logging import Logger
 from .util import EventListener, event_listener
 from .ipfs_db import IPFSDB
+from .atomic_swap import AtomicSwap
 
 if TYPE_CHECKING:
     from .network import Network
@@ -163,6 +164,14 @@ class AddressSynchronizer(Logger, EventListener):
                 IPFSDB.get_instance().dissociate_asset_with_ipfs(associated_data, asset)
                 self.db.remove_verified_broadcast(asset, tx_hash)
             self.db.remove_broadcast_to_watch(asset)
+
+    def add_my_swap(self, swap: AtomicSwap):
+        tx = Transaction(swap.swap_hex)
+        id = tx.txid()
+        assert id
+        self.db.add_my_swap(id, swap)
+        for input in tx.inputs():
+            self.db.add_swap_id_for_outpoint(input.prevout, id)
 
     def get_address_history(self, addr: str) -> Dict[str, int]:
         """Returns the history for the address, as a txid->height dict.
@@ -392,6 +401,13 @@ class AddressSynchronizer(Logger, EventListener):
                 self.db.set_spent_outpoint(prevout_hash, prevout_n, tx_hash)
                 add_value_from_prev_output()
                 self.db.remove_non_deterministic_txo_lockingscript(txi.prevout)
+                swap_id = self.db.get_swap_id_for_outpoint(txi.prevout)
+                if swap_id:
+                    swap = self.db.get_swap_for_id(swap_id)
+                    assert swap
+                    swap.redeemed = True
+                    util.trigger_callback('adb_swap_redeemed', self, swap_id)
+
             # add outputs
             for n, txo in enumerate(tx.outputs()):
                 v = txo.value
@@ -460,6 +476,18 @@ class AddressSynchronizer(Logger, EventListener):
         """Removes a single transaction from the wallet history, and attempts
          to undo all effects of the tx (spending inputs, creating outputs, etc).
         """
+        def maybe_update_atomic_swap(prevout: TxOutpoint):
+            swap_id = self.db.get_swap_id_for_outpoint(prevout)
+            if swap_id:
+                swap = self.db.get_swap_for_id(swap_id)
+                assert swap
+                tx = Transaction(swap.swap_hex)
+                for txin in tx.inputs():
+                    if self.db.get_spent_outpoint(txin.prevout.txid.hex(), txin.prevout.out_idx): break
+                else:
+                    swap.redeemed = False
+                    util.trigger_callback('adb_swap_unredeemed', self, swap_id)
+
         def remove_from_spent_outpoints():
             # undo spends in spent_outpoints
             if tx is not None:
@@ -470,12 +498,14 @@ class AddressSynchronizer(Logger, EventListener):
                     prevout_hash = txin.prevout.txid.hex()
                     prevout_n = txin.prevout.out_idx
                     self.db.remove_spent_outpoint(prevout_hash, prevout_n)
+                    maybe_update_atomic_swap(txin.prevout)
             else:
                 # expensive but always works
                 for prevout_hash, prevout_n in self.db.list_spent_outpoints():
                     spending_txid = self.db.get_spent_outpoint(prevout_hash, prevout_n)
                     if spending_txid == tx_hash:
                         self.db.remove_spent_outpoint(prevout_hash, prevout_n)
+                        maybe_update_atomic_swap(txin.prevout)
 
         with self.lock, self.transaction_lock:
             self.logger.info(f"removing tx from history {tx_hash}")

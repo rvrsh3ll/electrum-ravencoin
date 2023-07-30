@@ -199,14 +199,15 @@ class IPFSDB(JsonDB, EventListener):
                 ipfs_urls = {name: url for name, url in ipfs_explorer_round_robin(network.config, 'ipfs', ipfs_hash)}
                 tried_gateways = set()
                 while tried_gateways != set(ipfs_urls.keys()):
-                    async def get_gateway(gateway: str, lock: asyncio.Lock):
+                    async def get_gateway(gateway: str):
+                        lock = self._ipfs_gateway_locks[gateway]
                         try:
                             await lock.acquire()
                         finally:
                             return gateway
                     
                     # Need to populate default dict if doesnt exist
-                    locks = [asyncio.create_task(get_gateway(gateway, self._ipfs_gateway_locks[gateway])) 
+                    locks = [asyncio.create_task(get_gateway(gateway)) 
                              for gateway in ipfs_urls.keys() if gateway not in tried_gateways]
                     completed, pending = await asyncio.wait(locks, return_when=asyncio.FIRST_COMPLETED)
                     completed_l = list(completed)
@@ -278,12 +279,15 @@ class IPFSDB(JsonDB, EventListener):
                 ipfs_urls = {name: url for name, url in ipfs_explorer_round_robin(network.config, 'ipfs', ipfs_hash)}
                 tried_gateways = set()
                 while tried_gateways != set(ipfs_urls.keys()):
-                    async def get_gateway(gateway: str, lock: asyncio.Lock):
-                        await lock.acquire()
-                        return gateway
+                    async def get_gateway(gateway: str):
+                        lock = self._ipfs_gateway_locks[gateway]
+                        try:
+                            await lock.acquire()
+                        finally:
+                            return gateway
                     
                     # Need to populate default dict if doesnt exist
-                    locks = [asyncio.create_task(get_gateway(gateway, self._ipfs_gateway_locks[gateway]))
+                    locks = [asyncio.create_task(get_gateway(gateway))
                              for gateway in ipfs_urls.keys() if gateway not in tried_gateways]
                     completed, pending = await asyncio.wait(locks, return_when=asyncio.FIRST_COMPLETED)
                     completed_l = list(completed)
