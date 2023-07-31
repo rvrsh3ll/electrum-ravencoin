@@ -350,14 +350,16 @@ class TagAddress(QWidget):
         def sign_done(success):
             if success:
                 self.parent.parent.window.broadcast_or_show(tx)
+
+                self.parent.update_address_trigger.emit((None, False))
+                self.parent.set_qualifier.list.last_selected_address = None
+                self.parent.set_qualifier.list.current_h160s = None
+                self.parent.set_qualifier.list.update()
+                
         self.parent.parent.window.sign_tx(
             tx,
             callback=sign_done,
             external_keypairs=None)
-        self.parent.update_address_trigger.emit((None, False))
-        self.parent.set_qualifier.list.last_selected_address = None
-        self.parent.set_qualifier.list.current_h160s = None
-        self.parent.set_qualifier.list.update()
 
     def setEnabled(self, asset, in_mempool):
         if not asset:

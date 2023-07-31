@@ -154,13 +154,13 @@ class MakeBroadcastPanel(QWidget, Logger):
         def sign_done(success):
             if success:
                 self.parent.window.broadcast_or_show(tx)
+                self.associated_data_e.line_edit.clear()
+                self.timestamp.clear()
+
         self.parent.window.sign_tx(
             tx,
             callback=sign_done,
             external_keypairs=None)
-
-        self.associated_data_e.line_edit.clear()
-        self.timestamp.clear()
 
     def set_date(self, epoch):
         if not epoch:

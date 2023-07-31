@@ -765,13 +765,14 @@ class CreateAssetPanel(ManageAssetPanel):
         def sign_done(success):
             if success:
                 self.parent.window.broadcast_or_show(tx)
+
+                self._clayout_on_edit(self.clayout)
+
         self.parent.window.sign_tx(
             tx,
             callback=sign_done,
             external_keypairs=None)
         
-        self._clayout_on_edit(self.clayout)
-
     def _update_parent_assets(self, _type: AssetType):
         if _type in (AssetType.SUB, AssetType.UNIQUE, AssetType.MSG_CHANNEL):
             types = [AssetType.ROOT, AssetType.SUB]
@@ -984,12 +985,14 @@ class ReissueAssetPanel(ManageAssetPanel):
         def sign_done(success):
             if success:
                 self.parent.window.broadcast_or_show(tx)
+
+                self.asset_selector_combo.setCurrentIndex(0)
+                
         self.parent.window.sign_tx(
             tx,
             callback=sign_done,
             external_keypairs=None)
-        
-        self.asset_selector_combo.setCurrentIndex(0)
+    
 
     def _parent_asset_selector_on_change(self):
         super()._parent_asset_selector_on_change()

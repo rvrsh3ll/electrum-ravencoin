@@ -624,7 +624,7 @@ class WalletDB(JsonDB):
         self.my_output_to_swap_id[outpoint.to_str()] = swap_id
 
     @modifier
-    def remove_swap_id_outpoint(self, outpoint: TxOutpoint):
+    def remove_swap_id_for_outpoint(self, outpoint: TxOutpoint):
         assert isinstance(outpoint, TxOutpoint)
         self.my_output_to_swap_id.pop(outpoint.to_str(), None)
 

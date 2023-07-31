@@ -1,13 +1,16 @@
 import asyncio
 import attr
+import enum
 import time
 
 from collections import defaultdict
 from decimal import Decimal
 from typing import TYPE_CHECKING, List, Optional
 
-from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtWidgets import QLabel, QVBoxLayout, QSizePolicy, QWidget, QTabWidget, QHBoxLayout, QComboBox, QTextEdit
+from PyQt5.QtGui import QFont, QStandardItemModel, QStandardItem
+from PyQt5.QtCore import Qt, pyqtSignal, QItemSelectionModel, QModelIndex, QPoint
+from PyQt5.QtWidgets import (QLabel, QVBoxLayout, QSizePolicy, QWidget, QTabWidget, QHBoxLayout, 
+                             QComboBox, QTextEdit, QAbstractItemView, QMenu)
 
 from electrum import constants
 from electrum.bitcoin import opcodes, address_to_scripthash, COIN
@@ -15,13 +18,14 @@ from electrum.asset import DEFAULT_ASSET_AMOUNT_MAX
 from electrum.logging import Logger
 from electrum.i18n import _
 from electrum.transaction import PartialTransaction, Transaction, script_GetOp, Sighash, TxOutpoint, PartialTxOutput, PartialTxInput, TxInput
-from electrum.util import format_satoshis
+from electrum.util import format_satoshis, profiler, format_time, trigger_callback
 from electrum.atomic_swap import AtomicSwap, RESERVED_MESSAGE
 
 from .asset_management_panel import AssetAmountEdit
 from .confirm_tx_dialog import ConfirmTxDialog
 from .util import (MessageBoxMixin, read_QIcon, EnterButton, ColorScheme, NonlocalAssetOrBasecoinSelector, 
                    QHSeperationLine, Buttons, QtEventListener, qt_event_listener)
+from .my_treeview import MyTreeView
 
 if TYPE_CHECKING:
     from .main_window import ElectrumWindow
@@ -29,6 +33,164 @@ if TYPE_CHECKING:
 class DummySearchableList:
     def filter(self, x):
         pass
+
+class SwapsList(MyTreeView):
+    class Columns(MyTreeView.BaseColumnsEnum):
+        TIME = enum.auto()
+        ASSET_IN = enum.auto()
+        AMOUNT_IN = enum.auto()
+        ASSET_OUT = enum.auto()
+        AMOUNT_OUT = enum.auto()
+        COMPLETE = enum.auto()
+
+    headers = {
+        Columns.TIME: _('Created'),
+        Columns.ASSET_IN: _('Out Asset'),
+        Columns.AMOUNT_IN: _('Out Amount'),
+        Columns.ASSET_OUT: _('In Asset'),
+        Columns.AMOUNT_OUT: _('In Amount'),
+        Columns.COMPLETE: _('Redeemed')
+    }
+    filter_columns = list(headers.keys())
+
+    ROLE_ID_STR = Qt.UserRole + 1001
+    key_role = ROLE_ID_STR
+
+    def __init__(self, parent: 'AtomicSwapTab'):
+        super().__init__(
+            main_window=parent.window,
+            stretch_columns=[self.Columns.ASSET_IN, self.Columns.ASSET_OUT],
+        )
+        self.parent = parent
+        self.wallet = self.main_window.wallet
+        self.std_model = QStandardItemModel(self)
+        self.setModel(self.std_model)
+        self.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.setSortingEnabled(True)
+        self.last_selected_swap = None
+        self.current_swaps = []
+
+    @profiler(min_threshold=0.05)
+    def update(self):
+        swaps = self.wallet.adb.db.get_my_swaps()
+        if self.current_swaps == swaps:
+            return
+        self.model().clear()
+        self.update_headers(self.__class__.headers)
+        for idx, swap in enumerate(swaps):
+            id = Transaction(swap.swap_hex).txid()
+            assert id
+            labels = [""] * len(self.Columns)
+            # TODO: Handle multiple ins and outs
+            labels[self.Columns.TIME] = format_time(swap.timestamp)
+            labels[self.Columns.AMOUNT_IN] = self.main_window.format_amount(swap.in_amounts[0], whitespaces=True)
+            labels[self.Columns.AMOUNT_OUT] = self.main_window.format_amount(swap.out_amounts[0], whitespaces=True)
+            labels[self.Columns.ASSET_IN] = swap.in_assets[0] or constants.net.SHORT_NAME
+            labels[self.Columns.ASSET_OUT] = swap.out_assets[0] or constants.net.SHORT_NAME
+            labels[self.Columns.COMPLETE] = str(swap.redeemed)
+            swap_item = [QStandardItem(x) for x in labels]
+            swap_item[self.Columns.TIME].setData(id, self.ROLE_ID_STR)
+            self.set_editability(swap_item)
+            self.model().insertRow(idx, swap_item)
+            self.refresh_row(id, idx)
+        self.current_swaps = swaps
+        self.filter()
+
+    def refresh_row(self, key: str, row: int) -> None:
+        assert row is not None
+        swap = self.wallet.adb.db.get_swap_for_id(key)
+        row_item = [self.std_model.item(row, col) for col in self.Columns]
+        row_item[self.Columns.ASSET_IN].setToolTip(swap.in_assets[0])
+        row_item[self.Columns.ASSET_OUT].setToolTip(swap.out_assets[0])
+
+    def create_menu(self, position: QPoint):
+        selected = self.selected_in_column(self.Columns.TIME)
+        if not selected:
+            return
+        ids = [self.item_from_index(item).data(self.ROLE_ID_STR) for item in selected]
+        menu = QMenu()
+        if len(ids) == 1:
+            idx = self.indexAt(position)
+            if not idx.isValid():
+                return
+            item = self.item_from_index(idx.sibling(idx.row(), self.Columns.TIME))
+            if not item:
+                return
+            id = item.data(self.ROLE_ID_STR)
+            copy_menu = self.add_copy_menu(menu, idx)
+            swap = self.wallet.adb.db.get_swap_for_id(id)
+            copy_menu.addAction(_("Signed Partial"), lambda: self.place_text_on_clipboard(swap.swap_hex, title="Signed Partial"))
+
+            swap_tx = Transaction(swap.swap_hex)
+
+            def hard_remove_swap():
+                addresses = self.parent.wallet.get_change_addresses()
+                fixed_inputs = []  # type: List[PartialTxInput]
+                for input, amount, asset in zip(swap_tx.inputs(), swap.in_amounts, swap.in_assets):
+                    txin = PartialTxInput.from_txin(input, strip_witness=True)
+                    txin._trusted_asset = asset
+                    txin._trusted_value_sats = amount
+                    txin._trusted_address = self.wallet.dummy_address()
+                    fixed_inputs.append(txin)
+
+                def make_tx(fee_est, *, confirmed_only=False):
+                    return self.parent.wallet.make_unsigned_transaction(
+                        coins=self.parent.window.get_coins(nonlocal_only=False, confirmed_only=confirmed_only),
+                        fixed_inputs=fixed_inputs,
+                        outputs=[PartialTxOutput.from_address_and_value(address, amount, asset=asset) for address, amount, asset in zip(addresses, swap.in_amounts, swap.in_assets)],
+                        fee=fee_est,
+                        rbf=False,
+                    )
+
+                output_amounts_to_pay = defaultdict(int)
+                for input_amount, input_asset in zip(swap.in_amounts, swap.in_assets):
+                    output_amounts_to_pay[input_asset] += input_amount
+
+                conf_dlg = ConfirmTxDialog(window=self.parent.window, make_tx=make_tx, output_value=output_amounts_to_pay, allow_preview=False)
+                if conf_dlg.not_enough_funds:
+                    # note: use confirmed_only=False here, regardless of config setting,
+                    #       as the user needs to get to ConfirmTxDialog to change the config setting
+                    if not conf_dlg.can_pay_assuming_zero_fees(confirmed_only=False):
+                        text = self.parent.window.get_text_not_enough_funds_mentioning_frozen()
+                        self.parent.show_message(text)
+                        return
+                tx = conf_dlg.run()
+                if tx is None:
+                    # user cancelled
+                    return
+                def sign_done(success):
+                    if success:
+                        self.parent.window.broadcast_or_show(tx)
+
+                        self.wallet.on_event_adb_swap_redeemed(self.wallet.adb, id)
+                        for txin in swap_tx.inputs():
+                            self.wallet.adb.db.remove_swap_id_for_outpoint(txin.prevout)
+                        self.wallet.adb.db.remove_my_swap(id)
+                        self.update()
+                        self.parent.window.address_list.update()
+                        self.parent.window.utxo_list.update()
+
+                self.parent.window.sign_tx(
+                    tx,
+                    callback=sign_done,
+                    external_keypairs=None)
+        
+            menu.addAction(_('Hard Remove Swap'), hard_remove_swap)
+
+        def remove_swaps():
+            for id in ids:
+                self.wallet.on_event_adb_swap_redeemed(self.wallet.adb, id)
+                swap = self.wallet.adb.db.get_swap_for_id(id)
+                assert swap
+                for txin in Transaction(swap.swap_hex).inputs():
+                    self.wallet.adb.db.remove_swap_id_for_outpoint(txin.prevout)
+                self.wallet.adb.db.remove_my_swap(id)
+            self.update()
+            self.parent.window.address_list.update()
+            self.parent.window.utxo_list.update()
+
+        menu.addAction(_('Soft Remove Swap') if len(ids) == 1 else _('Soft Remove Swaps'), remove_swaps)
+        menu.exec_(self.viewport().mapToGlobal(position))
 
 class CreateSwapWidget(QWidget, Logger, MessageBoxMixin, QtEventListener):
     def __init__(self, parent: 'AtomicSwapTab'):
@@ -271,6 +433,7 @@ class CreateSwapWidget(QWidget, Logger, MessageBoxMixin, QtEventListener):
                     swap_hex = swap_hex
                 )
                 self.parent.wallet.adb.add_my_swap(swap)
+                self.parent.swaps_list.update()
 
         self.parent.window.sign_tx(tx, callback=print_swap, external_keypairs=None)
 
@@ -500,13 +663,14 @@ class RedeemSwapWidget(QWidget, Logger):
         def sign_done(success):
             if success:
                 self.parent.window.broadcast_or_show(tx)
+
+                self.input.clear()
+                self._parse_psbt()
+
         self.parent.window.sign_tx(
             tx,
             callback=sign_done,
             external_keypairs=None)
-        
-        self.input.clear()
-        self._parse_psbt()
 
 # TODO: This needs a looking at for p2sh assets
 class AtomicSwapTab(QWidget, MessageBoxMixin, Logger):
@@ -520,18 +684,27 @@ class AtomicSwapTab(QWidget, MessageBoxMixin, Logger):
 
         self.redeem_tab = RedeemSwapWidget(self)
         self.create_tab = CreateSwapWidget(self)
+        self.swaps_list = SwapsList(self)
 
         self.tabs = tabs = QTabWidget(self)
         tabs.addTab(self.redeem_tab, read_QIcon('redeem.png'), _('Redeem'))
         tabs.addTab(self.create_tab, read_QIcon('unconfirmed.png'), _('Create'))
+        tabs.addTab(self.swaps_list, read_QIcon('tab_history.png'), _('My Swaps'))
         tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         vbox = QVBoxLayout(self)
         vbox.addWidget(self.tabs)
 
         self.searchable_list = DummySearchableList()
+        def on_change_tab(index):
+            if index == 2:
+                self.searchable_list = self.swaps_list
+            else:
+                self.searchable_list = DummySearchableList()
+        tabs.currentChanged.connect(on_change_tab)
         
     def update(self):
         self.redeem_tab.update()
         self.create_tab.update()
+        self.swaps_list.update()
         super().update()
     

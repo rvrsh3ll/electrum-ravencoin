@@ -491,12 +491,14 @@ class Abstract_Wallet(ABC, Logger, EventListener):
         swap = self.adb.db.get_swap_for_id(swap_id)
         assert swap
         if swap.is_mine:
-            for txout in Transaction(swap.swap_hex).outputs():
+            tx = Transaction(swap.swap_hex)
+            for txout in tx.outputs():
                 if self.is_mine(txout.address):
                     self.set_reserved_state_of_address(txout.address, reserved=True)
                     if not self.get_label_for_address(txout.address):
                         self.set_label(txout.address, RESERVED_MESSAGE)
-        
+            self.set_frozen_state_of_coins([txin.prevout.to_str() for txin in tx.inputs()], freeze=True)
+
     @event_listener
     def on_event_adb_swap_redeemed(self, adb, swap_id: str):
         if self.adb != adb:
@@ -504,11 +506,13 @@ class Abstract_Wallet(ABC, Logger, EventListener):
         swap = self.adb.db.get_swap_for_id(swap_id)
         assert swap
         if swap.is_mine:
-            for txout in Transaction(swap.swap_hex).outputs():
+            tx = Transaction(swap.swap_hex)
+            for txout in tx.outputs():
                 if self.is_mine(txout.address):
                     self.set_reserved_state_of_address(txout.address, reserved=False)
                     if self.get_label_for_address(txout.address) == RESERVED_MESSAGE:
                         self.set_label(txout.address)
+            self.set_frozen_state_of_coins([txin.prevout.to_str() for txin in tx.inputs()], freeze=False)
 
     @event_listener
     async def on_event_adb_set_up_to_date(self, adb):

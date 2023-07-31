@@ -189,11 +189,13 @@ class FreezePanel(QWidget):
         def sign_done(success):
             if success:
                 self.parent.parent.window.broadcast_or_show(tx)
+
+                self.b.setEnabled(False)
+
         self.parent.parent.window.sign_tx(
             tx,
             callback=sign_done,
             external_keypairs=None)
-        self.b.setEnabled(False)
 
     def update(self):
         self.label.setText(_('Select a restricted asset to manage the associated restricted asset\'s freeze state.'))
