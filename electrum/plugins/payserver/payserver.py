@@ -133,6 +133,7 @@ class PayServer(Logger, EventListener):
             raise web.HTTPUnsupportedMediaType()
         amount = int(params['amount_sat'])
         message = params['message'] or "donation"
+        raise NotImplementedError()
         key = wallet.create_request(
             amount_sat=amount,
             message=message,

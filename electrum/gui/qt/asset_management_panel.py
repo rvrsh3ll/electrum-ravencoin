@@ -59,6 +59,15 @@ class AssetAmountEdit(OnlyNumberAmountEdit):
         text = format_satoshis_plain(amount_sat, decimal_point=self.max_precision())
         text = text.replace('.', DECIMAL_POINT)
         return text
+    
+    def setAmount(self, amount_sat):
+        if amount_sat is None:
+            self.setText(" ")  # Space forces repaint in case units changed
+        else:
+            text = self._get_text_from_amount(amount_sat)
+            self.setText(text)
+        self.repaint()  # macOS hack for #6269
+        
         
 class ManageAssetPanel(QWidget, Logger):
     def __init__(self, parent: 'AssetTab'):

@@ -6,7 +6,7 @@ from enum import Enum, auto
 from typing import Optional, Sequence, Mapping, Union, TYPE_CHECKING
 
 from . import constants
-from .bitcoin import address_to_script, construct_script, int_to_hex, opcodes, COIN, base_decode, base_encode, _op_push
+from .bitcoin import address_to_script, construct_script, int_to_hex, opcodes, COIN, base_decode, base_encode, _op_push, TOTAL_COIN_SUPPLY_LIMIT_IN_BTC
 from .i18n import _
 
 from .transaction import PartialTxOutput, MalformedBitcoinScript, script_GetOp
@@ -21,7 +21,7 @@ MAX_CHANNEL_NAME_LENGTH = 12
 MIN_ASSET_LENGTH = 3
 MAX_VERIFIER_STING_LENGTH = 75
 
-DEFAULT_ASSET_AMOUNT_MAX = 21_000_000_000
+DEFAULT_ASSET_AMOUNT_MAX = TOTAL_COIN_SUPPLY_LIMIT_IN_BTC
 UNIQUE_ASSET_AMOUNT_MAX = 1
 QUALIFIER_ASSET_AMOUNT_MAX = 10
 

@@ -2,6 +2,7 @@
 # Distributed under the MIT software license, see the accompanying
 # file LICENCE or http://www.opensource.org/licenses/mit-license.php
 
+from decimal import Decimal
 from typing import Optional, TYPE_CHECKING
 
 from PyQt5.QtGui import QFont, QCursor
@@ -9,7 +10,8 @@ from PyQt5.QtCore import Qt, QSize
 from PyQt5.QtWidgets import (QComboBox, QLabel, QVBoxLayout, QGridLayout, QLineEdit, QTextEdit,
                              QHBoxLayout, QPushButton, QWidget, QSizePolicy, QFrame)
 
-from electrum.bitcoin import is_address
+from electrum.asset import DEFAULT_ASSET_AMOUNT_MAX
+from electrum.bitcoin import is_address, COIN
 from electrum.i18n import _
 from electrum.util import InvoiceError
 from electrum.invoices import PR_DEFAULT_EXPIRATION_WHEN_CREATING
@@ -17,9 +19,10 @@ from electrum.invoices import PR_EXPIRED, pr_expiration_values
 from electrum.logging import Logger
 
 from .amountedit import AmountEdit, BTCAmountEdit, SizedFreezableLineEdit
+from .asset_management_panel import AssetAmountEdit
 from .qrcodewidget import QRCodeWidget
 from .util import read_QIcon, ColorScheme, HelpLabel, WWLabel, MessageBoxMixin, MONOSPACE_FONT
-from .util import ButtonsTextEdit, get_iconname_qrcode
+from .util import ButtonsTextEdit, get_iconname_qrcode, NonlocalAssetOrBasecoinSelector
 
 if TYPE_CHECKING:
     from . import ElectrumGui
@@ -55,7 +58,25 @@ class ReceiveTab(QWidget, MessageBoxMixin, Logger):
         grid.addWidget(QLabel(_('Description')), 0, 0)
         grid.addWidget(self.receive_message_e, 0, 1, 1, 4)
 
-        self.receive_amount_e = BTCAmountEdit(self.window.get_decimal_point)
+        def text_callback(is_valid: bool):
+            self.receive_amount_e.update()
+            self.fiat_receive_e.setVisible(False)
+
+        def want_asset_metadata(input):
+            if not input:
+                self.receive_amount_e.divisions = 8
+                self.receive_amount_e.max_amount = DEFAULT_ASSET_AMOUNT_MAX
+                self.fiat_receive_e.setVisible(self.fx and self.fx.is_enabled())
+            else:
+                self.receive_amount_e.divisions = input['divisions']
+                self.receive_amount_e.max_amount = input['sats_in_circulation']
+            self.receive_amount_e.is_int = self.receive_amount_e.divisions == 0
+            self.receive_amount_e.min_amount = Decimal('1' if self.receive_amount_e.divisions == 0 else f'0.{"".join("0" for i in range(self.receive_amount_e.divisions - 1))}1') * COIN
+            self.receive_amount_e.numbify()
+            self.receive_amount_e.update()
+
+        self.asset_chooser = NonlocalAssetOrBasecoinSelector(self.window, check_callback=text_callback, delayed_check_callback=want_asset_metadata)
+        self.receive_amount_e = AssetAmountEdit(self.asset_chooser.short_name, 8, DEFAULT_ASSET_AMOUNT_MAX)
         grid.addWidget(QLabel(_('Requested amount')), 1, 0)
         grid.addWidget(self.receive_amount_e, 1, 1)
 
@@ -64,12 +85,15 @@ class ReceiveTab(QWidget, MessageBoxMixin, Logger):
             self.fiat_receive_e.setVisible(False)
         grid.addWidget(self.fiat_receive_e, 1, 2, Qt.AlignLeft)
 
+        grid.addWidget(QLabel(_('Asset')), 2, 0)
+        grid.addWidget(self.asset_chooser, 2, 1, 1, 4)
+
         self.window.connect_fields(self.receive_amount_e, self.fiat_receive_e)
 
         self.expiry_button = QPushButton('')
         self.expiry_button.clicked.connect(self.expiry_dialog)
-        grid.addWidget(QLabel(_('Expiry')), 2, 0)
-        grid.addWidget(self.expiry_button, 2, 1)
+        grid.addWidget(QLabel(_('Expiry')), 3, 0)
+        grid.addWidget(self.expiry_button, 3, 1)
 
         self.clear_invoice_button = QPushButton(_('Clear'))
         self.clear_invoice_button.clicked.connect(self.do_clear)
@@ -79,7 +103,7 @@ class ReceiveTab(QWidget, MessageBoxMixin, Logger):
         buttons.addStretch(1)
         buttons.addWidget(self.clear_invoice_button)
         buttons.addWidget(self.create_invoice_button)
-        grid.addLayout(buttons, 4, 0, 1, -1)
+        grid.addLayout(buttons, 5, 0, 1, -1)
 
         self.receive_e = QTextEdit()
         self.receive_e.setFont(QFont(MONOSPACE_FONT))
@@ -146,13 +170,13 @@ class ReceiveTab(QWidget, MessageBoxMixin, Logger):
         self.update_view_button()
         self.toolbar.insertWidget(2, self.toggle_view_button)
         # menu
-        menu.addConfig(
-            _('Add on-chain fallback to lightning requests'), self.config.cv.WALLET_BOLT11_FALLBACK,
-            callback=self.on_toggle_bolt11_fallback)
-        menu.addConfig(
-            _('Add lightning requests to bitcoin URIs'), self.config.cv.WALLET_BIP21_LIGHTNING,
-            tooltip=_('This may result in large QR codes'),
-            callback=self.update_current_request)
+        #menu.addConfig(
+        #    _('Add on-chain fallback to lightning requests'), self.config.cv.WALLET_BOLT11_FALLBACK,
+        #    callback=self.on_toggle_bolt11_fallback)
+        #menu.addConfig(
+        #    _('Add lightning requests to bitcoin URIs'), self.config.cv.WALLET_BIP21_LIGHTNING,
+        #    tooltip=_('This may result in large QR codes'),
+        #    callback=self.update_current_request)
         self.qr_menu_action = menu.addToggle(_("Show detached QR code window"), self.window.toggle_qr_window)
         menu.addAction(_("Import requests"), self.window.import_requests)
         menu.addAction(_("Export requests"), self.window.export_requests)
@@ -193,8 +217,8 @@ class ReceiveTab(QWidget, MessageBoxMixin, Logger):
             _('For on-chain requests, the address gets reserved until expiration. After that, it might get reused.'), ' ',
             _('The bitcoin address never expires and will always be part of this electrum wallet.'), ' ',
             _('You can reuse a bitcoin address any number of times but it is not good for your privacy.'),
-            '\n\n',
-            _('For Lightning requests, payments will not be accepted after the expiration.'),
+            #'\n\n',
+            #_('For Lightning requests, payments will not be accepted after the expiration.'),
         ])
         expiry = self.config.WALLET_PAYREQ_EXPIRY_SECONDS
         v = self.window.query_choice(msg, pr_expiration_values, title=_('Expiry'), default_choice=expiry)
@@ -306,6 +330,7 @@ class ReceiveTab(QWidget, MessageBoxMixin, Logger):
         amount_sat = self.receive_amount_e.get_amount()
         message = self.receive_message_e.text()
         expiry = self.config.WALLET_PAYREQ_EXPIRY_SECONDS
+        asset = self.asset_chooser.asset
 
         if amount_sat and amount_sat < self.wallet.dust_threshold():
             address = None
@@ -320,7 +345,7 @@ class ReceiveTab(QWidget, MessageBoxMixin, Logger):
 
         # generate even if we cannot receive
         try:
-            key = self.wallet.create_request(amount_sat, message, expiry, address)
+            key = self.wallet.create_request(amount_sat, asset, message, expiry, address)
         except InvoiceError as e:
             self.show_error(_('Error creating payment request') + ':\n' + str(e))
             return
@@ -367,7 +392,6 @@ class ReceiveTab(QWidget, MessageBoxMixin, Logger):
         self.receive_message_e.setText('')
         self.receive_amount_e.setAmount(None)
         self.request_list.clearSelection()
-
 
 
 class ReceiveWidget(QWidget):

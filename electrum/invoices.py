@@ -306,7 +306,7 @@ class Invoice(BaseInvoice):
 @attr.s
 class Request(BaseInvoice):
     payment_hash = attr.ib(type=bytes, kw_only=True, converter=hex_to_bytes)  # type: Optional[bytes]
-
+    
     def is_lightning(self):
         return self.payment_hash is not None
 

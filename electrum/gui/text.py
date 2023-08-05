@@ -559,6 +559,9 @@ class ElectrumGui(BaseElectrumGui, EventListener):
                 return
         message = self.str_recv_description
         expiry = self.config.WALLET_PAYREQ_EXPIRY_SECONDS
+        raise NotImplementedError()
+
+        # Need to add asset
         key = self.wallet.create_request(amount_sat, message, expiry, address)
         self.do_clear_request()
         self.pos = self.max_pos

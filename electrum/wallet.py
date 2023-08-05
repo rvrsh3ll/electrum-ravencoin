@@ -2723,7 +2723,7 @@ class Abstract_Wallet(ABC, Logger, EventListener):
             fallback_address=req.get_address() if self.config.WALLET_BOLT11_FALLBACK else None)
         return invoice
 
-    def create_request(self, amount_sat: int, message: str, exp_delay: int, address: Optional[str]):
+    def create_request(self, amount_sat: int, asset: Optional[str], message: str, exp_delay: int, address: Optional[str]):
         # for receiving
         amount_sat = amount_sat or 0
         assert isinstance(amount_sat, int), f"{amount_sat!r}"
@@ -2732,7 +2732,7 @@ class Abstract_Wallet(ABC, Logger, EventListener):
         exp_delay = exp_delay or 0
         timestamp = int(Request._get_cur_time())
         payment_hash = self.lnworker.create_payment_info(amount_sat, write_to_disk=False) if self.has_lightning() else None
-        outputs = [ PartialTxOutput.from_address_and_value(address, amount_sat)] if address else []
+        outputs = [ PartialTxOutput.from_address_and_value(address, amount_sat, asset=asset)] if address else []
         height = self.adb.get_local_height()
         req = Request(
             outputs=outputs,
