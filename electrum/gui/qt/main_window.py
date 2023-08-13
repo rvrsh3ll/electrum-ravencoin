@@ -1017,7 +1017,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         self.history_model.refresh('update_tabs')
         self.receive_tab.request_list.update()
         self.receive_tab.update_current_request()
-        self.send_tab.invoice_list.update()
+        self.send_tab.update()
         self.address_list.update()
         self.utxo_list.update()
         self.contact_list.update()

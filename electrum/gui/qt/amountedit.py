@@ -76,10 +76,10 @@ class AmountEdit(SizedFreezableLineEdit):
                 s = s.replace(DECIMAL_POINT, '')
                 s = s[:p] + DECIMAL_POINT + s[p:p+self.max_precision()]
         if self.max_amount:
-            if (amt := self._get_amount_from_text(s)) and amt >= self.max_amount:
+            if (amt := self._get_amount_from_text(s)) and amt > self.max_amount:
                 s = self._get_text_from_amount(self.max_amount)
         if self.min_amount:
-            if (amt := self._get_amount_from_text(s)) is not None and amt <= self.min_amount:
+            if (amt := self._get_amount_from_text(s)) is not None and amt < self.min_amount:
                 s = self._get_text_from_amount(self.min_amount)
         self.setText(s)
         # setText sets Modified to False.  Instead we want to remember

@@ -1134,8 +1134,17 @@ class Abstract_Wallet(ABC, Logger, EventListener):
                 amount_msat = '!'
                 break
             else:
-                assert isinstance(x.value, int), f"{x.value!r}"
-                amount_msat += x.value * 1000
+                assert isinstance(x.asset_aware_value(), int), f"{x.asset_aware_value()!r}"
+                amount_msat += x.asset_aware_value() * 1000
+
+        _sentinel = object()
+        asset = _sentinel
+        for x in outputs:
+            if asset is _sentinel:
+                asset = x.asset
+            if x.asset != asset:
+                raise Exception('Multiple assets creating invoice')
+
         timestamp = None
         exp = None
         if URI:
@@ -1145,6 +1154,7 @@ class Abstract_Wallet(ABC, Logger, EventListener):
         exp = exp or 0
         invoice = Invoice(
             amount_msat=amount_msat,
+            asset=asset,
             message=message,
             time=timestamp,
             exp=exp,
@@ -1869,6 +1879,9 @@ class Abstract_Wallet(ABC, Logger, EventListener):
                 fee_estimator_vb=fee_estimator,
                 dust_threshold=self.dust_threshold())
         else:
+            # Only for base coin
+            coins = [coin for coin in coins if coin.asset is None]
+
             # "spend max" branch
             # note: This *will* spend inputs with negative effective value (if there are any).
             #       Given as the user is spending "max", and so might be abandoning the wallet,
@@ -2735,6 +2748,7 @@ class Abstract_Wallet(ABC, Logger, EventListener):
         outputs = [ PartialTxOutput.from_address_and_value(address, amount_sat, asset=asset)] if address else []
         height = self.adb.get_local_height()
         req = Request(
+            asset=asset,
             outputs=outputs,
             message=message,
             time=timestamp,

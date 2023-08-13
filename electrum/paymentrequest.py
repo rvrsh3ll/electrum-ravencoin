@@ -143,7 +143,7 @@ class PaymentRequest:
                 # TODO maybe rm restriction but then get_requestor and get_id need changes
                 self.error = "only addresses are allowed as outputs"
                 return
-            self.outputs.append(PartialTxOutput.from_address_and_value(addr, o.amount))
+            self.outputs.append(PartialTxOutput.from_address_and_value(addr, o.amount, asset=o.asset))
         self.memo = self.details.memo
         self.payment_url = self.details.payment_url
 
@@ -246,7 +246,22 @@ class PaymentRequest:
         return self.details.expires
 
     def get_amount(self):
-        return sum(map(lambda x:x.value, self.outputs))
+        _sentinel = object()
+        total = 0
+        asset = _sentinel
+        for output in self.outputs:
+            if asset is _sentinel:
+                asset = output.asset
+            if output.asset != asset:
+                raise Exception('Mismatched asset types in payment request')
+            total += output.asset_aware_value()
+        return total
+
+    def get_asset(self) -> Optional[str]:
+        for o in self.outputs:
+            if o.asset:
+                return o.asset
+        return None
 
     def get_address(self):
         o = self.outputs[0]

@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 class OnlyNumberAmountEdit(AmountEdit):
     def __init__(self, asset_name: Callable[[], str], divisions: int, max_amount: int, *, parent=None, min_amount=0, callback=None):
-        AmountEdit.__init__(self, asset_name, True, parent, max_amount=max_amount, min_amount=min_amount, callback=callback)
+        AmountEdit.__init__(self, asset_name, divisions == 0, parent, max_amount=max_amount, min_amount=min_amount, callback=callback)
         self.divisions = divisions
 
     def decimal_point(self):
@@ -36,10 +36,16 @@ class OnlyNumberAmountEdit(AmountEdit):
         return 8
 
     def numbify(self):
-        text = self.text().strip()
-        if text == '!':
-            self.setText('')
-        return super().numbify()
+        og_text = self.text().strip()
+        super().numbify()
+        amount = self.get_amount()
+        if amount:
+            chunk = Decimal('1' if self.divisions == 0 else f'0.{"".join("0" for i in range(self.divisions - 1))}1') * COIN
+            chopped = amount // chunk
+            text = self._get_text_from_amount(int(chopped * chunk))
+            if og_text[-1] == DECIMAL_POINT:
+                text += DECIMAL_POINT
+            self.setText(text)
 
 class AssetAmountEdit(OnlyNumberAmountEdit):
     def _get_amount_from_text(self, text):

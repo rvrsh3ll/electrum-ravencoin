@@ -8,11 +8,13 @@ from typing import Optional, TYPE_CHECKING, Sequence, List, Callable, Any
 from urllib.parse import urlparse
 
 from PyQt5.QtCore import pyqtSignal, QPoint
-from PyQt5.QtWidgets import (QLabel, QVBoxLayout, QGridLayout,
+from PyQt5.QtWidgets import (QLabel, QVBoxLayout, QGridLayout, QComboBox,
                              QHBoxLayout, QCompleter, QWidget, QToolTip, QPushButton)
 
-from electrum import util, paymentrequest
+from electrum import util, paymentrequest, constants
 from electrum import lnutil
+from electrum.asset import DEFAULT_ASSET_AMOUNT_MAX
+from electrum.bitcoin import COIN
 from electrum.plugin import run_hook
 from electrum.i18n import _
 from electrum.util import (get_asyncio_loop, FailedToParsePaymentIdentifier,
@@ -25,6 +27,7 @@ from electrum.logging import Logger
 from electrum.lnaddr import lndecode, LnInvoiceException
 from electrum.lnurl import decode_lnurl, request_lnurl, callback_lnurl, LNURLError, LNURL6Data
 
+from .asset_management_panel import AssetAmountEdit
 from .amountedit import AmountEdit, BTCAmountEdit, SizedFreezableLineEdit
 from .util import WaitingDialog, HelpLabel, MessageBoxMixin, EnterButton, char_width_in_lineedit
 from .util import get_iconname_camera, get_iconname_qrcode, read_QIcon
@@ -70,8 +73,20 @@ class SendTab(QWidget, MessageBoxMixin, Logger):
         grid.setSpacing(8)
         grid.setColumnStretch(3, 1)
 
+        self.pay_selector = QComboBox()
+        self.pay_selector.setMaxVisibleItems(10)
+        self.pay_selector.setStyleSheet("QComboBox { combobox-popup: 0; }")
+        self.current_balance = self.window.wallet.get_balance(asset_aware=True)
+        assets = [constants.net.SHORT_NAME]
+        assets.extend(sorted(k for k in self.current_balance.keys() if k))
+        self.pay_selector.addItems(assets)
+        self.pay_selector.currentIndexChanged.connect(self._on_combo_update)
+
+        grid.addWidget(QLabel(_('Asset')), 5, 0)
+        grid.addWidget(self.pay_selector, 5, 1, 1, 3)
+
         from .paytoedit import PayToEdit
-        self.amount_e = BTCAmountEdit(self.window.get_decimal_point)
+        self.amount_e = AssetAmountEdit(lambda: self.pay_selector.currentText()[:4], 8, DEFAULT_ASSET_AMOUNT_MAX * COIN)
         self.payto_e = PayToEdit(self)
         msg = (_("Recipient of the funds.") + "\n\n"
                + _("You may enter a Bitcoin address, a label from your list of contacts "
@@ -193,10 +208,48 @@ class SendTab(QWidget, MessageBoxMixin, Logger):
         self.clear_send_tab_signal.connect(self.do_clear)
         self.show_error_signal.connect(self.show_error)
 
+    def update(self):
+        self.invoice_list.update()
+        current_balance = self.window.wallet.get_balance(asset_aware=True)
+        if self.current_balance.keys() != current_balance.keys():
+            assets = [constants.net.SHORT_NAME]
+            assets.extend(sorted(k for k in current_balance.keys() if k))
+            current_text = self.pay_selector.currentText()
+            self.pay_selector.clear()
+            self.pay_selector.addItems(assets)
+            try:
+                i = assets.index(current_text)
+                self.pay_selector.setCurrentIndex(i)
+            except ValueError:
+                pass
+        super().update()
+
+    def _selected_asset(self):
+        return None if self.pay_selector.currentIndex() == 0 else self.pay_selector.currentText()
+    
+    def _on_combo_update(self):
+        divisions = 8
+        asset = self._selected_asset()
+        if asset:
+            metadata_tup = self.window.wallet.adb.get_asset_metadata(asset)
+            divisions = metadata_tup[0].divisions
+            self.fiat_send_e.setVisible(False)
+        else:
+            self.fiat_send_e.setVisible(True)
+        balance = sum(self.current_balance[asset])
+        self.amount_e.divisions = divisions
+        self.amount_e.max_amount = balance
+        self.amount_e.is_int = divisions == 0
+        self.amount_e.numbify()
+        self.amount_e.update()
+        if self.max_button.isChecked():
+            self.spend_max()
+
+
     def spend_max(self):
         if run_hook('abort_send', self):
             return
-        outputs = self.payto_e.get_outputs(True)
+        outputs = self.payto_e.get_outputs(True, self._selected_asset())
         if not outputs:
             return
         make_tx = lambda fee_est, *, confirmed_only=False: self.wallet.make_unsigned_transaction(
@@ -229,7 +282,7 @@ class SendTab(QWidget, MessageBoxMixin, Logger):
         if x_fee_amount:
             twofactor_fee_str = self.format_amount_and_units(x_fee_amount)
             msg += "\n" + _("2fa fee: {} (for the next batch of transactions)").format(twofactor_fee_str)
-        frozen_bal = self.get_frozen_balance_str()
+        frozen_bal = self.window.get_frozen_balance_str()
         if frozen_bal:
             msg += "\n" + _("Some coins are frozen: {} (can be unfrozen in the Addresses or in the Coins tab)").format(frozen_bal)
         QToolTip.showText(self.max_button.mapToGlobal(QPoint(0, 0)), msg)
@@ -432,11 +485,18 @@ class SendTab(QWidget, MessageBoxMixin, Logger):
         amount = out.get('amount')
         label = out.get('label')
         message = out.get('message')
+        asset = out.get('asset')
         lightning = out.get('lightning')
         if lightning and (self.wallet.has_lightning() or not address):
             self.handle_payment_identifier(lightning, can_use_network=can_use_network)
             return
         # use label as description (not BIP21 compliant)
+        if asset:
+            index = self.pay_selector.findText(asset)
+            if index < 1:
+                self.show_error(_('You do not own any {}').format(asset))
+                return
+            self.pay_selector.setCurrentIndex(index)
         if label and not message:
             message = label
         if address:
@@ -589,7 +649,7 @@ class SendTab(QWidget, MessageBoxMixin, Logger):
         if self.payment_request:
             outputs = self.payment_request.get_outputs()
         else:
-            outputs = self.payto_e.get_outputs(self.max_button.isChecked())
+            outputs = self.payto_e.get_outputs(self.max_button.isChecked(), self._selected_asset())
         return outputs
 
     def check_onchain_outputs_and_show_errors(self, outputs: List[PartialTxOutput]) -> bool:

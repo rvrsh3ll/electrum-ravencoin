@@ -234,7 +234,7 @@ class CreateSwapWidget(QWidget, Logger, MessageBoxMixin, QtEventListener):
             self._maybe_enable_create()
 
         self.want_selector = NonlocalAssetOrBasecoinSelector(parent.window, check_callback=want_asset_name_valid, delayed_check_callback=want_asset_metadata)
-        self.want_amount_e = AssetAmountEdit(self.want_selector.short_name, 0, DEFAULT_ASSET_AMOUNT_MAX, min_amount=COIN, callback=want_amount_edit)
+        self.want_amount_e = AssetAmountEdit(self.want_selector.short_name, 0, DEFAULT_ASSET_AMOUNT_MAX * COIN, min_amount=COIN, callback=want_amount_edit)
         want_amount_layout = QHBoxLayout()
         want_amount_layout.addWidget(QLabel(_('Of amount') + ':'))
         want_amount_layout.addWidget(self.want_amount_e)
@@ -255,7 +255,7 @@ class CreateSwapWidget(QWidget, Logger, MessageBoxMixin, QtEventListener):
         self.pay_selector.addItems(assets)
         self.pay_selector.currentIndexChanged.connect(self._on_combo_update)
         
-        self.pay_amount_e = AssetAmountEdit(lambda: self.pay_selector.currentText()[:4], 0, DEFAULT_ASSET_AMOUNT_MAX, min_amount=COIN, callback=pay_amount_edit)
+        self.pay_amount_e = AssetAmountEdit(lambda: self.pay_selector.currentText()[:4], 0, DEFAULT_ASSET_AMOUNT_MAX * COIN, min_amount=1, callback=pay_amount_edit)
         pay_amount_layout = QHBoxLayout()
         pay_amount_layout.addWidget(QLabel(_('Of amount') + ':'))
         pay_amount_layout.addWidget(self.pay_amount_e)

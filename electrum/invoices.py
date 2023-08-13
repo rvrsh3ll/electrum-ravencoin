@@ -96,6 +96,7 @@ class BaseInvoice(StoredObject):
     """
 
     # mandatory fields
+    asset = attr.ib(type=Optional[str], kw_only=True)
     amount_msat = attr.ib(kw_only=True)  # type: Optional[Union[int, str]]  # can be '!' or None
     message = attr.ib(type=str, kw_only=True)
     time = attr.ib(type=int, kw_only=True, validator=attr.validators.instance_of(int))  # timestamp of the invoice
@@ -171,6 +172,9 @@ class BaseInvoice(StoredObject):
             return amount_msat
         return int(amount_msat // 1000)
 
+    def get_asset(self):
+        return self.asset
+
     @amount_msat.validator
     def _validate_amount(self, attribute, value):
         if value is None:
@@ -189,6 +193,7 @@ class BaseInvoice(StoredObject):
         """Constructs Invoice object from BOLT-11 string.
         Might raise InvoiceError.
         """
+        raise NotImplementedError()
         try:
             lnaddr = lndecode(invoice)
         except Exception as e:
@@ -212,6 +217,7 @@ class BaseInvoice(StoredObject):
     def from_bip70_payreq(cls, pr: 'PaymentRequest', *, height: int = 0) -> 'Invoice':
         return Invoice(
             amount_msat=pr.get_amount()*1000,
+            asset=pr.get_asset(),
             message=pr.get_memo(),
             time=pr.get_time(),
             exp=pr.get_expiration_date() - pr.get_time(),
@@ -329,6 +335,7 @@ class Request(BaseInvoice):
         from electrum.util import create_bip21_uri
         addr = self.get_address()
         amount = self.get_amount_sat()
+        asset = self.get_asset()
         if amount is not None:
             amount = int(amount)
         message = self.message
@@ -336,6 +343,8 @@ class Request(BaseInvoice):
         if self.time and self.exp:
             extra['time'] = str(int(self.time))
             extra['exp'] = str(int(self.exp))
+        if asset:
+            extra['asset'] = asset
         if lightning_invoice:
             extra['lightning'] = lightning_invoice
         if not addr and lightning_invoice:

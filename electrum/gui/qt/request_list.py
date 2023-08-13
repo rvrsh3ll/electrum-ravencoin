@@ -55,6 +55,7 @@ class RequestList(MyTreeView):
         DATE = enum.auto()
         DESCRIPTION = enum.auto()
         AMOUNT = enum.auto()
+        ASSET = enum.auto()
         STATUS = enum.auto()
         ADDRESS = enum.auto()
         LN_RHASH = enum.auto()
@@ -63,20 +64,21 @@ class RequestList(MyTreeView):
         Columns.DATE: _('Date'),
         Columns.DESCRIPTION: _('Description'),
         Columns.AMOUNT: _('Amount'),
+        Columns.ASSET: _('Asset'),
         Columns.STATUS: _('Status'),
         Columns.ADDRESS: _('Address'),
         Columns.LN_RHASH: 'LN RHASH',
     }
     filter_columns = [
         Columns.DATE, Columns.DESCRIPTION, Columns.AMOUNT,
-        Columns.ADDRESS, Columns.LN_RHASH,
+        Columns.ADDRESS, Columns.LN_RHASH, Columns.ASSET
     ]
 
     def __init__(self, receive_tab: 'ReceiveTab'):
         window = receive_tab.window
         super().__init__(
             main_window=window,
-            stretch_columns=[self.Columns.DESCRIPTION],
+            stretch_columns=[self.Columns.DESCRIPTION, self.Columns.ASSET],
         )
         self.wallet = window.wallet
         self.receive_tab = receive_tab
@@ -143,12 +145,14 @@ class RequestList(MyTreeView):
             timestamp = req.get_time()
             amount = req.get_amount_sat()
             message = req.get_message()
+            asset = req.get_asset()
             date = format_time(timestamp)
             amount_str = self.main_window.format_amount(amount) if amount else ""
             labels = [""] * len(self.Columns)
             labels[self.Columns.DATE] = date
             labels[self.Columns.DESCRIPTION] = message
             labels[self.Columns.AMOUNT] = amount_str
+            labels[self.Columns.ASSET] = asset or ""
             labels[self.Columns.STATUS] = status_str
             labels[self.Columns.ADDRESS] = req.get_address() or ""
             labels[self.Columns.LN_RHASH] = req.rhash if req.is_lightning() else ""

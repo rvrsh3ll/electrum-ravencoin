@@ -33,6 +33,7 @@ from PyQt5.QtGui import QFontMetrics, QFont
 from PyQt5.QtWidgets import QApplication, QWidget, QLineEdit, QTextEdit, QVBoxLayout
 
 from electrum import bitcoin
+from electrum.asset import generate_transfer_script_from_base
 from electrum.util import parse_max_spend, FailedToParsePaymentIdentifier
 from electrum.transaction import PartialTxOutput
 from electrum.bitcoin import opcodes, construct_script
@@ -364,13 +365,48 @@ class PayToEdit(Logger, GenericInputHandler):
     def get_destination_scriptpubkey(self) -> Optional[bytes]:
         return self.payto_scriptpubkey
 
-    def get_outputs(self, is_max: bool) -> List[PartialTxOutput]:
+    def get_outputs(self, is_max: bool, asset: Optional[str]) -> List[PartialTxOutput]:
         if self.payto_scriptpubkey:
             if is_max:
                 amount = '!'
             else:
                 amount = self.send_tab.get_amount()
             self.outputs = [PartialTxOutput(scriptpubkey=self.payto_scriptpubkey, value=amount)]
+
+        if asset:
+            # This is just the code from wallet::make_unsigned_transaction
+            outputs = self.outputs
+            i_max = []
+            i_max_sum = 0
+            for i, o in enumerate(outputs):
+                weight = parse_max_spend(o.value)
+                if weight:
+                    i_max_sum += weight
+                    i_max.append((weight, i))
+
+            if len(i_max) > 0:
+                spendable = sum(coin.value_sats(asset_aware=True) for coin in self.send_tab.window.get_coins() if coin.asset == asset)
+                asset_metadata_tup = self.send_tab.window.wallet.adb.get_asset_metadata(asset)
+                if asset_metadata_tup:
+                    asset_metadata = asset_metadata_tup[0]
+                    divisions = asset_metadata.divisions
+                else:
+                    divisions = 8
+
+                distr_amount = 0
+                for (weight, i) in i_max:
+                    val = int((spendable/i_max_sum) * weight)
+                    min_amount = Decimal('1' if divisions == 0 else f'0.{"".join("0" for i in range(divisions - 1))}1') * bitcoin.COIN
+                    chopped_amount = val // min_amount
+                    val = int(chopped_amount * min_amount)
+
+                    outputs[i].value = val
+                    distr_amount += val
+
+                (x,i) = i_max[-1]
+                outputs[i].value += (spendable - distr_amount)
+
+            return [PartialTxOutput(scriptpubkey=bytes.fromhex(generate_transfer_script_from_base(asset, output.value, output.scriptpubkey.hex())), value=0) for output in outputs if output.value > 0]
 
         return self.outputs[:]
 
