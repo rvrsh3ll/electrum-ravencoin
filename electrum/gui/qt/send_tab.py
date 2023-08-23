@@ -244,7 +244,9 @@ class SendTab(QWidget, MessageBoxMixin, Logger):
         self.amount_e.update()
         if self.max_button.isChecked():
             self.spend_max()
-
+        else:
+            raw_text = self.payto_e.toPlainText()
+            self.payto_e._check_text(raw_text, full_check=False, force=True)
 
     def spend_max(self):
         if run_hook('abort_send', self):

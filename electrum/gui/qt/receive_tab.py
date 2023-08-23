@@ -76,7 +76,7 @@ class ReceiveTab(QWidget, MessageBoxMixin, Logger):
             self.receive_amount_e.update()
 
         self.asset_chooser = NonlocalAssetOrBasecoinSelector(self.window, check_callback=text_callback, delayed_check_callback=want_asset_metadata)
-        self.receive_amount_e = AssetAmountEdit(self.asset_chooser.short_name, 8, DEFAULT_ASSET_AMOUNT_MAX)
+        self.receive_amount_e = AssetAmountEdit(self.asset_chooser.short_name, 8, DEFAULT_ASSET_AMOUNT_MAX * COIN)
         grid.addWidget(QLabel(_('Requested amount')), 1, 0)
         grid.addWidget(self.receive_amount_e, 1, 1)
 

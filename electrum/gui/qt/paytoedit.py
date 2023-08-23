@@ -234,9 +234,10 @@ class PayToEdit(Logger, GenericInputHandler):
             raise Exception("Amount is empty")
         if parse_max_spend(x):
             return x
-        p = pow(10, self.amount_edit.decimal_point())
+        p = pow(10, self.amount_edit.base_to_sat_oom())
         try:
-            return int(p * Decimal(x))
+            chunk = pow(10, max(0, self.amount_edit.base_to_sat_oom() - self.amount_edit.divisions))
+            return int((int(p * Decimal(x)) // chunk) * chunk)
         except decimal.InvalidOperation:
             raise Exception("Invalid amount")
 
@@ -265,11 +266,11 @@ class PayToEdit(Logger, GenericInputHandler):
         text = self.toPlainText()
         self._check_text(text, full_check=True)
 
-    def _check_text(self, text, *, full_check: bool):
+    def _check_text(self, text, *, full_check: bool, force: bool = False):
         """
         side effects: self.is_multiline, self.errors, self.outputs
         """
-        if self.previous_payto == str(text).strip():
+        if self.previous_payto == str(text).strip() and not force:
             return
         if full_check:
             self.previous_payto = str(text).strip()

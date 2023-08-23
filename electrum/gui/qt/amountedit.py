@@ -57,6 +57,9 @@ class AmountEdit(SizedFreezableLineEdit):
 
     def decimal_point(self):
         return 8
+    
+    def base_to_sat_oom(self):
+        return 8
 
     def max_precision(self):
         return self.decimal_point() + self.extra_precision
