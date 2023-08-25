@@ -13,8 +13,8 @@ from PyQt5.QtWidgets import (QLabel, QVBoxLayout, QGridLayout, QComboBox,
 
 from electrum import util, paymentrequest, constants
 from electrum import lnutil
-from electrum.asset import DEFAULT_ASSET_AMOUNT_MAX
-from electrum.bitcoin import COIN
+from electrum.asset import DEFAULT_ASSET_AMOUNT_MAX, parse_verifier_string
+from electrum.bitcoin import COIN, b58_address_to_hash160
 from electrum.plugin import run_hook
 from electrum.i18n import _
 from electrum.util import (get_asyncio_loop, FailedToParsePaymentIdentifier,
@@ -348,6 +348,7 @@ class SendTab(QWidget, MessageBoxMixin, Logger):
             e.setFrozen(False)
         for e in [self.send_button, self.save_button, self.clear_button, self.amount_e, self.fiat_send_e]:
             e.setEnabled(True)
+        self.pay_selector.setCurrentIndex(0)
         self.window.update_status()
         run_hook('do_clear', self)
 
@@ -642,6 +643,78 @@ class SendTab(QWidget, MessageBoxMixin, Logger):
         if not bool(invoice.get_amount_sat()):
             self.show_error(_('No amount'))
             return
+        
+        # True = valid, False = not; return error
+        def validate_address_for_restricted_asset(address: str, asset: str) -> bool:
+            x, h160 = b58_address_to_hash160(address)
+            h160_h = h160.hex()
+
+            # We are sending the asset -> we have the asset -> we watch for tags
+            result = self.wallet.adb.is_h160_tagged(h160_h, asset)
+            if result and result['tag'] == True:
+                return False
+
+            verifier_dict = self.wallet.adb.db.get_verified_restricted_verifier(asset)
+            assert verifier_dict
+            verifier_string = verifier_dict['string']
+            if verifier_string == 'true': return True
+            
+            node = parse_verifier_string(verifier_string)
+            vars = set()
+            node.iterate_vars_return_first(vars.add)
+
+            is_qualified_for_tag = dict()
+            
+            if self.wallet.adb.db.is_h160_checked(h160_h):
+                for var in vars:
+                    for asset, d in self.wallet.adb.get_tags_for_h160(h160_h, include_mempool=False).items():
+                        if asset.startswith(f'#{var}') and d['flag']:
+                            is_qualified_for_tag[var] = True
+                            break
+                    else:
+                        is_qualified_for_tag[var] = False
+            else:            
+                if not self.network:
+                    return True
+                
+                async def tag_lookup():
+                    try:
+                        result = await self.network.get_tags_for_h160(h160_h)
+                    except Exception as e:
+                        return None
+                    return result
+                
+                coro = tag_lookup()
+                fut = asyncio.run_coroutine_threadsafe(coro, self.network.asyncio_loop)
+                result = fut.result()
+                if result is None:
+                    return True
+
+                for var in vars:
+                    for asset, d in result.items():
+                        if asset.startswith(f'#{var}') and d['flag']:
+                            is_qualified_for_tag[var] = True
+                            break
+                    else:
+                        is_qualified_for_tag[var] = False
+
+            return node.evaluate(is_qualified_for_tag)
+
+        if invoice.outputs:
+            for output in invoice.outputs:
+                asset: Optional[str] = output.asset
+                address = output.address
+                if asset and address and asset[0] == '$':
+                    result = validate_address_for_restricted_asset(address, asset)
+                    if not result:
+                        self.show_error(_('{} is not qualified to receive restricted asset {}').format(address, asset))
+                        return
+        elif (address := invoice.get_address()) and (asset := invoice.get_asset()) and asset[0] == '$':
+            result = validate_address_for_restricted_asset(address, asset)
+            if not result:
+                self.show_error(_('{} is not qualified to receive restricted asset {}').format(address, asset))
+                return
+        
         if invoice.is_lightning():
             self.pay_lightning_invoice(invoice)
         else:

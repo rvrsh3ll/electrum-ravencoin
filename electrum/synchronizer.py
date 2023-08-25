@@ -764,9 +764,16 @@ class Synchronizer(SynchronizerBase):
                     await self._add_h160_for_tags(h160_h)
         for asset in random_shuffled_copy(self.adb.get_assets_to_watch()):
             await self._add_asset(asset)
-            if asset[-1] == '!' and get_error_for_asset_typed(asset[:-1], AssetType.ROOT) is None:
-                # Watch for restricted of this asset
-                await self._add_asset(f'${asset[:-1]}')
+            if asset[-1] == '!':
+                # Watch normal asset
+                await self._add_asset(asset[:-1])
+                if get_error_for_asset_typed(asset[:-1], AssetType.ROOT) is None:
+                    # Watch for restricted of this asset
+                    restricted_asset = f'${asset[:-1]}'
+                    await self._add_asset(restricted_asset)
+                    await self._add_qualifier_for_tags(restricted_asset)
+                    await self._add_restricted_for_verifier(restricted_asset)
+                    await self._add_restricted_for_freeze(restricted_asset)
             if asset[0] == '#':
                 await self._add_qualifier_for_tags(asset)
             if asset[0] == '$':

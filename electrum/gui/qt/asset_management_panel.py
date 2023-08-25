@@ -557,37 +557,23 @@ class CreateAssetPanel(ManageAssetPanel):
 
         x, h160 = b58_address_to_hash160(address)
         h160_h = h160.hex()
-        restricted_asset_name = self.asset_checker.line_edit.text()            
+        restricted_asset_name = self.asset_checker.line_edit.text()
+
+        # We are managing the asset -> we have the owner -> we listen for tags for restricted            
         maybe_flag = self.parent.wallet.adb.is_h160_tagged(h160_h, restricted_asset_name)
         if maybe_flag is True:
             self.payto_e.show_error(_('This address is blacklisted from receiving this asset.'))
             return
-        elif maybe_flag is None:
-            if not self.parent.network:
-                self.payto_e.show_error(_("You are offline."))
-                self.address_is_ok = True
-                self._maybe_enable_pay_button()
-                return
-            try:
-                result = await self.parent.network.check_tag_for_h160(restricted_asset_name, h160_h)
-            except Exception as e:
-                self.payto_e.show_error(_("Error getting restricted status from network") + ":\n" + repr(e))
-                self.address_is_ok = True
-                self._maybe_enable_pay_button()
-                return
-            is_qual = result.get('flag', False)
-            assert isinstance(is_qual, bool)
-            if is_qual:
-                self.payto_e.show_error(_('This address is blacklisted from receiving this asset.'))
-                return
-
-        for var in vars:
-            for asset, d in self.parent.wallet.adb.get_tags_for_h160(h160_h, include_mempool=False).items():
-                if asset.startswith(f'#{var}') and d['flag']:
-                    is_qualified[var] = True
-                    break
-            if is_qualified.get(var, False): continue
-            
+        
+        if self.parent.wallet.adb.db.is_h160_checked(h160_h):
+            for var in vars:
+                for asset, d in self.parent.wallet.adb.get_tags_for_h160(h160_h, include_mempool=False).items():
+                    if asset.startswith(f'#{var}') and d['flag']:
+                        is_qualified[var] = True
+                        break
+                else:
+                    is_qualified[var] = False
+        else:            
             if not self.parent.network:
                 self.payto_e.show_error(_("You are offline."))
                 self.address_is_ok = True
@@ -601,12 +587,13 @@ class CreateAssetPanel(ManageAssetPanel):
                 self._maybe_enable_pay_button()
                 return
             
-            for asset, d in result.items():
-                if asset.startswith(f'#{var}') and d['flag']:
-                    is_qualified[var] = True
-                    break
-            else:
-                is_qualified[var] = False
+            for var in vars:
+                for asset, d in result.items():
+                    if asset.startswith(f'#{var}') and d['flag']:
+                        is_qualified[var] = True
+                        break
+                else:
+                    is_qualified[var] = False
 
         can_receive = node.evaluate(is_qualified)
         if not can_receive:
@@ -1155,53 +1142,42 @@ class ReissueAssetPanel(ManageAssetPanel):
         x, h160 = b58_address_to_hash160(address)
         h160_h = h160.hex()
         restricted_asset_name = self.asset_checker.line_edit.text()            
+        
+        # We are managing the asset -> we have the owner -> we listen for tags for restricted            
         maybe_flag = self.parent.wallet.adb.is_h160_tagged(h160_h, restricted_asset_name)
         if maybe_flag is True:
             self.payto_e.show_error(_('This address is blacklisted from receiving this asset.'))
             return
-        elif maybe_flag is None:
+        
+        if self.parent.wallet.adb.db.is_h160_checked(h160_h):
+            for var in vars:
+                for asset, d in self.parent.wallet.adb.get_tags_for_h160(h160_h, include_mempool=False).items():
+                    if asset.startswith(f'#{var}') and d['flag']:
+                        is_qualified[var] = True
+                        break
+                else:
+                    is_qualified[var] = False
+        else:            
             if not self.parent.network:
                 self.payto_e.show_error(_("You are offline."))
-                return
-            try:
-                result = await self.parent.network.check_tag_for_h160(restricted_asset_name, h160_h)
-            except UntrustedServerReturnedError as e:
-                self.payto_e.show_error(_("Error getting restricted status from network") + ":\n" + e.get_message_for_gui())
-                return
-            except Exception as e:
-                self.payto_e.show_error(_("Error getting restricted status from network") + ":\n" + repr(e))
-                return
-            is_qual = result.get('flag', False)
-            assert isinstance(is_qual, bool)
-            if is_qual:
-                self.payto_e.show_error(_('This address is blacklisted from receiving this asset.'))
-                return
-
-        for var in vars:
-            for asset, d in self.parent.wallet.adb.get_tags_for_h160(h160_h, include_mempool=False).items():
-                if asset.startswith(f'#{var}') and d['flag']:
-                    is_qualified[var] = True
-                    break
-            if is_qualified.get(var, False): continue
-            
-            if not self.parent.network:
-                self.payto_e.show_error(_("You are offline."))
+                self.address_is_ok = True
+                self._maybe_enable_pay_button()
                 return
             try:
                 result = await self.parent.network.get_tags_for_h160(h160_h)
-            except UntrustedServerReturnedError as e:
-                self.payto_e.show_error(_("Error getting qualifier status from network") + ":\n" + e.get_message_for_gui())
-                return
             except Exception as e:
                 self.payto_e.show_error(_("Error getting qualifier status from network") + ":\n" + repr(e))
+                self.address_is_ok = True
+                self._maybe_enable_pay_button()
                 return
             
-            for asset, d in result.items():
-                if asset.startswith(f'#{var}') and d['flag']:
-                    is_qualified[var] = True
-                    break
-            else:
-                is_qualified[var] = False
+            for var in vars:
+                for asset, d in result.items():
+                    if asset.startswith(f'#{var}') and d['flag']:
+                        is_qualified[var] = True
+                        break
+                else:
+                    is_qualified[var] = False
 
         can_receive = node.evaluate(is_qualified)
         if not can_receive:
