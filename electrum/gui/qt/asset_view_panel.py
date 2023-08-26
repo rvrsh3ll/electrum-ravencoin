@@ -301,7 +301,7 @@ class MetadataInfo(QWidget):
                 x.setVisible(True)
             label = _('Verifier String')
             if verifier_text:
-                label += ' ' + verifier_text
+                label += f' ({verifier_text})'
             label += ':'
             self.verifier_string_label.setText(label)
             self.verifier_string_text.setText(verifier_string_data['string'])
@@ -317,7 +317,7 @@ class MetadataInfo(QWidget):
         if freeze_data:
             label = _('Globally Frozen')
             if freeze_text:
-                label += ' ' + freeze_text
+                label += f' ({freeze_text})'
             label += ':'
             self.global_freeze_label.setText(label)
             self.global_freeze_cb.setChecked(freeze_data['frozen'])

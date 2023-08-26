@@ -19,7 +19,7 @@ from .util import ByteReader
 MAX_NAME_LENGTH = 32
 MAX_CHANNEL_NAME_LENGTH = 12
 MIN_ASSET_LENGTH = 3
-MAX_VERIFIER_STING_LENGTH = 75
+MAX_VERIFIER_STING_LENGTH = 0x4c - 1
 
 DEFAULT_ASSET_AMOUNT_MAX = TOTAL_COIN_SUPPLY_LIMIT_IN_BTC
 UNIQUE_ASSET_AMOUNT_MAX = 1
@@ -633,7 +633,7 @@ class BooleanExprAST:
 
             if l_tok == r_tok and last_parenthesis_index is not None:
                 top_level_parenthesized.append(
-                cls.parse_string(verifier[last_parenthesis_index + 1:i]))
+                    cls.parse_string(verifier[last_parenthesis_index + 1:i]))
                 l_tok = 0
                 r_tok = 0
                 last_parenthesis_index = None

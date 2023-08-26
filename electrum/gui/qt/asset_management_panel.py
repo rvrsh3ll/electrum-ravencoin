@@ -312,11 +312,11 @@ class ManageAssetPanel(QWidget, Logger):
         vbox.addLayout(grid)
 
     def _maybe_enable_pay_button(self):
-        print(f'{self.verifier_is_ok=}')
-        print(f'{self.associated_data_is_ok=}')
-        print(f'{self.address_is_ok=}')
-        print(f'{self.asset_is_ok=}')
-        print(f'{self.asset_combo_is_ok=}')
+        #print(f'{self.verifier_is_ok=}')
+        #print(f'{self.associated_data_is_ok=}')
+        #print(f'{self.address_is_ok=}')
+        #print(f'{self.asset_is_ok=}')
+        #print(f'{self.asset_combo_is_ok=}')
         self.send_button.setEnabled(self.verifier_is_ok and self.associated_data_is_ok and self.address_is_ok and self.asset_is_ok and self.asset_combo_is_ok)
 
     def _on_divisions_change(self, amount):
@@ -987,7 +987,6 @@ class ReissueAssetPanel(ManageAssetPanel):
         def sign_done(success):
             if success:
                 self.parent.window.broadcast_or_show(tx)
-
                 self.asset_selector_combo.setCurrentIndex(0)
                 
         self.parent.window.sign_tx(
@@ -1008,6 +1007,8 @@ class ReissueAssetPanel(ManageAssetPanel):
             self.verifier_e.line_edit.setVisible(False)
             self.payto_e.line_edit.setText('')
             self.payto_e.line_edit.setVisible(False)
+            self.verifier_label.setVisible(False)
+            self.verifier_view.setVisible(False)
             return
         if asset[0] == '$':
             self.verifier_e.line_edit.setVisible(True)
