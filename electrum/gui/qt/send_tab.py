@@ -646,6 +646,10 @@ class SendTab(QWidget, MessageBoxMixin, Logger):
         
         # True = valid, False = not; return error
         def validate_address_for_restricted_asset(address: str, asset: str) -> bool:
+            result = self.wallet.adb.db.get_verified_restricted_freeze(asset)
+            if result and result['frozen'] == True:
+                return False
+
             x, h160 = b58_address_to_hash160(address)
             h160_h = h160.hex()
 
