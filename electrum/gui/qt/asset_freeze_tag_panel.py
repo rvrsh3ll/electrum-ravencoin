@@ -17,8 +17,8 @@ from electrum.i18n import _
 from electrum.util import format_satoshis_plain, profiler, ipfs_explorer_URL
 from electrum.address_synchronizer import METADATA_UNCONFIRMED, METADATA_UNVERIFIED
 from electrum.logging import Logger
-from electrum.ipfs_db import IPFSDB
 from electrum.transaction import PartialTxOutput
+from electrum.wallet import get_locktime_for_new_transaction
 
 from .util import HelpLabel, ColorScheme, HelpButton, AutoResizingTextEdit, qt_event_listener, QtEventListener
 from .util import QHSeperationLine, read_QIcon, MONOSPACE_FONT, EnterButton, webopen_safe
@@ -167,6 +167,8 @@ class FreezePanel(QWidget):
                 self.parent.parent.wallet.set_reserved_state_of_address(parent_asset_change_address, reserved=False)
 
             tx.add_outputs([tag_vout], do_sort=False)
+            tx.locktime = get_locktime_for_new_transaction(self.parent.network)
+            tx.add_info_from_wallet(self.parent.wallet)
 
             return tx
 

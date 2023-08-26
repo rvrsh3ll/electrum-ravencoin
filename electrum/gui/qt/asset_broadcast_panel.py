@@ -17,6 +17,7 @@ from electrum.i18n import _
 from electrum.logging import Logger
 from electrum.transaction import PartialTxOutput
 from electrum.util import get_asyncio_loop
+from electrum.wallet import get_locktime_for_new_transaction
 
 if TYPE_CHECKING:
     from asset_tab import AssetTab
@@ -132,6 +133,9 @@ class MakeBroadcastPanel(QWidget, Logger):
                 fee=fee_est,
                 rbf=False
             )
+
+            tx.locktime = get_locktime_for_new_transaction(self.parent.network)
+            tx.add_info_from_wallet(self.parent.wallet)
 
             return tx
         

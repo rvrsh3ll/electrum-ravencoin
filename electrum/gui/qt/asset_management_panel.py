@@ -14,6 +14,7 @@ from electrum.util import get_asyncio_loop, format_satoshis_plain, DECIMAL_POINT
 from electrum.transaction import PartialTxOutput
 from electrum.network import UntrustedServerReturnedError
 from electrum.logging import Logger
+from electrum.wallet import get_locktime_for_new_transaction
 
 from .amountedit import AmountEdit
 from .util import HelpLabel, char_width_in_lineedit, EnterButton, BooleanExprASTTableViewer
@@ -745,6 +746,8 @@ class CreateAssetPanel(ManageAssetPanel):
                     self.parent.wallet.set_reserved_state_of_address(parent_asset_change_address, reserved=False)
 
             tx.add_outputs(appended_vouts, do_sort=False)
+            tx.locktime = get_locktime_for_new_transaction(self.parent.network)
+            tx.add_info_from_wallet(self.parent.wallet)
 
             return tx
 
@@ -965,6 +968,8 @@ class ReissueAssetPanel(ManageAssetPanel):
                 self.parent.wallet.set_reserved_state_of_address(parent_asset_change_address, reserved=False)
 
             tx.add_outputs(appended_vouts, do_sort=False)
+            tx.locktime = get_locktime_for_new_transaction(self.parent.network)
+            tx.add_info_from_wallet(self.parent.wallet)
 
             return tx
 

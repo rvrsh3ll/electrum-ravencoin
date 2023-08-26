@@ -18,6 +18,7 @@ from electrum.util import profiler, get_asyncio_loop, SearchableListGrouping
 from electrum.address_synchronizer import METADATA_UNCONFIRMED, METADATA_UNVERIFIED
 from electrum.logging import Logger
 from electrum.transaction import PartialTxOutput
+from electrum.wallet import get_locktime_for_new_transaction
 
 from .util import HelpLabel, HelpButton, ValidatedDelayedCallbackEditor, char_width_in_lineedit
 from .util import QHSeperationLine, read_QIcon, MONOSPACE_FONT, font_height, EnterButton
@@ -329,6 +330,9 @@ class TagAddress(QWidget):
                 self.parent.wallet.set_reserved_state_of_address(parent_asset_change_address, reserved=False)
 
             tx.add_outputs([tag_vout], do_sort=False)
+            tx.locktime = get_locktime_for_new_transaction(self.parent.network)
+            tx.add_info_from_wallet(self.parent.wallet)
+
             return tx
 
         conf_dlg = ConfirmTxDialog(window=self.parent.parent.window, make_tx=make_tx, output_value=output_amounts)
