@@ -10,7 +10,7 @@ from electrum.asset import (get_error_for_asset_typed, AssetType, DEFAULT_ASSET_
                             MAX_NAME_LENGTH, parse_verifier_string, compress_verifier_string, generate_verifier_tag, generate_reissue_script)
 from electrum.bitcoin import base_decode, BaseDecodeError, COIN, is_b58_address, b58_address_to_hash160
 from electrum.i18n import _
-from electrum.util import get_asyncio_loop, format_satoshis_plain, DECIMAL_POINT
+from electrum.util import get_asyncio_loop, format_satoshis_plain, DECIMAL_POINT, NoQualifiedAddress
 from electrum.transaction import PartialTxOutput
 from electrum.network import UntrustedServerReturnedError
 from electrum.logging import Logger
@@ -199,7 +199,6 @@ class ManageAssetPanel(QWidget, Logger):
                 return None
             self.payto_label.setVisible(True)
             self.payto_e.line_edit.setVisible(True)
-            self.payto_e.validate_text()
             if input[-1] == 'e' and input.lower() == 'true':
                 input = 'true'
             else:
@@ -232,6 +231,7 @@ class ManageAssetPanel(QWidget, Logger):
             error = node.iterate_vars_return_first(lambda name: get_error_for_asset_typed(f'#{name}', AssetType.QUALIFIER))
             if input and error: 
                 return error
+            self.payto_e.validate_text()
             return None
 
         async def validate_qualifiers():
@@ -260,7 +260,14 @@ class ManageAssetPanel(QWidget, Logger):
                 else:
                     self.verifier_e.show_error(_("Qualifier {} does not exist!").format(qualifier))
                     pass
+            try:
+                asset = self.asset_checker.line_edit.text()
+                change_address = self.parent.wallet.get_address_qualified_for_restricted_asset(asset, verifier_string_override=compress_verifier_string(verifier))
+                self.payto_e.line_edit.setText(change_address)
+            except NoQualifiedAddress:
+                pass
             self._maybe_enable_pay_button()
+            self.verifier_e.error_button.hide()
             return None
 
         verifier_message = _('Verifier String') + '\n\n' \
@@ -295,7 +302,7 @@ class ManageAssetPanel(QWidget, Logger):
                + _("If a Bitcoin address is entered, the asset (and any created ownership assets) "
                    "will be sent to this address. "
                    "Leave this empty to send to yourself."))
-        self.payto_label = HelpLabel(_('Recieving Address'), pay_to_msg)
+        self.payto_label = HelpLabel(_('Receiving Address'), pay_to_msg)
         grid.addWidget(self.payto_label, 5, 1)
         grid.addWidget(self.payto_e.line_edit, 5, 2, 1, 9)
         grid.addWidget(self.payto_e.error_button, 5, 11)
@@ -370,6 +377,67 @@ class ManageAssetPanel(QWidget, Logger):
     
     async def _address_delayed_check(self):
         raise NotImplementedError()
+
+    async def _address_delayed_check_helper(self, address: str):
+        if not is_b58_address(address): return
+        verifier = self.verifier_e.line_edit.text()
+        node = parse_verifier_string(verifier)
+        error = node.error()
+        if error:
+            self.payto_e.show_error(_('The verifier string is not valid'))
+            return
+        vars = set()
+        node.iterate_vars_return_first(vars.add)
+        is_qualified = dict()
+
+        x, h160 = b58_address_to_hash160(address)
+        h160_h = h160.hex()
+        restricted_asset_name = self.asset_checker.line_edit.text()
+
+        # We are managing the asset -> we have the owner -> we listen for tags for restricted            
+        maybe_flag = self.parent.wallet.adb.is_h160_tagged(h160_h, restricted_asset_name)
+        if maybe_flag is True:
+            self.payto_e.show_error(_('This address is blacklisted from receiving this asset.'))
+            return
+        
+        if self.parent.wallet.adb.db.is_h160_checked(h160_h):
+            for var in vars:
+                for asset, d in self.parent.wallet.adb.get_tags_for_h160(h160_h, include_mempool=False).items():
+                    if (asset == f'#{var}' or asset.startswith(f'#{var}/#')) and d['flag']:
+                        is_qualified[var] = True
+                        break
+                else:
+                    is_qualified[var] = False
+        else:            
+            if not self.parent.network:
+                self.payto_e.show_error(_("You are offline."))
+                self.address_is_ok = True
+                self._maybe_enable_pay_button()
+                return
+            try:
+                result = await self.parent.network.get_tags_for_h160(h160_h)
+            except Exception as e:
+                self.payto_e.show_error(_("Error getting qualifier status from network") + ":\n" + repr(e))
+                self.address_is_ok = True
+                self._maybe_enable_pay_button()
+                return
+            
+            for var in vars:
+                for asset, d in result.items():
+                    if (asset == f'#{var}' or asset.startswith(f'#{var}/#')) and d['flag']:
+                        is_qualified[var] = True
+                        break
+                else:
+                    is_qualified[var] = False
+
+        can_receive = node.evaluate(is_qualified)
+        if not can_receive:
+            self.payto_e.show_error(_('This address cannot receive this asset based on the verifier string (qualifications must exit the mempool)'))
+            return
+
+        self.address_is_ok = True
+        self._maybe_enable_pay_button()
+        return
 
     def _get_selected_asset(self):
         current_selected_asset_index = self.asset_selector_combo.currentIndex()
@@ -545,66 +613,8 @@ class CreateAssetPanel(ManageAssetPanel):
         if asset_type[1] != AssetType.RESTRICTED or not verifier_string or verifier_string == 'true':
             return
         address = self.payto_e.line_edit.text()
-        if not is_b58_address(address): return
-        verifier = self.verifier_e.line_edit.text()
-        node = parse_verifier_string(verifier)
-        error = node.error()
-        if error:
-            self.payto_e.show_error(_('The verifier string is not valid'))
-            return
-        vars = set()
-        node.iterate_vars_return_first(vars.add)
-        is_qualified = dict()
-
-        x, h160 = b58_address_to_hash160(address)
-        h160_h = h160.hex()
-        restricted_asset_name = self.asset_checker.line_edit.text()
-
-        # We are managing the asset -> we have the owner -> we listen for tags for restricted            
-        maybe_flag = self.parent.wallet.adb.is_h160_tagged(h160_h, restricted_asset_name)
-        if maybe_flag is True:
-            self.payto_e.show_error(_('This address is blacklisted from receiving this asset.'))
-            return
+        await self._address_delayed_check_helper(address)
         
-        if self.parent.wallet.adb.db.is_h160_checked(h160_h):
-            for var in vars:
-                for asset, d in self.parent.wallet.adb.get_tags_for_h160(h160_h, include_mempool=False).items():
-                    if asset.startswith(f'#{var}') and d['flag']:
-                        is_qualified[var] = True
-                        break
-                else:
-                    is_qualified[var] = False
-        else:            
-            if not self.parent.network:
-                self.payto_e.show_error(_("You are offline."))
-                self.address_is_ok = True
-                self._maybe_enable_pay_button()
-                return
-            try:
-                result = await self.parent.network.get_tags_for_h160(h160_h)
-            except Exception as e:
-                self.payto_e.show_error(_("Error getting qualifier status from network") + ":\n" + repr(e))
-                self.address_is_ok = True
-                self._maybe_enable_pay_button()
-                return
-            
-            for var in vars:
-                for asset, d in result.items():
-                    if asset.startswith(f'#{var}') and d['flag']:
-                        is_qualified[var] = True
-                        break
-                else:
-                    is_qualified[var] = False
-
-        can_receive = node.evaluate(is_qualified)
-        if not can_receive:
-            self.payto_e.show_error(_('This address cannot receive this asset based on the verifier string (qualifications must exit the mempool)'))
-            return
-
-        self.address_is_ok = True
-        self._maybe_enable_pay_button()
-        return
-
     def _parent_asset_selector_on_change(self):
         super()._parent_asset_selector_on_change()
         selected_parent_index = self.asset_selector_combo.currentIndex()
@@ -1135,64 +1145,7 @@ class ReissueAssetPanel(ManageAssetPanel):
         if not selected_asset or selected_asset[0] != '$' or not verifier_string or verifier_string == 'true':
             return
         address = self.payto_e.line_edit.text()
-        verifier = self.verifier_e.line_edit.text()
-        node = parse_verifier_string(verifier)
-        error = node.error()
-        if error:
-            self.payto_e.show_error(_('The verifier string is not valid'))
-            return
-        vars = set()
-        node.iterate_vars_return_first(vars.add)
-        is_qualified = dict()
-
-        x, h160 = b58_address_to_hash160(address)
-        h160_h = h160.hex()
-        restricted_asset_name = self.asset_checker.line_edit.text()            
-        
-        # We are managing the asset -> we have the owner -> we listen for tags for restricted            
-        maybe_flag = self.parent.wallet.adb.is_h160_tagged(h160_h, restricted_asset_name)
-        if maybe_flag is True:
-            self.payto_e.show_error(_('This address is blacklisted from receiving this asset.'))
-            return
-        
-        if self.parent.wallet.adb.db.is_h160_checked(h160_h):
-            for var in vars:
-                for asset, d in self.parent.wallet.adb.get_tags_for_h160(h160_h, include_mempool=False).items():
-                    if asset.startswith(f'#{var}') and d['flag']:
-                        is_qualified[var] = True
-                        break
-                else:
-                    is_qualified[var] = False
-        else:            
-            if not self.parent.network:
-                self.payto_e.show_error(_("You are offline."))
-                self.address_is_ok = True
-                self._maybe_enable_pay_button()
-                return
-            try:
-                result = await self.parent.network.get_tags_for_h160(h160_h)
-            except Exception as e:
-                self.payto_e.show_error(_("Error getting qualifier status from network") + ":\n" + repr(e))
-                self.address_is_ok = True
-                self._maybe_enable_pay_button()
-                return
-            
-            for var in vars:
-                for asset, d in result.items():
-                    if asset.startswith(f'#{var}') and d['flag']:
-                        is_qualified[var] = True
-                        break
-                else:
-                    is_qualified[var] = False
-
-        can_receive = node.evaluate(is_qualified)
-        if not can_receive:
-            self.payto_e.show_error(_('This address cannot receive this asset based on the verifier string (qualifications must exit the mempool)'))
-            return
-
-        self.address_is_ok = True
-        self._maybe_enable_pay_button()
-        return
+        await self._address_delayed_check_helper(address)
 
     def update(self):
         super().update()

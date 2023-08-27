@@ -258,7 +258,7 @@ class CoinChooserBase(Logger):
         change_amounts.extend(((None, amount) for amount in amounts))
         return change_amounts
 
-    def _change_outputs(self, tx: PartialTransaction, change_addrs, fee_estimator_numchange,
+    def _change_outputs(self, tx: PartialTransaction, change_addrs, restricted_change_address: Mapping[str, str], fee_estimator_numchange,
                         dust_threshold) -> List[PartialTxOutput]:
         amounts = self._change_amounts(tx, len(change_addrs), fee_estimator_numchange)
         assert min((amount for asset, amount in amounts)) >= 0
@@ -267,12 +267,13 @@ class CoinChooserBase(Logger):
         # If change is above dust threshold after accounting for the
         # size of the change output, add it to the transaction.
         amounts = [(asset, amount) for asset, amount in amounts if asset or amount >= dust_threshold]
-        change = [PartialTxOutput.from_address_and_value(addr, amount, asset=asset)
+        change = [PartialTxOutput.from_address_and_value(restricted_change_address.get(asset, addr), amount, asset=asset)
                   for addr, (asset, amount) in zip(change_addrs, amounts)]
         return change
 
     def _construct_tx_from_selected_buckets(self, *, buckets: Sequence[Bucket],
                                             base_tx: PartialTransaction, change_addrs,
+                                            restricted_change_address: Mapping[str, str],
                                             fee_estimator_w, dust_threshold,
                                             base_weight) -> Tuple[PartialTransaction, List[PartialTxOutput]]:
         # make a copy of base_tx so it won't get mutated
@@ -301,7 +302,7 @@ class CoinChooserBase(Logger):
         fee_estimator_numchange = lambda counts: fee_estimator_w(tx_weight + 
                                                                  counts[None] * output_weight + 
                                                                  sum((count * (output_weight + 4 * extra_size_for_asset_transfer(asset)) for asset, count in counts.items() if asset)))
-        change = self._change_outputs(tx, change_addrs, fee_estimator_numchange, dust_threshold)
+        change = self._change_outputs(tx, change_addrs, restricted_change_address, fee_estimator_numchange, dust_threshold)
         tx.add_outputs(change)
 
         return tx, change
@@ -327,7 +328,7 @@ class CoinChooserBase(Logger):
         return total_weight
 
     def make_tx(self, *, coins: Sequence[PartialTxInput], inputs: List[PartialTxInput],
-                outputs: List[PartialTxOutput], change_addrs: Sequence[str],
+                outputs: List[PartialTxOutput], change_addrs: Sequence[str], restricted_change_address: Mapping[str, str],
                 fee_estimator_vb: Callable, dust_threshold: int) -> PartialTransaction:
         """Select unspent coins to spend to pay outputs.  If the change is
         greater than dust_threshold (after adding the change output to
@@ -394,6 +395,7 @@ class CoinChooserBase(Logger):
             return self._construct_tx_from_selected_buckets(buckets=buckets,
                                                             base_tx=base_tx,
                                                             change_addrs=change_addrs,
+                                                            restricted_change_address=restricted_change_address,
                                                             fee_estimator_w=fee_estimator_w,
                                                             dust_threshold=dust_threshold,
                                                             base_weight=base_weight)

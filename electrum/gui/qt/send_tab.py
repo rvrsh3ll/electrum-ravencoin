@@ -222,6 +222,7 @@ class SendTab(QWidget, MessageBoxMixin, Logger):
                 self.pay_selector.setCurrentIndex(i)
             except ValueError:
                 pass
+        self._on_combo_update()
         super().update()
 
     def _selected_asset(self):
@@ -254,8 +255,10 @@ class SendTab(QWidget, MessageBoxMixin, Logger):
         outputs = self.payto_e.get_outputs(True, self._selected_asset())
         if not outputs:
             return
+                
+        assets = {output.asset for output in outputs}.union({None})
         make_tx = lambda fee_est, *, confirmed_only=False: self.wallet.make_unsigned_transaction(
-            coins=self.window.get_coins(),
+            coins=[coin for coin in self.window.get_coins() if coin.asset in assets],
             outputs=outputs,
             fee=fee_est,
             is_sweep=False)
@@ -303,8 +306,9 @@ class SendTab(QWidget, MessageBoxMixin, Logger):
         # we call get_coins inside make_tx, so that inputs can be changed dynamically
         if get_coins is None:
             get_coins = self.window.get_coins
+        assets = {output.asset for output in outputs}.union({None})
         make_tx = lambda fee_est, *, confirmed_only=False: self.wallet.make_unsigned_transaction(
-            coins=get_coins(nonlocal_only=nonlocal_only, confirmed_only=confirmed_only),
+            coins=[coin for coin in get_coins(nonlocal_only=nonlocal_only, confirmed_only=confirmed_only) if coin.asset in assets],
             outputs=outputs,
             fee=fee_est,
             is_sweep=is_sweep)
@@ -672,7 +676,7 @@ class SendTab(QWidget, MessageBoxMixin, Logger):
             if self.wallet.adb.db.is_h160_checked(h160_h):
                 for var in vars:
                     for asset, d in self.wallet.adb.get_tags_for_h160(h160_h, include_mempool=False).items():
-                        if asset.startswith(f'#{var}') and d['flag']:
+                        if (asset == f'#{var}' or asset.startswith(f'#{var}/#')) and d['flag']:
                             is_qualified_for_tag[var] = True
                             break
                     else:
@@ -696,7 +700,7 @@ class SendTab(QWidget, MessageBoxMixin, Logger):
 
                 for var in vars:
                     for asset, d in result.items():
-                        if asset.startswith(f'#{var}') and d['flag']:
+                        if (asset == f'#{var}' or asset.startswith(f'#{var}/#')) and d['flag']:
                             is_qualified_for_tag[var] = True
                             break
                     else:

@@ -156,8 +156,9 @@ class FreezePanel(QWidget):
 
             try:
                 self.parent.parent.wallet.set_reserved_state_of_address(parent_asset_change_address, reserved=True)
+                assets = {output.asset for output in outputs}.union({None})
                 tx = self.parent.parent.wallet.make_unsigned_transaction(
-                    coins=self.parent.parent.window.get_coins(nonlocal_only=False, confirmed_only=confirmed_only),
+                    coins=[coin for coin in self.parent.parent.window.get_coins(nonlocal_only=False, confirmed_only=confirmed_only) if coin.asset in assets],
                     outputs=outputs,
                     fee=fee_est,
                     rbf=False,

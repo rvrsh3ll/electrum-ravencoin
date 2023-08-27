@@ -56,14 +56,14 @@ from .bip32 import BIP32Node, convert_bip32_intpath_to_strpath, convert_bip32_st
 from .crypto import sha256
 from . import util
 from .util import (NotEnoughFunds, UserCancelled, profiler, OldTaskGroup, ignore_exceptions,
-                   format_satoshis, format_fee_satoshis, NoDynamicFeeEstimates,
+                   format_satoshis, format_fee_satoshis, NoDynamicFeeEstimates, NoQualifiedAddress,
                    WalletFileException, BitcoinException,
                    InvalidPassword, format_time, timestamp_to_datetime, Satoshis,
                    Fiat, bfh, TxMinedInfo, quantize_feerate, create_bip21_uri, OrderedDictWithIndex, parse_max_spend)
 from .simple_config import SimpleConfig, FEE_RATIO_HIGH_WARNING, FEERATE_WARNING_HIGH_FEE
 from .bitcoin import COIN, TYPE_ADDRESS
-from .bitcoin import is_address, address_to_script, is_minikey, relayfee, dust_threshold
-from .asset import get_asset_info_from_script, AssetMetadata
+from .bitcoin import is_address, address_to_script, is_minikey, relayfee, dust_threshold, b58_address_to_hash160, is_b58_address
+from .asset import get_asset_info_from_script, parse_verifier_string
 from .crypto import sha256d
 from . import keystore
 from .keystore import (load_keystore, Hardware_KeyStore, KeyStore, KeyStoreWithMPK,
@@ -1787,6 +1787,48 @@ class Abstract_Wallet(ABC, Logger, EventListener):
             return False
         return True
 
+    def get_address_qualified_for_restricted_asset(self, restricted_asset: str, first_check: str = None, *,
+                                                   verifier_string_override: Optional[str] = None) -> str:
+        assert restricted_asset and restricted_asset[0] == '$', restricted_asset
+
+        result = self.adb.db.get_verified_restricted_verifier(restricted_asset)
+        verifier_string = verifier_string_override or result['string']
+        
+        node = parse_verifier_string(verifier_string)
+        
+        vars = set()
+        node.iterate_vars_return_first(vars.add)
+
+        def address_qualified(address: str) -> bool:
+            if not is_b58_address(address): return False
+            x, h160 = b58_address_to_hash160(address)
+            h160_h = h160.hex()
+
+            tags = self.adb.db.get_verified_h160_tags(h160_h)
+            if restricted_asset in tags and tags[restricted_asset]['flag']:
+                return False
+
+            var_map = dict()
+            for var in vars:
+                for asset, d in tags.items():
+                    if (asset == f'#{var}' or asset.startswith(f'#{var}/#')) and d['flag']:
+                        var_map[var] = True
+                        break
+                else:
+                    var_map[var] = False
+
+            return node.evaluate(var_map)
+
+        if first_check and address_qualified(first_check): 
+            return first_check
+        for address in self.get_change_addresses():
+            if address == first_check: continue
+            if address_qualified(address): return address
+        for address in self.get_receiving_addresses():
+            if address == first_check: continue
+            if address_qualified(address): return address
+        raise NoQualifiedAddress()
+
     @profiler(min_threshold=0.1)
     def make_unsigned_transaction(
             self, *,
@@ -1869,15 +1911,42 @@ class Abstract_Wallet(ABC, Logger, EventListener):
                 txo = []
                 old_change_addrs = []
             # change address. if empty, coin_chooser will set it
-            possible_change_addresses_needed = {i.asset for i in txi + fixed_inputs}.union({o.asset for o in outputs + txo}).difference({None})
-            change_addrs = self.get_change_addresses_for_new_transaction(change_addr or old_change_addrs, additional_change_addresses=len(possible_change_addresses_needed))
+            possible_assets_needing_change_addresses = {i.asset for i in txi + fixed_inputs}.union({o.asset for o in outputs + txo}).difference({None})
+            change_addrs = self.get_change_addresses_for_new_transaction(change_addr or old_change_addrs, additional_change_addresses=len(possible_assets_needing_change_addresses))
+            
+            seen_restricted_assets = set()
+            restricted_change_addresses = dict()
+            maybe_bad_restricted_assets = set()
+            for input in itertools.chain(coins, txi, fixed_inputs):
+                if input.asset in seen_restricted_assets: continue
+                if input.asset and input.asset[0] == '$':
+                    seen_restricted_assets.add(input.asset)
+                    verifier_string = self.adb.db.get_verified_restricted_verifier(input.asset)
+                    if verifier_string and verifier_string['string'] == 'true':
+                        continue
+                    try:
+                        change_address = self.get_address_qualified_for_restricted_asset(input.asset, input.address)
+                        restricted_change_addresses[input.asset] = change_address
+                    except NoQualifiedAddress:
+                        maybe_bad_restricted_assets.add(input.asset)
+
             tx = coin_chooser.make_tx(
                 coins=coins,
                 inputs=txi + fixed_inputs,
                 outputs=list(outputs) + txo,
                 change_addrs=change_addrs,
+                restricted_change_address=restricted_change_addresses,
                 fee_estimator_vb=fee_estimator,
                 dust_threshold=self.dust_threshold())
+
+            if maybe_bad_restricted_assets:
+                old_output_value = defaultdict(int)
+                for output in itertools.chain(outputs, txo):
+                    old_output_value[output.asset] += output.asset_aware_value()
+                new_output_value = tx.output_value(asset_aware=True)
+                for asset in maybe_bad_restricted_assets:
+                    if new_output_value[asset] > old_output_value[asset]:
+                        raise NoQualifiedAddress()
         else:
             # Only for base coin
             coins = [coin for coin in coins if coin.asset is None]

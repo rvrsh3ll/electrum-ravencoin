@@ -894,6 +894,8 @@ class ValidatedDelayedCallbackEditor:
                 await self._on_done()
             except Exception as e:
                 print(f'Validator Exception: {e}')
+                #import traceback
+                #traceback.print_exc()
 
         self._current_task = event_loop.create_task(waiter())
 

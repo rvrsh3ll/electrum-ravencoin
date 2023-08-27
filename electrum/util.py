@@ -139,6 +139,11 @@ def parse_max_spend(amt: Any) -> Optional[int]:
         return x
     return None
 
+class NoQualifiedAddress(Exception):
+    def __str__(self):
+        return _('No qualified addresses')
+
+
 class NotEnoughFunds(Exception):
     def __str__(self):
         return _("Insufficient funds")
