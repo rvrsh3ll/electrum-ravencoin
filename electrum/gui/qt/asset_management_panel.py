@@ -37,16 +37,10 @@ class OnlyNumberAmountEdit(AmountEdit):
         return 8
 
     def numbify(self):
-        og_text = self.text().strip()
-        super().numbify()
-        amount = self.get_amount()
-        if amount:
-            chunk = Decimal('1' if self.divisions == 0 else f'0.{"".join("0" for i in range(self.divisions - 1))}1') * COIN
-            chopped = amount // chunk
-            text = self._get_text_from_amount(int(chopped * chunk))
-            if og_text[-1] == DECIMAL_POINT:
-                text += DECIMAL_POINT
-            self.setText(text)
+        text = self.text().strip()
+        if text == '!':
+            self.setText('')
+        return super().numbify()
 
 class AssetAmountEdit(OnlyNumberAmountEdit):
     def _get_amount_from_text(self, text):
@@ -74,7 +68,18 @@ class AssetAmountEdit(OnlyNumberAmountEdit):
             text = self._get_text_from_amount(amount_sat)
             self.setText(text)
         self.repaint()  # macOS hack for #6269
-        
+
+    def numbify(self):
+        og_text = self.text().strip()
+        super().numbify()
+        amount = self.get_amount()
+        if amount:
+            chunk = Decimal('1' if self.divisions == 0 else f'0.{"".join("0" for i in range(self.divisions - 1))}1') * COIN
+            chopped = amount // chunk
+            text = self._get_text_from_amount(int(chopped * chunk))
+            if og_text[-1] == DECIMAL_POINT:
+                text += DECIMAL_POINT
+            self.setText(text)
         
 class ManageAssetPanel(QWidget, Logger):
     def __init__(self, parent: 'AssetTab'):
@@ -213,7 +218,14 @@ class ManageAssetPanel(QWidget, Logger):
             self.verifier_is_ok = False
             self.verifier_view.setEnabled(False)
             self.send_button.setEnabled(False)
-            if input == 'true':
+            node = parse_verifier_string(input)
+            error = node.error()
+            if input and error:
+                return error
+            error = node.iterate_vars_return_first(lambda name: get_error_for_asset_typed(f'#{name}', AssetType.QUALIFIER))
+            if input and error: 
+                return error
+            if node.is_always_true():
                 self.payto_label.setVisible(self.parent.window.config.SHOW_CREATE_ASSET_PAY_TO)
                 self.payto_e.line_edit.setVisible(self.parent.window.config.SHOW_CREATE_ASSET_PAY_TO)
                 self.payto_e.error_button.setVisible(False)
@@ -224,13 +236,6 @@ class ManageAssetPanel(QWidget, Logger):
                 self.payto_e.validate_text()
                 self._maybe_enable_pay_button()
                 return None
-            node = parse_verifier_string(input)
-            error = node.error()
-            if input and error:
-                return error
-            error = node.iterate_vars_return_first(lambda name: get_error_for_asset_typed(f'#{name}', AssetType.QUALIFIER))
-            if input and error: 
-                return error
             self.payto_e.validate_text()
             return None
 
@@ -260,12 +265,13 @@ class ManageAssetPanel(QWidget, Logger):
                 else:
                     self.verifier_e.show_error(_("Qualifier {} does not exist!").format(qualifier))
                     pass
-            try:
-                asset = self.asset_checker.line_edit.text()
-                change_address = self.parent.wallet.get_address_qualified_for_restricted_asset(asset, verifier_string_override=compress_verifier_string(verifier))
-                self.payto_e.line_edit.setText(change_address)
-            except NoQualifiedAddress:
-                pass
+            if not node.is_always_true():
+                try:
+                    asset = self.asset_checker.line_edit.text()
+                    change_address = self.parent.wallet.get_address_qualified_for_restricted_asset(asset, verifier_string_override=compress_verifier_string(verifier))
+                    self.payto_e.line_edit.setText(change_address)
+                except NoQualifiedAddress:
+                    pass
             self._maybe_enable_pay_button()
             self.verifier_e.error_button.hide()
             return None
@@ -599,19 +605,24 @@ class CreateAssetPanel(ManageAssetPanel):
             if _type != constants.net.ADDRTYPE_P2PKH and not constants.net.MULTISIG_ASSETS:
                 return _('Assets must be sent to a P2PKH address')
         verifier_string = self.verifier_e.line_edit.text()
-        if asset_type[1] == AssetType.RESTRICTED and verifier_string and verifier_string != 'true':
-            if not input:
-                return _('This asset must be sent to a qualified address')
-        else:
-            self.address_is_ok = True
-            self._maybe_enable_pay_button()
+        if asset_type[1] == AssetType.RESTRICTED and verifier_string:
+            node = parse_verifier_string(verifier_string)
+            if not node.error() and not node.is_always_true():
+                if not input:
+                    return _('This asset must be sent to a qualified address')
+        self.address_is_ok = True
+        self._maybe_enable_pay_button()
         return None
 
     async def _address_delayed_check(self):
         asset_type = self.asset_types[self.clayout.selected_index()]
         verifier_string = self.verifier_e.line_edit.text()
-        if asset_type[1] != AssetType.RESTRICTED or not verifier_string or verifier_string == 'true':
+        if asset_type[1] != AssetType.RESTRICTED:
             return
+        elif verifier_string:
+            node = parse_verifier_string(verifier_string)
+            if node.error() or node.is_always_true():
+                return
         address = self.payto_e.line_edit.text()
         await self._address_delayed_check_helper(address)
         
@@ -880,6 +891,16 @@ class ReissueAssetPanel(ManageAssetPanel):
         self.amount_e.min_amount = 0
         self.amount_e.setAmount(0)
 
+    def _on_divisions_change(self, amount):
+        if amount is None:
+            return
+        assert isinstance(amount, int)
+        self.amount_e.divisions = amount
+        self.amount_e.is_int = amount == 0
+        self.amount_e.min_amount = 0
+        self.amount_e.numbify()
+        self.amount_e.update()
+
     def _create_tx(self):
         super()._create_tx()
         output = PartialTxOutput.from_address_and_value(self.burn_address, self.burn_amount * COIN)
@@ -1131,19 +1152,25 @@ class ReissueAssetPanel(ManageAssetPanel):
             if _type != constants.net.ADDRTYPE_P2PKH and not constants.net.MULTISIG_ASSETS:
                 return _('Assets must be sent to a P2PKH address')
         verifier_string = self.verifier_e.line_edit.text()
-        if selected_asset and selected_asset[0] == '$' and verifier_string and verifier_string != 'true':
-            if not input:
-                return _('This asset must be sent to a qualified address')
-        else:
-            self.address_is_ok = True
-            self._maybe_enable_pay_button()
+        if selected_asset and selected_asset[0] == '$' and verifier_string:
+            node = parse_verifier_string(verifier_string)
+            if not node.error() and not node.is_always_true():
+                if not input:
+                    return _('This asset must be sent to a qualified address')
+            
+        self.address_is_ok = True
+        self._maybe_enable_pay_button()
         return None
 
     async def _address_delayed_check(self):
         selected_asset = self._get_selected_asset()
         verifier_string = self.verifier_e.line_edit.text()
-        if not selected_asset or selected_asset[0] != '$' or not verifier_string or verifier_string == 'true':
+        if not selected_asset or selected_asset[0] != '$':
             return
+        elif verifier_string:
+            node = parse_verifier_string(verifier_string)
+            if node.error() or node.is_always_true():
+                return
         address = self.payto_e.line_edit.text()
         await self._address_delayed_check_helper(address)
 

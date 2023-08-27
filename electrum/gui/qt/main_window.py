@@ -30,6 +30,7 @@ import traceback
 import json
 import weakref
 import csv
+import itertools
 from decimal import Decimal
 import base64
 from functools import partial
@@ -52,7 +53,8 @@ import electrum
 from electrum.gui import messages
 from electrum import (keystore, ecc, constants, util, bitcoin, commands,
                       paymentrequest, lnutil)
-from electrum.bitcoin import COIN, is_address
+from electrum.asset import get_error_for_asset_typed, AssetType, parse_verifier_string
+from electrum.bitcoin import COIN, is_address, is_b58_address, b58_address_to_hash160
 from electrum.plugin import run_hook, BasePlugin
 from electrum.i18n import _
 from electrum.util import (format_time, get_asyncio_loop,
@@ -737,6 +739,8 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         tools_menu.addSeparator()
         tools_menu.addAction(_("&Sign/verify message"), self.sign_verify_message)
         tools_menu.addAction(_("&Encrypt/decrypt message"), self.encrypt_message)
+        tools_menu.addSeparator()
+        tools_menu.addAction(_("&Identify Qualified Addresses"), self.find_qualified_address)
         tools_menu.addSeparator()
 
         raw_transaction_menu = tools_menu.addMenu(_("&Load transaction"))
@@ -2324,6 +2328,63 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
             )
             return
         return raw_tx
+
+    def find_qualified_address(self):
+        asset, ok = QInputDialog.getText(self, _('Search addresses'), _('Restricted Asset') + ':')
+        if not ok:
+            return
+        error = get_error_for_asset_typed(asset, AssetType.RESTRICTED)
+        if error:
+            self.show_message(_('Inputed asset is not a restricted asset'))
+            return
+        verifier_data = self.wallet.adb.db.get_verified_restricted_verifier(asset)
+        if not verifier_data:
+            if not self.network:
+                self.show_message(_("You are offline."), parent=self)
+                return
+            try:
+                verifier_data = self.network.run_from_another_thread(
+                    self.network.get_verifier_string_for_restricted_asset(asset))
+            except UntrustedServerReturnedError as e:
+                self.logger.info(f"Error getting data from network: {repr(e)}")
+                self.show_message(
+                    _("Error getting data from network") + ":\n" + e.get_message_for_gui(),
+                    parent=self,
+                )
+                return
+            except Exception as e:
+                self.show_message(
+                    _("Error getting data from network") + ":\n" + repr(e),
+                    parent=self,
+                )
+                return
+            if not verifier_data:
+                self.show_message(_('This restricted asset does not exist'))
+                return
+        verifier_string = verifier_data['string']
+
+        node = parse_verifier_string(verifier_string)
+        if node.is_always_true():
+            # Find assets that are black listed
+            blacklisted = []
+            for address in itertools.chain(self.wallet.get_change_addresses(), self.wallet.get_receiving_addresses()):
+                if not is_b58_address(address): continue
+                x, h160 = b58_address_to_hash160(address)
+                h160_h = h160.hex()
+                tags = self.wallet.adb.get_tags_for_h160(h160_h, include_mempool=False)
+                if asset in tags and tags[asset]['flag']:
+                    blacklisted.append(address)
+            if blacklisted:
+                self.show_message(_('All addresses can receive this asset except for:') + '\n' + '\n'.join(sorted(blacklisted)))
+            else:
+                self.show_message(_('All addresses can receive this asset'))
+        else:
+            # Do a normal lookup
+            result = self.wallet.get_addresses_qualified_for_restricted_asset(asset, verifier_string_override=verifier_string)
+            if result:
+                self.show_message(_('The following addresses can receive this asset:') + '\n' + '\n'.join(sorted(result)))
+            else:
+                self.show_message(_('No addresses can currently receive this asset'))
 
     @protected
     def export_privkeys_dialog(self, password):

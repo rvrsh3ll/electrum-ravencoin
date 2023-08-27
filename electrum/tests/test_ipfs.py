@@ -5,7 +5,7 @@ from electrum import Network
 from electrum import util
 from electrum import ipfs_db
 
-if __name__ == '__main__':
+if __name__ == 'x__main__':
     loop, stop_loop, loop_thread = util.create_and_start_event_loop()
     network = Network(SimpleConfig())
     
@@ -21,3 +21,4 @@ if __name__ == '__main__':
     print('done')
     #loop.call_soon_threadsafe(stop_loop.set_result, 1)
     #loop_thread.join(timeout=1)
+

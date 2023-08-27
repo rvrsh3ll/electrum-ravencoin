@@ -1789,6 +1789,16 @@ class Abstract_Wallet(ABC, Logger, EventListener):
 
     def get_address_qualified_for_restricted_asset(self, restricted_asset: str, first_check: str = None, *,
                                                    verifier_string_override: Optional[str] = None) -> str:
+        result =  self.get_addresses_qualified_for_restricted_asset(restricted_asset, 
+                                                                 first_check, 
+                                                                 verifier_string_override=verifier_string_override, 
+                                                                 limit=1)
+        if len(result) == 0:
+            raise NoQualifiedAddress()
+        return result[0]
+
+    def get_addresses_qualified_for_restricted_asset(self, restricted_asset: str, first_check: str = None, *,
+                                                   verifier_string_override: Optional[str] = None, limit: int = None) -> List[str]:
         assert restricted_asset and restricted_asset[0] == '$', restricted_asset
 
         result = self.adb.db.get_verified_restricted_verifier(restricted_asset)
@@ -1819,15 +1829,22 @@ class Abstract_Wallet(ABC, Logger, EventListener):
 
             return node.evaluate(var_map)
 
+        addresses = []
         if first_check and address_qualified(first_check): 
-            return first_check
+            addresses.append(first_check)
         for address in self.get_change_addresses():
             if address == first_check: continue
-            if address_qualified(address): return address
+            if limit and len(addresses) >= limit:
+                return addresses
+            if address_qualified(address):
+                addresses.append(address)
         for address in self.get_receiving_addresses():
             if address == first_check: continue
-            if address_qualified(address): return address
-        raise NoQualifiedAddress()
+            if limit and len(addresses) >= limit:
+                return addresses
+            if address_qualified(address):
+                addresses.append(address)
+        return addresses
 
     @profiler(min_threshold=0.1)
     def make_unsigned_transaction(
@@ -1921,9 +1938,6 @@ class Abstract_Wallet(ABC, Logger, EventListener):
                 if input.asset in seen_restricted_assets: continue
                 if input.asset and input.asset[0] == '$':
                     seen_restricted_assets.add(input.asset)
-                    verifier_string = self.adb.db.get_verified_restricted_verifier(input.asset)
-                    if verifier_string and verifier_string['string'] == 'true':
-                        continue
                     try:
                         change_address = self.get_address_qualified_for_restricted_asset(input.asset, input.address)
                         restricted_change_addresses[input.asset] = change_address

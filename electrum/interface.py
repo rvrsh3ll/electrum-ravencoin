@@ -1209,6 +1209,11 @@ class Interface(Logger):
         res = await self.session.send_request('blockchain.asset.broadcasts', [asset])
         return res
 
+    async def get_verifier_string_for_restricted_asset(self, asset: str) -> dict:
+        assert isinstance(asset, str)
+        res = await self.session.send_request('blockchain.asset.verifier_string', [asset])
+        return res
+
     async def check_tag_for_h160(self, asset: str, h160: str) -> dict:
         assert isinstance(h160, str)
         assert isinstance(asset, str)

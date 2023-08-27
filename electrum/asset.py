@@ -1,4 +1,5 @@
 import attr
+import itertools
 import re
 import hashlib
 
@@ -544,6 +545,7 @@ class BooleanExprAST:
         OR = auto()
         NOT = auto()
         VAR = auto()
+        TRUE = auto()
 
     def __init__(self, op, *, error: str = None):
         self.l_chld = None
@@ -572,6 +574,21 @@ class BooleanExprAST:
     def __repr__(self):
         return f'({self.op} [{self.l_chld},{self.r_chld}], {self._error=})'
 
+    def is_always_true(self):
+        vars = set()
+        self.iterate_vars_return_first(vars.add)
+        vars = sorted(vars)
+
+        for it in itertools.product([True, False], repeat=len(vars)):
+            var_map = {var: value for var, value in zip(vars, it, strict=True)}
+            result = self.evaluate(var_map)
+            if not result:
+                break
+        else:
+            # This restricted asset is default spendable according to the verifier string
+            return True
+        return False
+
     def evaluate(self, bool_dict):
         if self._error:
             raise Exception(self._error)
@@ -595,6 +612,8 @@ class BooleanExprAST:
             if value is None:
                 raise Exception(f'Key {self.l_chld} does not exist')
             return value
+        elif self.op == self.OP.TRUE:
+            return True
         else:
             raise Exception(f'Unknown OP {self.op}')
 
@@ -611,8 +630,16 @@ class BooleanExprAST:
         r_tok = 0
         top_level_parenthesized = []
         # Transform parenthesis and variables to nodes at the top level
+        true_index_end = 0
         for i, ch in enumerate(verifier):
             if last_parenthesis_index is None:
+                if i < true_index_end: continue
+                if verifier[i:i+4] == 'true':
+                    true_index_end = i+4
+                    node = cls(cls.OP.TRUE)
+                    top_level_parenthesized.append(node)
+                    continue
+
                 if re.match(r'^[A-Z0-9._]$', ch):
                     if last_name_index is None:
                         last_name_index = i
@@ -720,7 +747,7 @@ class BooleanExprAST:
         return top_level_p_n_a_o[0]
 
 def compress_verifier_string(verifier: str) -> str:
-    return verifier.replace(' ', '').replace(_QUALIFIER_TAG_DELIMITER, '')
+    return ''.join(verifier.split()).replace(_QUALIFIER_TAG_DELIMITER, '')
 
 def parse_verifier_string(verifier: str) -> BooleanExprAST:
     return BooleanExprAST.parse_string(compress_verifier_string(verifier))
