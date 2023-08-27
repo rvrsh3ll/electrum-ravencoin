@@ -68,12 +68,13 @@ class SwapsList(MyTreeView):
         self.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.setSortingEnabled(True)
         self.last_selected_swap = None
-        self.current_swaps = []
+        self.current_swap_map = dict()
 
     @profiler(min_threshold=0.05)
     def update(self):
         swaps = self.wallet.adb.db.get_my_swaps()
-        if self.current_swaps == swaps:
+        swap_map = {Transaction(swap.swap_hex).txid(): swap.redeemed for swap in swaps}
+        if self.current_swap_map == swap_map:
             return
         self.model().clear()
         self.update_headers(self.__class__.headers)
@@ -93,7 +94,7 @@ class SwapsList(MyTreeView):
             self.set_editability(swap_item)
             self.model().insertRow(idx, swap_item)
             self.refresh_row(id, idx)
-        self.current_swaps = swaps
+        self.current_swap_map = swap_map
         self.filter()
 
     def refresh_row(self, key: str, row: int) -> None:
@@ -175,7 +176,8 @@ class SwapsList(MyTreeView):
                     callback=sign_done,
                     external_keypairs=None)
         
-            menu.addAction(_('Hard Remove Swap'), hard_remove_swap)
+            if not swap.redeemed:
+                menu.addAction(_('Hard Remove Swap'), hard_remove_swap)
 
         def remove_swaps():
             for id in ids:
