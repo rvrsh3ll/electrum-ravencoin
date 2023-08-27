@@ -1457,7 +1457,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         self.update_completions()
 
     def show_onchain_invoice(self, invoice: Invoice):
-        amount_str = self.format_amount(invoice.get_amount_sat()) + ' ' + self.base_unit()
+        amount_str = self.format_amount(invoice.get_amount_sat()) + ' ' + (invoice.get_asset() or self.base_unit())
         d = WindowModalDialog(self, _("Onchain Invoice"))
         vbox = QVBoxLayout(d)
         grid = QGridLayout()

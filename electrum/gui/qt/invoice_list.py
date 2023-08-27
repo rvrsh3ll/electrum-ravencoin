@@ -58,22 +58,24 @@ class InvoiceList(MyTreeView):
     class Columns(MyTreeView.BaseColumnsEnum):
         DATE = enum.auto()
         DESCRIPTION = enum.auto()
+        ASSET = enum.auto()
         AMOUNT = enum.auto()
         STATUS = enum.auto()
 
     headers = {
         Columns.DATE: _('Date'),
         Columns.DESCRIPTION: _('Description'),
+        Columns.ASSET: _('Asset'),
         Columns.AMOUNT: _('Amount'),
         Columns.STATUS: _('Status'),
     }
-    filter_columns = [Columns.DATE, Columns.DESCRIPTION, Columns.AMOUNT]
+    filter_columns = [Columns.DATE, Columns.DESCRIPTION, Columns.AMOUNT, Columns.ASSET]
 
     def __init__(self, send_tab: 'SendTab'):
         window = send_tab.window
         super().__init__(
             main_window=window,
-            stretch_columns=[self.Columns.DESCRIPTION],
+            stretch_columns=[self.Columns.DESCRIPTION, self.Columns.ASSET],
         )
         self.wallet = window.wallet
         self.send_tab = send_tab
@@ -123,6 +125,7 @@ class InvoiceList(MyTreeView):
             timestamp = item.time or 0
             labels = [""] * len(self.Columns)
             labels[self.Columns.DATE] = format_time(timestamp) if timestamp else _('Unknown')
+            labels[self.Columns.ASSET] = item.get_asset() or ''
             labels[self.Columns.DESCRIPTION] = item.message
             labels[self.Columns.AMOUNT] = amount_str
             labels[self.Columns.STATUS] = item.get_status_str(status)
