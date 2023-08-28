@@ -1014,8 +1014,8 @@ class Abstract_Wallet(ABC, Logger, EventListener):
         domain = self.get_addresses()
         return self.adb.get_balance(domain, **kwargs)
 
-    def get_addr_balance(self, address):
-        return self.adb.get_balance([address])
+    def get_addr_balance(self, address, *, asset_aware=False):
+        return self.adb.get_balance([address], asset_aware=asset_aware)
 
     def get_utxos(
             self,

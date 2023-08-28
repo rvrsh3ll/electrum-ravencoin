@@ -82,10 +82,11 @@ class AddressList(MyTreeView):
         ADDRESS = enum.auto()
         LABEL = enum.auto()
         COIN_BALANCE = enum.auto()
+        ASSET_COUNT = enum.auto()
         FIAT_BALANCE = enum.auto()
         NUM_TXS = enum.auto()
 
-    filter_columns = [Columns.TYPE, Columns.ADDRESS, Columns.LABEL, Columns.COIN_BALANCE]
+    filter_columns = [Columns.TYPE, Columns.ADDRESS, Columns.LABEL, Columns.COIN_BALANCE, Columns.ASSET_COUNT]
 
     ROLE_SORT_ORDER = Qt.UserRole + 1000
     ROLE_ADDRESS_STR = Qt.UserRole + 1001
@@ -153,6 +154,7 @@ class AddressList(MyTreeView):
             self.Columns.ADDRESS: _('Address'),
             self.Columns.LABEL: _('Label'),
             self.Columns.COIN_BALANCE: _('Balance'),
+            self.Columns.ASSET_COUNT: _('Asset Count'),
             self.Columns.FIAT_BALANCE: ccy + ' ' + _('Balance'),
             self.Columns.NUM_TXS: _('Tx'),
         }
@@ -247,20 +249,21 @@ class AddressList(MyTreeView):
         address = key
         label = self.wallet.get_label_for_address(address)
         num = self.wallet.adb.get_address_history_len(address)
-        c, u, x = self.wallet.get_addr_balance(address)
-        balance = c + u + x
-        balance_text = self.main_window.format_amount(balance, whitespaces=True)
+        balance_mapping = self.wallet.get_addr_balance(address, asset_aware=True)
+        base_coin_balance = sum(balance_mapping.get(None, [0]))
+        balance_text = self.main_window.format_amount(base_coin_balance, whitespaces=True)
         # create item
         fx = self.main_window.fx
         if self.should_show_fiat():
             rate = fx.exchange_rate()
-            fiat_balance_str = fx.value_str(balance, rate)
+            fiat_balance_str = fx.value_str(base_coin_balance, rate)
         else:
             fiat_balance_str = ''
         address_item = [self.std_model.item(row, col) for col in self.Columns]
         address_item[self.Columns.LABEL].setText(label)
         address_item[self.Columns.COIN_BALANCE].setText(balance_text)
-        address_item[self.Columns.COIN_BALANCE].setData(balance, self.ROLE_SORT_ORDER)
+        address_item[self.Columns.COIN_BALANCE].setData(base_coin_balance, self.ROLE_SORT_ORDER)
+        address_item[self.Columns.ASSET_COUNT].setText(str(len([key for key, value in balance_mapping.items() if key and sum(value) > 0])))
         address_item[self.Columns.FIAT_BALANCE].setText(fiat_balance_str)
         address_item[self.Columns.NUM_TXS].setText("%d"%num)
         c = ColorScheme.BLUE.as_color(True) if self.wallet.is_frozen_address(address) else self._default_bg_brush
