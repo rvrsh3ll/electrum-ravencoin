@@ -23,14 +23,22 @@
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+import enum
+
 from typing import TYPE_CHECKING
 
-from PyQt5.QtWidgets import QVBoxLayout, QLabel
+from PyQt5.QtGui import QFont, QStandardItemModel, QStandardItem
+from PyQt5.QtCore import Qt, QItemSelectionModel
+from PyQt5.QtWidgets import QVBoxLayout, QLabel, QTabWidget, QWidget, QAbstractItemView
 
+from electrum.bitcoin import b58_address_to_hash160, is_b58_address
 from electrum.i18n import _
+from electrum.util import profiler
 
-from .util import WindowModalDialog, ButtonsLineEdit, ShowQRLineEdit, ColorScheme, Buttons, CloseButton
+from .util import (WindowModalDialog, ButtonsLineEdit, ShowQRLineEdit, ColorScheme, Buttons, 
+                   CloseButton, read_QIcon, MONOSPACE_FONT)
 from .history_list import HistoryList, HistoryModel
+from .my_treeview import MyTreeView
 from .qrtextedit import ShowQRTextEdit
 
 if TYPE_CHECKING:
@@ -47,6 +55,71 @@ class AddressHistoryModel(HistoryModel):
 
     def should_include_lightning_payments(self) -> bool:
         return False
+
+
+class TaggedAddressList(MyTreeView):
+    class Columns(MyTreeView.BaseColumnsEnum):
+        ASSET = enum.auto()
+        TAGGED = enum.auto()
+
+    headers = {
+        Columns.ASSET: _('Asset'),
+        Columns.TAGGED: _('Flag')
+    }
+
+    filter_columns = [Columns.ASSET, Columns.TAGGED]
+
+    ROLE_ASSET_STR = Qt.UserRole + 1000
+    ROLE_TAG_BOOL = Qt.UserRole + 1001
+    key_role = ROLE_ASSET_STR
+
+    def __init__(self, electrum_window: 'ElectrumWindow', h160: str):
+        super().__init__(
+            main_window=electrum_window,
+            stretch_columns=[self.Columns.ASSET]
+        )
+        self.electrum_window = electrum_window
+        self.wallet = self.main_window.wallet
+        self.std_model = QStandardItemModel(self)
+        self.setModel(self.std_model)
+        self.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.setSortingEnabled(True)
+        self.last_selected_asset = None
+        self.current_assets = None
+        self.h160 = h160
+
+    @profiler(min_threshold=0.05)
+    def update(self):
+        # not calling maybe_defer_update() as it interferes with coincontrol status bar
+        new_assets = self.wallet.adb.get_tags_for_h160(self.h160)
+        if self.current_assets == new_assets:
+            return
+        self.model().clear()
+        self.update_headers(self.__class__.headers)
+        for idx, (asset, data) in enumerate(sorted(new_assets.items(), key=lambda x: x[0])):
+            labels = [""] * len(self.Columns)
+
+            labels[self.Columns.ASSET] = asset
+            labels[self.Columns.TAGGED] = str(data['flag'])
+            row_item = [QStandardItem(x) for x in labels]
+            icon = read_QIcon('unconfirmed.png') if data['height'] < 0 else read_QIcon('confirmed.png')
+            row_item[self.Columns.ASSET] = QStandardItem(icon, labels[self.Columns.ASSET])
+            self.set_editability(row_item)
+            row_item[self.Columns.ASSET].setData(asset, self.ROLE_ASSET_STR)
+            row_item[self.Columns.ASSET].setData(data['flag'], self.ROLE_TAG_BOOL)
+            row_item[self.Columns.ASSET].setFont(QFont(MONOSPACE_FONT))
+            self.model().insertRow(idx, row_item)
+            self.refresh_row(data, idx)
+        self.current_assets = new_assets
+        self.filter()
+
+    def refresh_row(self, data, row: int) -> None:
+        assert row is not None
+        asset_item = [self.std_model.item(row, col) for col in self.Columns]
+        
+        tooltip = 'In the mempool' if data['height'] < 0 else 'Confirmed'
+
+        asset_item[self.Columns.ASSET].setToolTip(tooltip)
 
 
 class AddressDialog(WindowModalDialog):
@@ -106,8 +179,30 @@ class AddressDialog(WindowModalDialog):
         self.hw = HistoryList(self.window, addr_hist_model)
         self.hw.num_tx_label = QLabel('')
         addr_hist_model.set_view(self.hw)
-        vbox.addWidget(self.hw.num_tx_label)
-        vbox.addWidget(self.hw)
+
+        if is_b58_address(self.address):
+            x, h160 = b58_address_to_hash160(self.address)
+            h160_h = h160.hex()
+
+            tabs = QTabWidget()
+
+            history_widget = QWidget()
+            vbox_history = QVBoxLayout()
+            vbox_history.addWidget(self.hw.num_tx_label)
+            vbox_history.addWidget(self.hw)
+
+            tags_widget = TaggedAddressList(self.window, h160_h)
+            tags_widget.update()
+
+            tabs.addTab(history_widget, read_QIcon('tab_history.png'), _('History'))
+            tabs.addTab(tags_widget, read_QIcon('tag.png'), _('Tags'))
+
+            vbox.addWidget(tabs)
+        else:
+            vbox.addWidget(self.hw.num_tx_label)
+            vbox.addWidget(self.hw)
+
+        history_widget.setLayout(vbox_history)
 
         vbox.addLayout(Buttons(CloseButton(self)))
         self.format_amount = self.window.format_amount
