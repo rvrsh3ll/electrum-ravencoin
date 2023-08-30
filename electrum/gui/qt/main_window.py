@@ -2582,6 +2582,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
 
         def on_success(result):
             coins, keypairs, outpoint_to_locking_script = result
+            assert coins
             self.warn_if_watching_only()
 
             base_inputs = [coin for coin in coins if coin.asset is None]
@@ -2605,17 +2606,19 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
                 asset_amounts.pop(asset)
 
             asset_outputs = [PartialTxOutput.from_address_and_value(restricted_asset_to_address.get(asset, addr), amount, asset=asset) for asset, amount in asset_amounts.items()]
-            print(f'{asset_inputs=}')
-            print(f'{base_inputs=}')
             if non_qualified_asset_set:
                 self.show_message(_('Some restricted assets have been omitted as this wallet is not qualified for them.'))
 
+            message_use_own_coin = False
             def make_tx(fee_est, *, confirmed_only=False):
+                nonlocal message_use_own_coin
+
                 def fee_mixin(fee_est):
                     def new_fee_estimator(size):
                         # size is virtual bytes
                         # Guess 1 extra byte for size of vins
-                        appended_size = sum(len(x.serialize_to_network()) for x in itertools.chain(asset_outputs, asset_inputs)) + 1
+                        appended_size = sum(len(x.serialize_to_network()) for x in asset_outputs) + \
+                            sum(len(x.serialize_to_network(script_sig=bytes.fromhex(Transaction.input_script(x, estimate_size=True)))) for x in asset_inputs) + 1
                         return fee_est(size + appended_size)
                     return new_fee_estimator
 
@@ -2624,7 +2627,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
                     try:
                         tx = self.wallet.make_unsigned_transaction(
                             coins = additional_inputs,
-                            fixed_inputs= base_inputs,
+                            fixed_inputs = base_inputs,
                             outputs = base_output,
                             fee=fee_est,
                             rbf=False,
@@ -2632,6 +2635,10 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
                         )
                         break
                     except NotEnoughFunds:
+                        # Use our own coins for change
+                        if not message_use_own_coin:
+                            message_use_own_coin = True
+                            self.show_message(_('Some of your utxos will be used to handle fees'))
                         additional_inputs.append(coin)
                 else:
                     raise NotEnoughFunds()

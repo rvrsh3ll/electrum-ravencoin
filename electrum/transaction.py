@@ -310,6 +310,7 @@ class TxInput:
         self._utxo = None  # type: Optional[Transaction]
         self.__scriptpubkey = None  # type: Optional[bytes]
         self.__address = None  # type: Optional[str]
+        self.__asset = None  # type: Optional[str]
         self.__value_sats = None  # type: Optional[int]
         self.__asset_value_sats = None  # type: Optional[int]
 
@@ -381,7 +382,6 @@ class TxInput:
 
     @property
     def asset(self) -> Optional[str]:
-        if not hasattr(self, '__asset'): return None
         if self.__asset is _NEEDS_RECALC:
             from .asset import get_asset_info_from_script
             asset_data = get_asset_info_from_script(self.scriptpubkey)
