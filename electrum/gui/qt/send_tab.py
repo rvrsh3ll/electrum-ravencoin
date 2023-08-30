@@ -669,7 +669,7 @@ class SendTab(QWidget, MessageBoxMixin, Logger):
             
             node = parse_verifier_string(verifier_string)
             vars = set()
-            node.iterate_vars_return_first(vars.add)
+            node.iterate_variables(vars.add)
 
             is_qualified_for_tag = dict()
             

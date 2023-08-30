@@ -939,7 +939,9 @@ class Transaction:
         raise UnknownTxinType("cannot construct scriptSig")
 
     @classmethod
-    def get_preimage_script(cls, txin: 'PartialTxInput', wallet: 'Abstract_Wallet') -> str:
+    def get_preimage_script(cls, txin: 'PartialTxInput', wallet: 'Abstract_Wallet', *, locking_script_overrides = None) -> str:
+        if locking_script_overrides and txin.prevout.to_str() in locking_script_overrides:
+            return locking_script_overrides[txin.prevout.to_str()]
         if wallet is not None and wallet.db.is_non_deterministic_txo_lockingscript(txin.prevout):
             vout = wallet.db.get_transaction(txin.prevout.txid.hex()).outputs()[txin.prevout.out_idx]
             if vout is not None:
@@ -2152,7 +2154,8 @@ class PartialTransaction(Transaction):
         self.invalidate_ser_cache()
 
     def serialize_preimage(self, txin_index: int, wallet: 'Abstract_Wallet', *,
-                           bip143_shared_txdigest_fields: BIP143SharedTxDigestFields = None) -> str:
+                           bip143_shared_txdigest_fields: BIP143SharedTxDigestFields = None,
+                           locking_script_overrides = NotImplementedError) -> str:
         nVersion = int_to_hex(self.version, 4)
         nLocktime = int_to_hex(self.locktime, 4)
         inputs = self.inputs()
@@ -2162,7 +2165,7 @@ class PartialTransaction(Transaction):
         if not Sighash.is_valid(sighash):
             raise Exception(f"SIGHASH_FLAG ({sighash}) not supported!")
         nHashType = int_to_hex(sighash, 4)
-        preimage_script = self.get_preimage_script(txin, wallet)
+        preimage_script = self.get_preimage_script(txin, wallet, locking_script_overrides=locking_script_overrides)
         if txin.is_segwit():
             if bip143_shared_txdigest_fields is None:
                 bip143_shared_txdigest_fields = self._calc_bip143_shared_txdigest_fields()
@@ -2219,7 +2222,7 @@ class PartialTransaction(Transaction):
             preimage = nVersion + txins + txouts + nLocktime + nHashType
         return preimage
 
-    def sign(self, keypairs, wallet: 'Abstract_Wallet') -> None:
+    def sign(self, keypairs, wallet: 'Abstract_Wallet', *, locking_script_overrides=None) -> None:
         # keypairs:  pubkey_hex -> (secret_bytes, is_compressed)
         bip143_shared_txdigest_fields = self._calc_bip143_shared_txdigest_fields()
         for i, txin in enumerate(self.inputs()):
@@ -2231,18 +2234,18 @@ class PartialTransaction(Transaction):
                     continue
                 _logger.info(f"adding signature for {pubkey}. spending utxo {txin.prevout.to_str()}")
                 sec, compressed = keypairs[pubkey]
-                sig = self.sign_txin(i, sec, wallet, bip143_shared_txdigest_fields=bip143_shared_txdigest_fields)
+                sig = self.sign_txin(i, sec, wallet, bip143_shared_txdigest_fields=bip143_shared_txdigest_fields, locking_script_overrides=locking_script_overrides)
                 self.add_signature_to_txin(txin_idx=i, signing_pubkey=pubkey, sig=sig)
 
         _logger.debug(f"is_complete {self.is_complete()}")
         self.invalidate_ser_cache()
 
-    def sign_txin(self, txin_index, privkey_bytes, wallet: 'Abstract_Wallet', *, bip143_shared_txdigest_fields=None) -> str:
+    def sign_txin(self, txin_index, privkey_bytes, wallet: 'Abstract_Wallet', *, bip143_shared_txdigest_fields=None, locking_script_overrides=None) -> str:
         txin = self.inputs()[txin_index]
         txin.validate_data(for_signing=True)
         sighash = txin.sighash if txin.sighash is not None else Sighash.ALL
         pre_hash = sha256d(bfh(self.serialize_preimage(txin_index, wallet,
-                                                       bip143_shared_txdigest_fields=bip143_shared_txdigest_fields)))
+                                                       bip143_shared_txdigest_fields=bip143_shared_txdigest_fields, locking_script_overrides=locking_script_overrides)))
         privkey = ecc.ECPrivkey(privkey_bytes)
         sig = privkey.sign_transaction(pre_hash)
         sig = sig.hex() + Sighash.to_sigbytes(sighash).hex()

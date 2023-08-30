@@ -38,6 +38,7 @@ import queue
 import asyncio
 from typing import Optional, TYPE_CHECKING, Sequence, List, Union, Dict, Set
 import concurrent.futures
+from collections import defaultdict
 
 from PyQt5.QtGui import QPixmap, QKeySequence, QIcon, QCursor, QFont, QFontMetrics
 from PyQt5.QtCore import Qt, QRect, QStringListModel, QSize, pyqtSignal
@@ -57,7 +58,7 @@ from electrum.asset import get_error_for_asset_typed, AssetType, parse_verifier_
 from electrum.bitcoin import COIN, is_address, is_b58_address, b58_address_to_hash160
 from electrum.plugin import run_hook, BasePlugin
 from electrum.i18n import _
-from electrum.util import (format_time, get_asyncio_loop,
+from electrum.util import (format_time, get_asyncio_loop, NotEnoughFunds, NoQualifiedAddress,
                            UserCancelled, profiler,
                            bfh, InvalidPassword,
                            UserFacingException, FailedToParsePaymentIdentifier,
@@ -68,7 +69,7 @@ from electrum.transaction import (Transaction, PartialTxInput,
                                   PartialTransaction, PartialTxOutput)
 from electrum.wallet import (Multisig_Wallet, Abstract_Wallet,
                              sweep_preparations, InternalAddressCorruption,
-                             CannotCPFP)
+                             CannotCPFP, get_locktime_for_new_transaction)
 from electrum.version import ELECTRUM_VERSION
 from electrum.network import Network, UntrustedServerReturnedError, NetworkException
 from electrum.exchange_rate import FxThread
@@ -1267,10 +1268,10 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         self.send_tab.broadcast_transaction(tx)
 
     @protected
-    def sign_tx(self, tx, *, callback, external_keypairs, password):
-        self.sign_tx_with_password(tx, callback=callback, password=password, external_keypairs=external_keypairs)
+    def sign_tx(self, tx, *, callback, external_keypairs, password, locking_script_overrides=None):
+        self.sign_tx_with_password(tx, callback=callback, password=password, external_keypairs=external_keypairs, locking_script_overrides=locking_script_overrides)
 
-    def sign_tx_with_password(self, tx: PartialTransaction, *, callback, password, external_keypairs=None):
+    def sign_tx_with_password(self, tx: PartialTransaction, *, callback, password, external_keypairs=None, locking_script_overrides=None):
         '''Sign the transaction in a separate thread.  When done, calls
         the callback with a success code of True or False.
         '''
@@ -1282,7 +1283,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         on_success = run_hook('tc_sign_wrapper', self.wallet, tx, on_success, on_failure) or on_success
         if external_keypairs:
             # can sign directly
-            task = partial(tx.sign, external_keypairs)
+            task = partial(tx.sign, external_keypairs, locking_script_overrides=locking_script_overrides)
         else:
             task = partial(self.wallet.sign_transaction, tx, password)
         msg = _('Signing transaction...')
@@ -2580,13 +2581,100 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         privkeys = get_pk()
 
         def on_success(result):
-            coins, keypairs = result
-            outputs = [PartialTxOutput.from_address_and_value(addr, value='!')]
+            coins, keypairs, outpoint_to_locking_script = result
             self.warn_if_watching_only()
-            self.send_tab.pay_onchain_dialog(
-                outputs, external_keypairs=keypairs, get_coins=lambda *args, **kwargs: coins)
+
+            base_inputs = [coin for coin in coins if coin.asset is None]
+            base_output = [PartialTxOutput.from_address_and_value(addr, value='!')]
+        
+            asset_inputs = [coin for coin in coins if coin.asset]  # type: List[PartialTxInput]
+            asset_amounts = defaultdict(int)
+            for coin in asset_inputs:
+                asset_amounts[coin.asset] += coin.value_sats(asset_aware=True)
+
+            non_qualified_asset_set = set()
+            restricted_asset_to_address = dict()
+            for asset in asset_amounts.keys():
+                if asset[0] == '$':
+                    try:
+                        restricted_asset_to_address[asset] = self.wallet.get_address_qualified_for_restricted_asset(asset)
+                    except NoQualifiedAddress:
+                        non_qualified_asset_set.add(asset)
+            asset_inputs = [coin for coin in asset_inputs if coin.asset not in non_qualified_asset_set]
+            for asset in non_qualified_asset_set:
+                asset_amounts.pop(asset)
+
+            asset_outputs = [PartialTxOutput.from_address_and_value(restricted_asset_to_address.get(asset, addr), amount, asset=asset) for asset, amount in asset_amounts.items()]
+            print(f'{asset_inputs=}')
+            print(f'{base_inputs=}')
+            if non_qualified_asset_set:
+                self.show_message(_('Some restricted assets have been omitted as this wallet is not qualified for them.'))
+
+            def make_tx(fee_est, *, confirmed_only=False):
+                def fee_mixin(fee_est):
+                    def new_fee_estimator(size):
+                        # size is virtual bytes
+                        # Guess 1 extra byte for size of vins
+                        appended_size = sum(len(x.serialize_to_network()) for x in itertools.chain(asset_outputs, asset_inputs)) + 1
+                        return fee_est(size + appended_size)
+                    return new_fee_estimator
+
+                additional_inputs = []
+                for coin in [coin for coin in self.get_coins(confirmed_only=confirmed_only) if coin.asset is None]:
+                    try:
+                        tx = self.wallet.make_unsigned_transaction(
+                            coins = additional_inputs,
+                            fixed_inputs= base_inputs,
+                            outputs = base_output,
+                            fee=fee_est,
+                            rbf=False,
+                            fee_mixin=fee_mixin,
+                        )
+                        break
+                    except NotEnoughFunds:
+                        additional_inputs.append(coin)
+                else:
+                    raise NotEnoughFunds()
+                
+                tx.add_inputs(asset_inputs)
+                tx.add_outputs(asset_outputs)
+                tx.locktime = get_locktime_for_new_transaction(self.network)
+                tx.add_info_from_wallet(self.wallet)
+                return tx
+            
+            conf_dlg = ConfirmTxDialog(window=self, make_tx=make_tx, output_value='!')
+            if conf_dlg.not_enough_funds:
+                # note: use confirmed_only=False here, regardless of config setting,
+                #       as the user needs to get to ConfirmTxDialog to change the config setting
+                if not conf_dlg.can_pay_assuming_zero_fees(confirmed_only=False):
+                    text = self.get_text_not_enough_funds_mentioning_frozen()
+                    self.show_message(text)
+                    return
+            tx = conf_dlg.run()
+            if tx is None:
+                # user cancelled
+                return
+            is_preview = conf_dlg.is_preview
+            if is_preview:
+                self.show_transaction(tx)
+                return
+            
+            def sign_done(success):
+                if success:
+                    if not tx.is_complete():
+                        # We used some of our own coins for fees
+                        self.sign_tx(tx)
+                    self.broadcast_or_show(tx)
+
+            self.sign_tx(
+                tx,
+                callback=sign_done,
+                external_keypairs=keypairs,
+                locking_script_overrides=outpoint_to_locking_script)
+
+        
         def on_failure(exc_info):
-            self.on_error(exc_info)
+            self.on_error(exc_info)                                                                                 
         msg = _('Preparing sweep transaction...')
         task = lambda: self.network.run_from_another_thread(
             sweep_preparations(privkeys, self.network))

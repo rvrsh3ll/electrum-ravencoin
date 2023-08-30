@@ -1,4 +1,4 @@
-from electrum.asset import parse_verifier_string
+from electrum.boolean_ast_tree import parse_boolean_equation
 
 if __name__ == '__main__':
 
@@ -19,8 +19,9 @@ if __name__ == '__main__':
         'true&A',
         'A&true',
         'B|true',
-        'true|B'
+        'true|B',
+        #'B'
     ]:
-        node = parse_verifier_string(var)
+        node = parse_boolean_equation(var)
         #print(node)
-        assert node.evaluate(var_mapping)
+        assert node.evaluate(var_mapping), var

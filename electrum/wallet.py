@@ -62,8 +62,8 @@ from .util import (NotEnoughFunds, UserCancelled, profiler, OldTaskGroup, ignore
                    Fiat, bfh, TxMinedInfo, quantize_feerate, create_bip21_uri, OrderedDictWithIndex, parse_max_spend)
 from .simple_config import SimpleConfig, FEE_RATIO_HIGH_WARNING, FEERATE_WARNING_HIGH_FEE
 from .bitcoin import COIN, TYPE_ADDRESS
-from .bitcoin import is_address, address_to_script, is_minikey, relayfee, dust_threshold, b58_address_to_hash160, is_b58_address
-from .asset import get_asset_info_from_script, parse_verifier_string
+from .bitcoin import (is_address, address_to_script, is_minikey, relayfee, dust_threshold, b58_address_to_hash160, is_b58_address)
+from .asset import get_asset_info_from_script, parse_verifier_string, generate_transfer_script_from_base
 from .crypto import sha256d
 from . import keystore
 from .keystore import (load_keystore, Hardware_KeyStore, KeyStore, KeyStoreWithMPK,
@@ -109,6 +109,7 @@ TX_STATUS = [
 async def _append_utxos_to_inputs(
     *,
     inputs: List[PartialTxInput],
+    outpoint_to_locking_script: Dict[str, str],
     network: 'Network',
     script_descriptor: 'descriptor.Descriptor',
     imax: int,
@@ -129,8 +130,10 @@ async def _append_utxos_to_inputs(
         txin.block_height = int(item['height'])
         txin.script_descriptor = script_descriptor
         inputs.append(txin)
+        if prev_txout.asset:
+            outpoint_to_locking_script[prevout_str] = prev_txout.scriptpubkey.hex()
 
-    u = await network.listunspent_for_scripthash(scripthash)
+    u = await network.listunspent_for_scripthash(scripthash, asset=True)
     async with OldTaskGroup() as group:
         for item in u:
             if len(inputs) >= imax:
@@ -145,12 +148,14 @@ async def sweep_preparations(privkeys, network: 'Network', imax=100):
         desc = descriptor.get_singlesig_descriptor_from_legacy_leaf(pubkey=pubkey, script_type=txin_type)
         await _append_utxos_to_inputs(
             inputs=inputs,
+            outpoint_to_locking_script=outpoint_to_locking_script,
             network=network,
             script_descriptor=desc,
             imax=imax)
         keypairs[pubkey] = privkey, compressed
 
     inputs = []  # type: List[PartialTxInput]
+    outpoint_to_locking_script = {}
     keypairs = {}
     async with OldTaskGroup() as group:
         for sec in privkeys:
@@ -167,7 +172,7 @@ async def sweep_preparations(privkeys, network: 'Network', imax=100):
                 await group.spawn(find_utxos_for_privkey('p2pk', privkey, compressed))
     if not inputs:
         raise UserFacingException(_('No inputs found.'))
-    return inputs, keypairs
+    return inputs, keypairs, outpoint_to_locking_script
 
 
 async def sweep(
@@ -181,27 +186,42 @@ async def sweep(
         locktime=None,
         tx_version=None) -> PartialTransaction:
 
-    inputs, keypairs = await sweep_preparations(privkeys, network, imax)
-    total = sum(txin.value_sats() for txin in inputs)
+    inputs, keypairs, outpoint_to_locking_script = await sweep_preparations(privkeys, network, imax)
+    total = defaultdict(int)
+    for txin in inputs:
+        total[txin.asset] += txin.value_sats(asset_aware=True)
+
     if fee is None:
-        outputs = [PartialTxOutput(scriptpubkey=bfh(bitcoin.address_to_script(to_address)),
-                                   value=total)]
+        outputs = []
+        base_scriptpubkey=bitcoin.address_to_script(to_address)
+        for asset, amount in total.items():
+            if asset:
+                asset_scriptpubkey = generate_transfer_script_from_base(asset, amount, base_scriptpubkey)
+                outputs.append(PartialTxOutput(scriptpubkey=bfh(asset_scriptpubkey), value=0))
+            else:
+                outputs.append(PartialTxOutput(scriptpubkey=bfh(base_scriptpubkey), value=amount))
         tx = PartialTransaction.from_io(inputs, outputs)
         fee = config.estimate_fee(tx.estimated_size())
-    if total - fee < 0:
-        raise Exception(_('Not enough funds on address.') + '\nTotal: %d satoshis\nFee: %d'%(total, fee))
-    if total - fee < dust_threshold(network):
-        raise Exception(_('Not enough funds on address.') + '\nTotal: %d satoshis\nFee: %d\nDust Threshold: %d'%(total, fee, dust_threshold(network)))
+    if total[None] - fee < 0:
+        raise Exception(_('Not enough funds on address.') + '\nTotal: %d satoshis\nFee: %d'%(total[None], fee))
+    if total[None] - fee < dust_threshold(network):
+        raise Exception(_('Not enough funds on address.') + '\nTotal: %d satoshis\nFee: %d\nDust Threshold: %d'%(total[None], fee, dust_threshold(network)))
 
-    outputs = [PartialTxOutput(scriptpubkey=bfh(bitcoin.address_to_script(to_address)),
-                               value=total - fee)]
+    outputs = []
+    base_scriptpubkey=bitcoin.address_to_script(to_address)
+    for asset, amount in total.items():
+        if asset:
+            asset_scriptpubkey = generate_transfer_script_from_base(asset, amount, base_scriptpubkey)
+            outputs.append(PartialTxOutput(scriptpubkey=bfh(asset_scriptpubkey), value=0))
+        else:
+            outputs.append(PartialTxOutput(scriptpubkey=bfh(base_scriptpubkey), value=amount - fee))
+        
     if locktime is None:
         locktime = get_locktime_for_new_transaction(network)
 
     tx = PartialTransaction.from_io(inputs, outputs, locktime=locktime, version=tx_version)
-    tx.set_rbf(True)
-    raise NotImplementedError('wallet insert')
-    tx.sign(keypairs)
+    #tx.set_rbf(True)
+    tx.sign(keypairs, locking_script_overrides=outpoint_to_locking_script)
     return tx
 
 
@@ -1807,7 +1827,7 @@ class Abstract_Wallet(ABC, Logger, EventListener):
         node = parse_verifier_string(verifier_string)
         
         vars = set()
-        node.iterate_vars_return_first(vars.add)
+        node.iterate_variables(vars.add)
 
         def address_qualified(address: str) -> bool:
             if not is_b58_address(address): return False
@@ -1964,6 +1984,7 @@ class Abstract_Wallet(ABC, Logger, EventListener):
         else:
             # Only for base coin
             coins = [coin for coin in coins if coin.asset is None]
+            assert not any(output.asset for output in outputs)
 
             # "spend max" branch
             # note: This *will* spend inputs with negative effective value (if there are any).

@@ -38,12 +38,12 @@ from electrum.logging import Logger
 from electrum.qrreader import MissingQrDetectionLib
 from electrum.ipfs_db import IPFSDB
 from electrum.bitcoin import base_encode
+from electrum.boolean_ast_tree import AbstractBooleanASTNode
 
 if TYPE_CHECKING:
     from .main_window import ElectrumWindow
     from .installwizard import InstallWizard
     from electrum.simple_config import SimpleConfig
-    from electrum.asset import BooleanExprAST
 
 if platform.system() == 'Windows':
     MONOSPACE_FONT = 'Lucida Console'
@@ -1430,14 +1430,14 @@ class AutoResizingTextEdit(QTextEdit):
         return QSize(original_hint.width(), self.heightForWidth(original_hint.width()))
 
 class BooleanExprASTTableViewer(QDialog, MessageBoxMixin):
-    def __init__(self, node: 'BooleanExprAST', window: 'ElectrumWindow'):
+    def __init__(self, node: AbstractBooleanASTNode, window: 'ElectrumWindow'):
         super().__init__(window)
         grid = QGridLayout()
         vbox = QVBoxLayout()
         self.setLayout(vbox)
 
         variables = set()
-        node.iterate_vars_return_first(lambda var: variables.add(var))
+        node.iterate_variables(lambda var: variables.add(var))
         variables = sorted(list(variables))
         b = [True, False]
         first = True

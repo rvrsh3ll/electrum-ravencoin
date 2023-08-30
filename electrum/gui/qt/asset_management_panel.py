@@ -15,6 +15,7 @@ from electrum.transaction import PartialTxOutput
 from electrum.network import UntrustedServerReturnedError
 from electrum.logging import Logger
 from electrum.wallet import get_locktime_for_new_transaction
+from electrum.boolean_ast_tree import AbstractBooleanASTError
 
 from .amountedit import AmountEdit
 from .util import HelpLabel, char_width_in_lineedit, EnterButton, BooleanExprASTTableViewer
@@ -218,11 +219,11 @@ class ManageAssetPanel(QWidget, Logger):
             self.verifier_is_ok = False
             self.verifier_view.setEnabled(False)
             self.send_button.setEnabled(False)
-            node = parse_verifier_string(input)
-            error = node.error()
-            if input and error:
-                return error
-            error = node.iterate_vars_return_first(lambda name: get_error_for_asset_typed(f'#{name}', AssetType.QUALIFIER))
+            try:
+                node = parse_verifier_string(input)
+            except AbstractBooleanASTError as e:
+                return e.message
+            error = node.iterate_variables_return_first_truthy(lambda name: get_error_for_asset_typed(f'#{name}', AssetType.QUALIFIER))
             if input and error: 
                 return error
             if node.is_always_true():
@@ -245,7 +246,7 @@ class ManageAssetPanel(QWidget, Logger):
                 return
             node = parse_verifier_string(verifier)
             qualifiers = []
-            node.iterate_vars_return_first(lambda name: qualifiers.append(f'#{name}'))
+            node.iterate_variables(lambda name: qualifiers.append(f'#{name}'))
             for qualifier in qualifiers:
                 if not self.parent.network:
                     self.verifier_e.show_error(_("You are offline."))
@@ -291,9 +292,10 @@ class ManageAssetPanel(QWidget, Logger):
 
         def show_chart():
             verifier = self.verifier_e.line_edit.text()
-            node = parse_verifier_string(verifier)
-            error = node.error()
-            if error: return
+            try:
+                node = parse_verifier_string(verifier)
+            except AbstractBooleanASTError as e:
+                return e.message
             d = BooleanExprASTTableViewer(node, self.parent.window)
             d.show()
 
@@ -387,13 +389,13 @@ class ManageAssetPanel(QWidget, Logger):
     async def _address_delayed_check_helper(self, address: str):
         if not is_b58_address(address): return
         verifier = self.verifier_e.line_edit.text()
-        node = parse_verifier_string(verifier)
-        error = node.error()
-        if error:
+        try:
+            node = parse_verifier_string(verifier)
+        except AbstractBooleanASTError as e:
             self.payto_e.show_error(_('The verifier string is not valid'))
             return
         vars = set()
-        node.iterate_vars_return_first(vars.add)
+        node.iterate_variables(vars.add)
         is_qualified = dict()
 
         x, h160 = b58_address_to_hash160(address)
@@ -606,10 +608,12 @@ class CreateAssetPanel(ManageAssetPanel):
                 return _('Assets must be sent to a P2PKH address')
         verifier_string = self.verifier_e.line_edit.text()
         if asset_type[1] == AssetType.RESTRICTED and verifier_string:
-            node = parse_verifier_string(verifier_string)
-            if not node.error() and not node.is_always_true():
-                if not input:
+            try:
+                node = parse_verifier_string(verifier_string)
+                if not node.is_always_true() and not input:
                     return _('This asset must be sent to a qualified address')
+            except AbstractBooleanASTError:
+                pass
         self.address_is_ok = True
         self._maybe_enable_pay_button()
         return None
@@ -620,8 +624,11 @@ class CreateAssetPanel(ManageAssetPanel):
         if asset_type[1] != AssetType.RESTRICTED:
             return
         elif verifier_string:
-            node = parse_verifier_string(verifier_string)
-            if node.error() or node.is_always_true():
+            try:
+                node = parse_verifier_string(verifier_string)
+                if node.is_always_true():
+                    return
+            except AbstractBooleanASTError:
                 return
         address = self.payto_e.line_edit.text()
         await self._address_delayed_check_helper(address)
@@ -1153,11 +1160,12 @@ class ReissueAssetPanel(ManageAssetPanel):
                 return _('Assets must be sent to a P2PKH address')
         verifier_string = self.verifier_e.line_edit.text()
         if selected_asset and selected_asset[0] == '$' and verifier_string:
-            node = parse_verifier_string(verifier_string)
-            if not node.error() and not node.is_always_true():
-                if not input:
+            try:
+                node = parse_verifier_string(verifier_string)
+                if not node.is_always_true() and not input:
                     return _('This asset must be sent to a qualified address')
-            
+            except AbstractBooleanASTError:
+                pass
         self.address_is_ok = True
         self._maybe_enable_pay_button()
         return None
@@ -1168,8 +1176,11 @@ class ReissueAssetPanel(ManageAssetPanel):
         if not selected_asset or selected_asset[0] != '$':
             return
         elif verifier_string:
-            node = parse_verifier_string(verifier_string)
-            if node.error() or node.is_always_true():
+            try:
+                node = parse_verifier_string(verifier_string)
+                if node.is_always_true():
+                    return
+            except AbstractBooleanASTError:
                 return
         address = self.payto_e.line_edit.text()
         await self._address_delayed_check_helper(address)
