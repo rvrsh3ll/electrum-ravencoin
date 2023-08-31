@@ -2155,7 +2155,7 @@ class PartialTransaction(Transaction):
 
     def serialize_preimage(self, txin_index: int, wallet: 'Abstract_Wallet', *,
                            bip143_shared_txdigest_fields: BIP143SharedTxDigestFields = None,
-                           locking_script_overrides = NotImplementedError) -> str:
+                           locking_script_overrides = None) -> str:
         nVersion = int_to_hex(self.version, 4)
         nLocktime = int_to_hex(self.locktime, 4)
         inputs = self.inputs()

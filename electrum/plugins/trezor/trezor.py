@@ -81,7 +81,7 @@ class TrezorKeyStore(Hardware_KeyStore):
         msg_sig = client.sign_message(address_path, message, script_type=script_type)
         return msg_sig.signature
 
-    def sign_transaction(self, tx, password):
+    def sign_transaction(self, tx, password, wallet):
         if tx.is_complete():
             return
         # previous transactions used as inputs
@@ -92,7 +92,10 @@ class TrezorKeyStore(Hardware_KeyStore):
                 raise UserFacingException(_('Missing previous tx.'))
             prev_tx[tx_hash] = txin.utxo
 
-        self.plugin.sign_transaction(self, tx, prev_tx)
+        if set(tx.output_value(asset_aware=True).keys()).difference({None}):
+            raise UserFacingException(_('Hardware wallets cannot currently send assets'))
+
+        self.plugin.sign_transaction(self, tx, prev_tx, wallet)
 
 
 class TrezorInitSettings(NamedTuple):
@@ -358,7 +361,7 @@ class TrezorPlugin(HW_PluginBase):
             return AmountUnit.BITCOIN
 
     @runs_in_hwd_thread
-    def sign_transaction(self, keystore, tx: PartialTransaction, prev_tx):
+    def sign_transaction(self, keystore, tx: PartialTransaction, prev_tx, wallet):
         prev_tx = {bfh(txhash): self.electrum_tx_to_txtype(tx) for txhash, tx in prev_tx.items()}
         client = self.get_client(keystore)
         inputs = self.tx_inputs(tx, for_sig=True, keystore=keystore)
@@ -372,7 +375,7 @@ class TrezorPlugin(HW_PluginBase):
                                        prev_txes=prev_tx)
         sighash = Sighash.to_sigbytes(Sighash.ALL).hex()
         signatures = [(x.hex() + sighash) for x in signatures]
-        tx.update_signatures(signatures)
+        tx.update_signatures(signatures, wallet)
 
     @runs_in_hwd_thread
     def show_address(self, wallet, address, keystore=None):

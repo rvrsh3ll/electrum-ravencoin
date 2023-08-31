@@ -538,6 +538,9 @@ class Ledger_Client_Legacy(Ledger_Client):
         if tx.is_complete():
             return
 
+        if set(tx.output_value(asset_aware=True).keys()).difference({None}):
+            raise UserFacingException(_('Hardware wallets cannot currently send assets'))
+
         inputs = []
         inputsPaths = []
         chipInputs = []
@@ -1076,6 +1079,9 @@ class Ledger_Client_New(Ledger_Client):
     def sign_transaction(self, keystore: Hardware_KeyStore, tx: PartialTransaction, password: str, wallet):
         if tx.is_complete():
             return
+
+        if set(tx.output_value(asset_aware=True).keys()).difference({None}):
+            raise UserFacingException(_('Hardware wallets cannot currently send assets'))
 
         # mostly adapted from HWI
 
