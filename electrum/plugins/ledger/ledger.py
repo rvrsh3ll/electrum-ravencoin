@@ -312,6 +312,10 @@ class Ledger_Client(HardwareClientBase, ABC):
         hid_device = HID()
         hid_device.path = device.path
         hid_device.open()
+                    
+        # NOTE: Ravencoin uses legacy commands            
+        return Ledger_Client_Legacy(hid_device, *args, **kwargs)
+
         transport = ledger_bitcoin.TransportClient('hid', hid=hid_device)
         cl = ledger_bitcoin.createClient(transport, chain=get_chain())
         if isinstance(cl, ledger_bitcoin.client.NewClient):
@@ -330,7 +334,7 @@ class Ledger_Client(HardwareClientBase, ABC):
         pass
 
     @abstractmethod
-    def sign_transaction(self, keystore: Hardware_KeyStore, tx: PartialTransaction, password: str):
+    def sign_transaction(self, keystore: Hardware_KeyStore, tx: PartialTransaction, password: str, wallet):
         pass
 
     @abstractmethod
@@ -530,7 +534,7 @@ class Ledger_Client_Legacy(Ledger_Client):
     @runs_in_hwd_thread
     @test_pin_unlocked
     @set_and_unset_signing
-    def sign_transaction(self, keystore: Hardware_KeyStore, tx: PartialTransaction, password: str):
+    def sign_transaction(self, keystore: Hardware_KeyStore, tx: PartialTransaction, password: str, wallet):
         if tx.is_complete():
             return
 
@@ -573,7 +577,7 @@ class Ledger_Client_Legacy(Ledger_Client):
                 self.give_error("No matching pubkey for sign_transaction")  # should never happen
             full_path = convert_bip32_intpath_to_strpath(full_path)[2:]
 
-            redeemScript = Transaction.get_preimage_script(txin)
+            redeemScript = Transaction.get_preimage_script(txin, wallet)
             txin_prev_tx = txin.utxo
             if txin_prev_tx is None and not txin.is_segwit():
                 raise UserFacingException(_('Missing previous tx for legacy input.'))
@@ -859,6 +863,7 @@ class Ledger_Client_Legacy_HW1(Ledger_Client_Legacy):
                     raise UserFacingException('Aborted by user - please unplug the dongle and plug it again before retrying')
                 pin = pin.encode()
                 self.dongleObject.verifyPin(pin)
+            self.dongleObject.setAlternateCoinVersions(constants.net.ADDRTYPE_P2PKH, constants.net.ADDRTYPE_P2SH)
         except BTChipException as e:
             if (e.sw == 0x6faa):
                 raise UserFacingException("Dongle is temporarily locked - please unplug it and replug it again")
@@ -1068,7 +1073,7 @@ class Ledger_Client_New(Ledger_Client):
 
     @runs_in_hwd_thread
     @test_pin_unlocked
-    def sign_transaction(self, keystore: Hardware_KeyStore, tx: PartialTransaction, password: str):
+    def sign_transaction(self, keystore: Hardware_KeyStore, tx: PartialTransaction, password: str, wallet):
         if tx.is_complete():
             return
 
@@ -1255,7 +1260,7 @@ class Ledger_Client_New(Ledger_Client):
             password,
             *,
             script_type: Optional[str] = None,
-    ) -> bytes:
+    ) -> bytes:    
         message = message.encode('utf8')
         message_hash = hashlib.sha256(message).hexdigest().upper()
         # prompt for the PIN before displaying the dialog if necessary
@@ -1301,6 +1306,8 @@ class Ledger_KeyStore(Hardware_KeyStore):
         raise UserFacingException(_('Encryption and decryption are currently not supported for {}').format(self.device))
 
     def sign_message(self, sequence, *args, **kwargs):
+        raise UserFacingException(_('Signing messages is currently not supported on ledger'))
+
         address_path = self.get_derivation_prefix() + "/%d/%d" % sequence
         address_path = normalize_bip32_derivation(address_path, hardened_char="'")
         address_path = address_path[2:]  # cut m/
@@ -1320,19 +1327,27 @@ class LedgerPlugin(HW_PluginBase):
     keystore_class = Ledger_KeyStore
     minimum_library = (0, 2, 0)
     maximum_library = (0, 3, 0)
-    DEVICE_IDS = [(0x2581, 0x1807),  # HW.1 legacy btchip
-                  (0x2581, 0x2b7c),  # HW.1 transitional production
-                  (0x2581, 0x3b7c),  # HW.1 ledger production
-                  (0x2581, 0x4b7c),  # HW.1 ledger test
-                  (0x2c97, 0x0000),  # Blue
-                  (0x2c97, 0x0001),  # Nano-S
-                  (0x2c97, 0x0004),  # Nano-X
-                  (0x2c97, 0x0005),  # Nano-S Plus
-                  (0x2c97, 0x0006),  # Stax
-                  (0x2c97, 0x0007),  # RFU
-                  (0x2c97, 0x0008),  # RFU
-                  (0x2c97, 0x0009),  # RFU
-                  (0x2c97, 0x000a)]  # RFU
+    DEVICE_IDS = [(0x2581, 0x1807), # HW.1 legacy btchip
+                  (0x2581, 0x2b7c), # HW.1 transitional production
+                  (0x2581, 0x3b7c), # HW.1 ledger production
+                  (0x2581, 0x4b7c), # HW.1 ledger test
+                  (0x2c97, 0x0000), # Blue
+                  (0x2c97, 0x0011), # Blue app-bitcoin >= 1.5.1
+                  (0x2c97, 0x0015), # Blue app-bitcoin >= 1.5.1
+                  (0x2c97, 0x0001), # Nano-S
+                  (0x2c97, 0x1011), # Nano-S app-bitcoin >= 1.5.1
+                  (0x2c97, 0x1015), # Nano-S app-bitcoin >= 1.5.1
+                  (0x2c97, 0x0004), # Nano-X
+                  (0x2c97, 0x4011), # Nano-X app-bitcoin >= 1.5.1
+                  (0x2c97, 0x4015), # Nano-X app-bitcoin >= 1.5.1
+                  (0x2c97, 0x0005), # Nano-S Plus
+                  (0x2c97, 0x5011), # Nano-S Plus app-bitcoin >= 1.5.1
+                  (0x2c97, 0x5015), # Nano-S Plus app-bitcoin >= 1.5.1
+                  (0x2c97, 0x0006), # RFU
+                  (0x2c97, 0x0007), # RFU
+                  (0x2c97, 0x0008), # RFU
+                  (0x2c97, 0x0009), # RFU
+                  (0x2c97, 0x000a)] # RFU
     VENDOR_IDS = (0x2c97,)
     LEDGER_MODEL_IDS = {
         0x10: "Ledger Nano S",
@@ -1341,7 +1356,7 @@ class LedgerPlugin(HW_PluginBase):
         0x60: "Ledger Stax",
     }
 
-    SUPPORTED_XTYPES = ('standard', 'p2wpkh-p2sh', 'p2wpkh', 'p2wsh-p2sh', 'p2wsh')
+    SUPPORTED_XTYPES = ('standard',) #'p2wpkh-p2sh', 'p2wpkh', 'p2wsh-p2sh', 'p2wsh')
 
     def __init__(self, parent, config, name):
         HW_PluginBase.__init__(self, parent, config, name)

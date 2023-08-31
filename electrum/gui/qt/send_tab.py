@@ -82,8 +82,11 @@ class SendTab(QWidget, MessageBoxMixin, Logger):
         self.pay_selector.addItems(assets)
         self.pay_selector.currentIndexChanged.connect(self._on_combo_update)
 
-        grid.addWidget(QLabel(_('Asset')), 5, 0)
-        grid.addWidget(self.pay_selector, 5, 1, 1, 3)
+        self.is_hardware = self.wallet.keystore and self.wallet.keystore.get_type_text()[:2] == 'hw'
+
+        if not self.is_hardware:
+            grid.addWidget(QLabel(_('Asset')), 5, 0)
+            grid.addWidget(self.pay_selector, 5, 1, 1, 3)
 
         from .paytoedit import PayToEdit
         self.amount_e = AssetAmountEdit(lambda: self.pay_selector.currentText()[:4], 8, DEFAULT_ASSET_AMOUNT_MAX * COIN)
@@ -210,18 +213,19 @@ class SendTab(QWidget, MessageBoxMixin, Logger):
 
     def update(self):
         self.invoice_list.update()
-        current_balance = self.window.wallet.get_balance(asset_aware=True)
-        if self.current_balance.keys() != current_balance.keys():
-            assets = [constants.net.SHORT_NAME]
-            assets.extend(sorted(k for k in current_balance.keys() if k))
-            current_text = self.pay_selector.currentText()
-            self.pay_selector.clear()
-            self.pay_selector.addItems(assets)
-            try:
-                i = assets.index(current_text)
-                self.pay_selector.setCurrentIndex(i)
-            except ValueError:
-                pass
+        if not self.is_hardware:
+            current_balance = self.window.wallet.get_balance(asset_aware=True)
+            if self.current_balance.keys() != current_balance.keys():
+                assets = [constants.net.SHORT_NAME]
+                assets.extend(sorted(k for k in current_balance.keys() if k))
+                current_text = self.pay_selector.currentText()
+                self.pay_selector.clear()
+                self.pay_selector.addItems(assets)
+                try:
+                    i = assets.index(current_text)
+                    self.pay_selector.setCurrentIndex(i)
+                except ValueError:
+                    pass
         self._on_combo_update()
         super().update()
 
@@ -236,7 +240,7 @@ class SendTab(QWidget, MessageBoxMixin, Logger):
             divisions = metadata_tup[0].divisions
             self.fiat_send_e.setVisible(False)
         else:
-            self.fiat_send_e.setVisible(True)
+            self.fiat_send_e.setVisible(self.fx and self.fx.is_enabled())
         balance = sum(self.current_balance[asset])
         self.amount_e.divisions = divisions
         self.amount_e.max_amount = balance
@@ -352,7 +356,8 @@ class SendTab(QWidget, MessageBoxMixin, Logger):
             e.setFrozen(False)
         for e in [self.send_button, self.save_button, self.clear_button, self.amount_e, self.fiat_send_e]:
             e.setEnabled(True)
-        self.pay_selector.setCurrentIndex(0)
+        if not self.is_hardware:
+            self.pay_selector.setCurrentIndex(0)
         self.window.update_status()
         run_hook('do_clear', self)
 
@@ -499,6 +504,9 @@ class SendTab(QWidget, MessageBoxMixin, Logger):
             return
         # use label as description (not BIP21 compliant)
         if asset:
+            if self.is_hardware:
+                self.show_error(_('Hardware wallets cannot send assets'))
+                return
             index = self.pay_selector.findText(asset)
             if index < 1:
                 self.show_error(_('You do not own any {}').format(asset))

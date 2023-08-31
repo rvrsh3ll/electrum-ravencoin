@@ -306,6 +306,7 @@ class ElectrumGui(BaseElectrumGui, Logger):
         self.windows.append(w)
         self.build_tray_menu()
         w.warn_if_testnet()
+        w.warn_if_hardware()
         w.warn_if_watching_only()
         return w
 

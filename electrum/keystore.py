@@ -168,7 +168,7 @@ class KeyStore(Logger, ABC):
         pass
 
     @abstractmethod
-    def sign_transaction(self, tx: 'PartialTransaction', password) -> None:
+    def sign_transaction(self, tx: 'PartialTransaction', password, wallet: 'Abstract_Wallet') -> None:
         pass
 
     @abstractmethod
