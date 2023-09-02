@@ -128,7 +128,7 @@ class SPV(NetworkJobOnDefaultServer):
             for h160, d in h160_dict.items():
                 txid = d['tx_hash']
                 height = d['height']
-                verifying_id = f't4q:{tx_hash}'
+                verifying_id = f't4q:{txid}'
 
                 if await self._maybe_defer(txid, height, add_to_requested_set=False, alt_id=verifying_id): continue
                 self.logger.info(f'attempting to verify tag for {asset}, {h160}')
