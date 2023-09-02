@@ -168,8 +168,8 @@ class FreezePanel(QWidget):
                 self.parent.parent.wallet.set_reserved_state_of_address(parent_asset_change_address, reserved=False)
 
             tx.add_outputs([tag_vout], do_sort=False)
-            tx.locktime = get_locktime_for_new_transaction(self.parent.network)
-            tx.add_info_from_wallet(self.parent.wallet)
+            tx.locktime = get_locktime_for_new_transaction(self.parent.parent.network)
+            tx.add_info_from_wallet(self.parent.parent.wallet)
 
             return tx
 
