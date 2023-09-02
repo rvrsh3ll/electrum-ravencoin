@@ -588,6 +588,8 @@ class Commands:
         ret = {
             "electrum.version": ELECTRUM_VERSION,
             "electrum.path": os.path.dirname(os.path.realpath(__file__)),
+            "python.version": sys.version,
+            "python.path": sys.executable,
         }
         # add currently running GUI
         if self.daemon and self.daemon.gui_object:
@@ -774,8 +776,7 @@ class Commands:
             kwargs['to_timestamp'] = time.mktime(end_date.timetuple())
         if show_fiat:
             from .exchange_rate import FxThread
-            fx = FxThread(config=self.config)
-            kwargs['fx'] = fx
+            kwargs['fx'] = self.daemon.fx if self.daemon else FxThread(config=self.config)
 
         return json_normalize(wallet.get_detailed_history(**kwargs))
 
@@ -1206,12 +1207,13 @@ class Commands:
     @command('n')
     async def clear_ln_blacklist(self):
         if self.network.path_finder:
-            self.network.path_finder.liquidity_hints.clear_blacklist()
+            self.network.path_finder.clear_blacklist()
 
     @command('n')
     async def reset_liquidity_hints(self):
         if self.network.path_finder:
             self.network.path_finder.liquidity_hints.reset_liquidity_hints()
+            self.network.path_finder.clear_blacklist()
 
     @command('wnl')
     async def close_channel(self, channel_point, force=False, wallet: Abstract_Wallet = None):
@@ -1270,7 +1272,11 @@ class Commands:
         from_channel = wallet.lnworker.get_channel_by_scid(from_scid)
         dest_channel = wallet.lnworker.get_channel_by_scid(dest_scid)
         amount_sat = satoshis(amount)
-        success, log = await wallet.lnworker.rebalance_channels(from_channel, dest_channel, amount_sat * 1000)
+        success, log = await wallet.lnworker.rebalance_channels(
+            from_channel,
+            dest_channel,
+            amount_msat=amount_sat * 1000,
+        )
         return {
             'success': success,
             'log': [x.formatted_tuple() for x in log]
@@ -1316,22 +1322,22 @@ class Commands:
             await sm.get_pairs()
             lightning_amount_sat = satoshis(lightning_amount)
             onchain_amount_sat = sm.get_recv_amount(lightning_amount_sat, is_reverse=True)
-            success = None
+            funding_txid = None
         elif lightning_amount == 'dryrun':
             await sm.get_pairs()
             onchain_amount_sat = satoshis(onchain_amount)
             lightning_amount_sat = sm.get_send_amount(onchain_amount_sat, is_reverse=True)
-            success = None
+            funding_txid = None
         else:
             lightning_amount_sat = satoshis(lightning_amount)
             claim_fee = sm.get_claim_fee()
             onchain_amount_sat = satoshis(onchain_amount) + claim_fee
-            success = await wallet.lnworker.swap_manager.reverse_swap(
+            funding_txid = await wallet.lnworker.swap_manager.reverse_swap(
                 lightning_amount_sat=lightning_amount_sat,
                 expected_onchain_amount_sat=onchain_amount_sat,
             )
         return {
-            'success': success,
+            'funding_txid': funding_txid,
             'lightning_amount': format_satoshis(lightning_amount_sat),
             'onchain_amount': format_satoshis(onchain_amount_sat),
         }

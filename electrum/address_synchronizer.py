@@ -261,6 +261,7 @@ class AddressSynchronizer(Logger, EventListener):
         self._get_balance_cache = {}  # invalidate cache
         self._get_asset_balance_cache = {}
         self._get_assets_in_mempool_cache = {}
+        self.db.put('stored_height', self.get_local_height())
 
     async def stop(self):
         if self.network:
@@ -274,7 +275,6 @@ class AddressSynchronizer(Logger, EventListener):
                 self.synchronizer = None
                 self.verifier = None
                 self.unregister_callbacks()
-                self.db.put('stored_height', self.get_local_height())
 
     def add_address(self, address):
         if address not in self.db.history:
@@ -1394,7 +1394,14 @@ class AddressSynchronizer(Logger, EventListener):
         return delta
 
     def get_tx_fee(self, txid: str) -> Optional[int]:
-        """ Returns tx_fee or None. Use server fee only if tx is unconfirmed and not mine"""
+        """Returns tx_fee or None. Use server fee only if tx is unconfirmed and not mine.
+
+        Note: being fast is prioritised over completeness here. We try to avoid deserializing
+              the tx, as that is expensive if we are called for the whole history. We sometimes
+              incorrectly early-exit and return None, e.g. for not-all-ismine-input txs,
+              where we could calculate the fee if we deserialized (but to see if we have all
+              the parent txs available, we would have to deserialize first).
+        """
         # check if stored fee is available
         fee = self.db.get_tx_fee(txid, trust_server=False)
         if fee is not None:

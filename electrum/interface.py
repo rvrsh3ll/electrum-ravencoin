@@ -167,7 +167,7 @@ class NotificationSession(RPCSession):
         try:
             # note: RPCSession.send_request raises TaskTimeout in case of a timeout.
             # TaskTimeout is a subclass of CancelledError, which is *suppressed* in TaskGroups
-            response = await asyncio.wait_for(
+            response = await util.wait_for2(
                 super().send_request(*args, **kwargs),
                 timeout)
         except (TaskTimeout, asyncio.TimeoutError) as e:
@@ -706,10 +706,14 @@ class Interface(Logger):
                     await group.spawn(self.run_fetch_blocks)
                     await group.spawn(self.monitor_connection)
             except aiorpcx.jsonrpc.RPCError as e:
-                if e.code in (JSONRPC.EXCESSIVE_RESOURCE_USAGE,
-                              JSONRPC.SERVER_BUSY,
-                              JSONRPC.METHOD_NOT_FOUND):
-                    raise GracefulDisconnect(e, log_level=logging.WARNING) from e
+                if e.code in (
+                    JSONRPC.EXCESSIVE_RESOURCE_USAGE,
+                    JSONRPC.SERVER_BUSY,
+                    JSONRPC.METHOD_NOT_FOUND,
+                    JSONRPC.INTERNAL_ERROR,
+                ):
+                    log_level = logging.WARNING if self.is_main_server() else logging.INFO
+                    raise GracefulDisconnect(e, log_level=log_level) from e
                 raise
             finally:
                 self.got_disconnected.set()  # set this ASAP, ideally before any awaits
@@ -1171,9 +1175,17 @@ class Interface(Logger):
             res = await self.session.send_request('blockchain.estimatefee', [num_blocks])
         except aiorpcx.jsonrpc.ProtocolError as e:
             # The protocol spec says the server itself should already have returned -1
-            # if it cannot provide an estimate, however apparently electrs does not conform
+            # if it cannot provide an estimate, however apparently "electrs" does not conform
             # and sends an error instead. Convert it here:
             if "cannot estimate fee" in e.message:
+                res = -1
+            else:
+                raise
+        except aiorpcx.jsonrpc.RPCError as e:
+            # The protocol spec says the server itself should already have returned -1
+            # if it cannot provide an estimate. "Fulcrum" often sends:
+            #   aiorpcx.jsonrpc.RPCError: (-32603, 'internal error: bitcoind request timed out')
+            if e.code == JSONRPC.INTERNAL_ERROR:
                 res = -1
             else:
                 raise

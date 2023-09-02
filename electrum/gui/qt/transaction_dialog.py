@@ -71,6 +71,7 @@ from .my_treeview import create_toolbar_with_menu
 if TYPE_CHECKING:
     from .main_window import ElectrumWindow
     from electrum.wallet import Abstract_Wallet
+    from electrum.payment_identifier import PaymentIdentifier
 
 
 _logger = get_logger(__name__)
@@ -421,7 +422,7 @@ class TxInOutWidget(QWidget):
                 copy_list += [(_("Copy Address"), lambda: self.main_window.do_copy(addr))]
             txin_value = self.wallet.adb.get_txin_value(txin)
             if txin_value:
-                value_str = self.main_window.format_amount(txin_value)
+                value_str = self.main_window.format_amount(txin_value, add_thousands_sep=False)
                 copy_list += [(_("Copy Amount"), lambda: self.main_window.do_copy(value_str))]
 
         for item in show_list:
@@ -463,7 +464,7 @@ class TxInOutWidget(QWidget):
                 show_list += [(_("Address Details"), lambda: self.main_window.show_address(addr, parent=self))]
             copy_list += [(_("Copy Address"), lambda: self.main_window.do_copy(addr))]
         txout_value = self.tx.outputs()[txout_idx].value
-        value_str = self.main_window.format_amount(txout_value)
+        value_str = self.main_window.format_amount(txout_value, add_thousands_sep=False)
         copy_list += [(_("Copy Amount"), lambda: self.main_window.do_copy(value_str))]
 
         for item in show_list:
@@ -485,9 +486,16 @@ def show_transaction(
     parent: 'ElectrumWindow',
     prompt_if_unsaved: bool = False,
     external_keypairs=None,
+    payment_identifier: 'PaymentIdentifier' = None,
 ):
     try:
-        d = TxDialog(tx, parent=parent, prompt_if_unsaved=prompt_if_unsaved, external_keypairs=external_keypairs)
+        d = TxDialog(
+            tx,
+            parent=parent,
+            prompt_if_unsaved=prompt_if_unsaved,
+            external_keypairs=external_keypairs,
+            payment_identifier=payment_identifier,
+        )
     except SerializationError as e:
         _logger.exception('unable to deserialize the transaction')
         parent.show_critical(_("Electrum was unable to deserialize the transaction:") + "\n" + str(e))
@@ -499,7 +507,15 @@ class TxDialog(QDialog, MessageBoxMixin):
 
     throttled_update_sig = pyqtSignal()  # emit from thread to do update in main thread
 
-    def __init__(self, tx: Transaction, *, parent: 'ElectrumWindow', prompt_if_unsaved: bool, external_keypairs=None):
+    def __init__(
+        self,
+        tx: Transaction,
+        *,
+        parent: 'ElectrumWindow',
+        prompt_if_unsaved: bool,
+        external_keypairs=None,
+        payment_identifier: 'PaymentIdentifier' = None,
+    ):
         '''Transactions in the wallet will show their description.
         Pass desc to give a description for txs not yet in the wallet.
         '''
@@ -510,6 +526,7 @@ class TxDialog(QDialog, MessageBoxMixin):
         self.main_window = parent
         self.config = parent.config
         self.wallet = parent.wallet
+        self.payment_identifier = payment_identifier
         self.prompt_if_unsaved = prompt_if_unsaved
         self.saved = False
         self.desc = None
@@ -649,7 +666,7 @@ class TxDialog(QDialog, MessageBoxMixin):
         self.main_window.push_top_level_window(self)
         self.main_window.send_tab.save_pending_invoice()
         try:
-            self.main_window.broadcast_transaction(self.tx)
+            self.main_window.broadcast_transaction(self.tx, payment_identifier=self.payment_identifier)
         finally:
             self.main_window.pop_top_level_window(self)
         self.saved = True

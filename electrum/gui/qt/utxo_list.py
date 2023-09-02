@@ -34,7 +34,7 @@ from PyQt5.QtWidgets import QAbstractItemView, QMenu, QLabel, QHBoxLayout
 from electrum.i18n import _
 from electrum.bitcoin import is_address
 from electrum.transaction import PartialTxInput, PartialTxOutput
-from electrum.lnutil import LN_MAX_FUNDING_SAT, MIN_FUNDING_SAT
+from electrum.lnutil import MIN_FUNDING_SAT
 from electrum.util import profiler
 
 from .util import ColorScheme, MONOSPACE_FONT, EnterButton
@@ -102,13 +102,18 @@ class UTXOList(MyTreeView):
             name = utxo.prevout.to_str()
             self._utxo_dict[name] = utxo
             labels = [""] * len(self.Columns)
+            amount_str = self.main_window.format_amount(
+                utxo.value_sats(asset_aware=True), whitespaces=True)
+            amount_str_nots = self.main_window.format_amount(
+                utxo.value_sats(asset_aware=True), whitespaces=False, add_thousands_sep=False)
             labels[self.Columns.OUTPOINT] = str(utxo.short_id)
             labels[self.Columns.ADDRESS] = utxo.address
-            labels[self.Columns.AMOUNT] = self.main_window.format_amount(utxo.value_sats(asset_aware=True), whitespaces=True)
+            labels[self.Columns.AMOUNT] = amount_str
             labels[self.Columns.ASSET] = utxo.asset
             utxo_item = [QStandardItem(x) for x in labels]
             self.set_editability(utxo_item)
             utxo_item[self.Columns.OUTPOINT].setData(name, self.ROLE_PREVOUT_STR)
+            utxo_item[self.Columns.AMOUNT].setData(amount_str_nots, self.ROLE_CLIPBOARD_DATA)
             utxo_item[self.Columns.ADDRESS].setFont(QFont(MONOSPACE_FONT))
             utxo_item[self.Columns.AMOUNT].setFont(QFont(MONOSPACE_FONT))
             utxo_item[self.Columns.PARENTS].setFont(QFont(MONOSPACE_FONT))
@@ -243,7 +248,7 @@ class UTXOList(MyTreeView):
         if self.wallet.lnworker is None:
             return False
         value = sum(x.value_sats() for x in coins)
-        return value >= MIN_FUNDING_SAT and value <= LN_MAX_FUNDING_SAT
+        return value >= MIN_FUNDING_SAT and value <= self.config.LIGHTNING_MAX_FUNDING_SAT
 
     def open_channel_with_coins(self, coins):
         # todo : use a single dialog in new flow

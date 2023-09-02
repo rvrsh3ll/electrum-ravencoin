@@ -61,7 +61,6 @@ from .interface import (Interface, PREFERRED_NETWORK_PROTOCOL,
                         RequestTimedOut, NetworkTimeout, BUCKET_NAME_OF_ONION_SERVERS,
                         NetworkException, RequestCorrupted, ServerAddr)
 from .version import PROTOCOL_VERSION
-from .simple_config import SimpleConfig
 from .i18n import _
 from .logging import get_logger, Logger
 
@@ -73,6 +72,7 @@ if TYPE_CHECKING:
     from .lnworker import LNGossip
     from .lnwatcher import WatchTower
     from .daemon import Daemon
+    from .simple_config import SimpleConfig
 
 
 _logger = get_logger(__name__)
@@ -272,7 +272,7 @@ class Network(Logger, NetworkRetryManager[ServerAddr]):
     local_watchtower: Optional['WatchTower'] = None
     path_finder: Optional['LNPathFinder'] = None
 
-    def __init__(self, config: SimpleConfig, *, daemon: 'Daemon' = None):
+    def __init__(self, config: 'SimpleConfig', *, daemon: 'Daemon' = None):
         global _INSTANCE
         assert _INSTANCE is None, "Network is a singleton!"
         _INSTANCE = self
@@ -289,9 +289,7 @@ class Network(Logger, NetworkRetryManager[ServerAddr]):
         self.asyncio_loop = util.get_asyncio_loop()
         assert self.asyncio_loop.is_running(), "event loop not running"
 
-        assert isinstance(config, SimpleConfig), f"config should be a SimpleConfig instead of {type(config)}"
         self.config = config
-
         self.daemon = daemon
 
         blockchain.read_blockchains(self.config)
@@ -481,7 +479,7 @@ class Network(Logger, NetworkRetryManager[ServerAddr]):
         self.config.requested_fee_estimates()
         histogram = await interface.get_fee_histogram()
         self.config.mempool_fees = histogram
-        self.logger.info(f'fee_histogram {histogram}')
+        self.logger.info(f'fee_histogram {len(histogram)}')
         util.trigger_callback('fee_histogram', self.config.mempool_fees)
 
     def get_parameters(self) -> NetworkParameters:
@@ -815,7 +813,7 @@ class Network(Logger, NetworkRetryManager[ServerAddr]):
         # note: using longer timeouts here as DNS can sometimes be slow!
         timeout = self.get_network_timeout_seconds(NetworkTimeout.Generic)
         try:
-            await asyncio.wait_for(interface.ready, timeout)
+            await util.wait_for2(interface.ready, timeout)
         except BaseException as e:
             self.logger.info(f"couldn't launch iface {server} -- {repr(e)}")
             await interface.close()
@@ -1439,7 +1437,7 @@ class Network(Logger, NetworkRetryManager[ServerAddr]):
         async def get_response(server: ServerAddr):
             interface = Interface(network=self, server=server, proxy=self.proxy)
             try:
-                await asyncio.wait_for(interface.ready, timeout)
+                await util.wait_for2(interface.ready, timeout)
             except BaseException as e:
                 await interface.close()
                 return

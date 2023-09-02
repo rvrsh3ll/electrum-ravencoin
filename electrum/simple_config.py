@@ -3,14 +3,12 @@ import threading
 import time
 import os
 import stat
-import ssl
 from decimal import Decimal
 from typing import Union, Optional, Dict, Sequence, Tuple, Any, Set
 from numbers import Real
 from functools import cached_property
 
 from copy import deepcopy
-from aiorpcx import NetAddress
 
 from . import util
 from . import constants
@@ -18,6 +16,7 @@ from . import invoices
 from .util import base_units, base_unit_name_to_decimal_point, decimal_point_to_base_unit_name, UnknownBaseUnit, DECIMAL_POINT_DEFAULT
 from .util import format_satoshis, format_fee_satoshis, os_chmod
 from .util import user_dir, make_dir, NoDynamicFeeEstimates, quantize_feerate
+from .lnutil import LN_MAX_FUNDING_SAT_LEGACY
 from .i18n import _
 from .logging import get_logger, Logger
 
@@ -44,6 +43,7 @@ FEERATE_REGTEST_HARDCODED = 180000  # for eclair compat
 FEERATE_PER_KW_MIN_RELAY_LIGHTNING = 253
 
 FEE_RATIO_HIGH_WARNING = 0.05  # warn user if fee/amount for on-chain tx is higher than this
+
 
 
 _logger = get_logger(__name__)
@@ -88,6 +88,10 @@ class ConfigVar(property):
 
     def __repr__(self):
         return f"<ConfigVar key={self._key!r}>"
+
+    def __deepcopy__(self, memo):
+        cv = ConfigVar(self._key, default=self._default, type_=self._type)
+        return cv
 
 
 class ConfigVarWithConfig:
@@ -761,33 +765,6 @@ class SimpleConfig(Logger):
             device = ''
         return device
 
-    def get_ssl_context(self):
-        ssl_keyfile = self.SSL_KEYFILE_PATH
-        ssl_certfile = self.SSL_CERTFILE_PATH
-        if ssl_keyfile and ssl_certfile:
-            ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-            ssl_context.load_cert_chain(ssl_certfile, ssl_keyfile)
-            return ssl_context
-
-    def get_ssl_domain(self):
-        from .paymentrequest import check_ssl_config
-        if self.SSL_KEYFILE_PATH and self.SSL_CERTFILE_PATH:
-            SSL_identity = check_ssl_config(self)
-        else:
-            SSL_identity = None
-        return SSL_identity
-
-    def get_netaddress(self, key: Union[str, ConfigVar, ConfigVarWithConfig]) -> Optional[NetAddress]:
-        if isinstance(key, (ConfigVar, ConfigVarWithConfig)):
-            key = key.key()
-        assert isinstance(key, str), key
-        text = self.get(key)
-        if text:
-            try:
-                return NetAddress.from_string(text)
-            except Exception:
-                pass
-
     def format_amount(
         self,
         amount_sat,
@@ -795,9 +772,12 @@ class SimpleConfig(Logger):
         is_diff=False,
         whitespaces=False,
         precision=None,
+        add_thousands_sep: bool = None,
     ) -> str:
         if precision is None:
             precision = self.amt_precision_post_satoshi
+        if add_thousands_sep is None:
+            add_thousands_sep = self.amt_add_thousands_sep
         return format_satoshis(
             amount_sat,
             num_zeros=self.num_zeros,
@@ -805,7 +785,7 @@ class SimpleConfig(Logger):
             is_diff=is_diff,
             whitespaces=whitespaces,
             precision=precision,
-            add_thousands_sep=self.amt_add_thousands_sep,
+            add_thousands_sep=add_thousands_sep,
         )
 
     def format_amount_and_units(self, *args, **kwargs) -> str:
@@ -847,8 +827,16 @@ class SimpleConfig(Logger):
                     f"Either use config.cv.{name}.set() or assign to config.{name} instead.")
         return CVLookupHelper()
 
-    # config variables ----->
+    def get_swapserver_url(self):
+        if constants.net == constants.BitcoinMainnet:
+            default = 'https://swaps.electrum.org/api'
+        elif constants.net == constants.BitcoinTestnet:
+            default = 'https://swaps.electrum.org/testnet'
+        else:
+            default = 'http://localhost:5455'
+        return self.SWAPSERVER_URL or default
 
+    # config variables ----->
     NETWORK_AUTO_CONNECT = ConfigVar('auto_connect', default=True, type_=bool)
     NETWORK_ONESERVER = ConfigVar('oneserver', default=False, type_=bool)
     NETWORK_PROXY = ConfigVar('proxy', default=None)
@@ -884,11 +872,15 @@ class SimpleConfig(Logger):
     LIGHTNING_USE_RECOVERABLE_CHANNELS = ConfigVar('use_recoverable_channels', default=True, type_=bool)
     LIGHTNING_ALLOW_INSTANT_SWAPS = ConfigVar('allow_instant_swaps', default=False, type_=bool)
     LIGHTNING_TO_SELF_DELAY_CSV = ConfigVar('lightning_to_self_delay', default=7 * 144, type_=int)
+    LIGHTNING_MAX_FUNDING_SAT = ConfigVar('lightning_max_funding_sat', default=LN_MAX_FUNDING_SAT_LEGACY, type_=int)
+    LIGHTNING_LEGACY_ADD_TRAMPOLINE = ConfigVar('lightning_legacy_add_trampoline', default=False, type_=bool)
 
     EXPERIMENTAL_LN_FORWARD_PAYMENTS = ConfigVar('lightning_forward_payments', default=False, type_=bool)
     EXPERIMENTAL_LN_FORWARD_TRAMPOLINE_PAYMENTS = ConfigVar('lightning_forward_trampoline_payments', default=False, type_=bool)
     TEST_FAIL_HTLCS_WITH_TEMP_NODE_FAILURE = ConfigVar('test_fail_htlcs_with_temp_node_failure', default=False, type_=bool)
     TEST_FAIL_HTLCS_AS_MALFORMED = ConfigVar('test_fail_malformed_htlc', default=False, type_=bool)
+    TEST_FORCE_MPP = ConfigVar('test_force_mpp', default=False, type_=bool)
+    TEST_FORCE_DISABLE_MPP = ConfigVar('test_force_disable_mpp', default=False, type_=bool)
     TEST_SHUTDOWN_FEE = ConfigVar('test_shutdown_fee', default=None, type_=int)
     TEST_SHUTDOWN_FEE_RANGE = ConfigVar('test_shutdown_fee_range', default=None)
     TEST_SHUTDOWN_LEGACY = ConfigVar('test_shutdown_legacy', default=False, type_=bool)
@@ -962,8 +954,10 @@ class SimpleConfig(Logger):
     WIZARD_DONT_CREATE_SEGWIT = ConfigVar('nosegwit', default=True, type_=bool) # no segwit for RVN
     CONFIG_FORGET_CHANGES = ConfigVar('forget_config', default=False, type_=bool)
 
-    SSL_CERTFILE_PATH = ConfigVar('ssl_certfile', default='', type_=str)
-    SSL_KEYFILE_PATH = ConfigVar('ssl_keyfile', default='', type_=str)
+    # submarine swap server
+    SWAPSERVER_URL = ConfigVar('swapserver_url', default='', type_=str)
+    SWAPSERVER_PORT = ConfigVar('swapserver_port', default=5455, type_=int)
+    TEST_SWAPSERVER_REFUND = ConfigVar('test_swapserver_refund', default=False, type_=bool)
 
     # connect to remote WT
     WATCHTOWER_CLIENT_ENABLED = ConfigVar('use_watchtower', default=False, type_=bool)
@@ -971,11 +965,11 @@ class SimpleConfig(Logger):
 
     # run WT locally
     WATCHTOWER_SERVER_ENABLED = ConfigVar('run_watchtower', default=False, type_=bool)
-    WATCHTOWER_SERVER_ADDRESS = ConfigVar('watchtower_address', default=None, type_=str)
+    WATCHTOWER_SERVER_PORT = ConfigVar('watchtower_port', default=None, type_=int)
     WATCHTOWER_SERVER_USER = ConfigVar('watchtower_user', default=None, type_=str)
     WATCHTOWER_SERVER_PASSWORD = ConfigVar('watchtower_password', default=None, type_=str)
 
-    PAYSERVER_ADDRESS = ConfigVar('payserver_address', default='localhost:8080', type_=str)
+    PAYSERVER_PORT = ConfigVar('payserver_port', default=8080, type_=int)
     PAYSERVER_ROOT = ConfigVar('payserver_root', default='/r', type_=str)
     PAYSERVER_ALLOW_CREATE_INVOICE = ConfigVar('payserver_allow_create_invoice', default=False, type_=bool)
 

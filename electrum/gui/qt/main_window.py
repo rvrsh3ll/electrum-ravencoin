@@ -26,7 +26,6 @@ import sys
 import time
 import threading
 import os
-import traceback
 import json
 import weakref
 import csv
@@ -58,12 +57,11 @@ from electrum.asset import get_error_for_asset_typed, AssetType, parse_verifier_
 from electrum.bitcoin import COIN, is_address, is_b58_address, b58_address_to_hash160
 from electrum.plugin import run_hook, BasePlugin
 from electrum.i18n import _
-from electrum.util import (format_time, get_asyncio_loop, NotEnoughFunds, NoQualifiedAddress,
-                           UserCancelled, profiler,
-                           bfh, InvalidPassword,
-                           UserFacingException, FailedToParsePaymentIdentifier,
-                           get_new_wallet_name, send_exception_to_crash_reporter,
-                           AddTransactionException, BITCOIN_BIP21_URI_SCHEME, os_chmod)
+from electrum.util import (format_time, UserCancelled, profiler, bfh, InvalidPassword, NotEnoughFunds, NoQualifiedAddress,
+                           UserFacingException, get_new_wallet_name, send_exception_to_crash_reporter,
+                           AddTransactionException, os_chmod)
+from electrum.bip21 import BITCOIN_BIP21_URI_SCHEME
+from electrum.payment_identifier import PaymentIdentifier
 from electrum.invoices import PR_PAID, Invoice
 from electrum.transaction import (Transaction, PartialTxInput,
                                   PartialTransaction, PartialTxOutput)
@@ -887,14 +885,26 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
             self.update_status()
         # resolve aliases
         # FIXME this might do blocking network calls that has a timeout of several seconds
-        self.send_tab.payto_e.on_timer_check_text()
+        # self.send_tab.payto_e.on_timer_check_text()
         self.notify_transactions()
 
-    def format_amount(self, amount_sat, is_diff=False, whitespaces=False) -> str:
+    def format_amount(
+        self,
+        amount_sat,
+        is_diff=False,
+        whitespaces=False,
+        *,
+        add_thousands_sep: bool = None,
+    ) -> str:
         """Formats amount as string, converting to desired unit.
         E.g. 500_000 -> '0.005'
         """
-        return self.config.format_amount(amount_sat, is_diff=is_diff, whitespaces=whitespaces)
+        return self.config.format_amount(
+            amount_sat,
+            is_diff=is_diff,
+            whitespaces=whitespaces,
+            add_thousands_sep=add_thousands_sep,
+        )
 
     def format_amount_and_units(self, amount_sat, *, timestamp: int = None) -> str:
         """Returns string with both bitcoin and fiat amounts, in desired units.
@@ -1093,8 +1103,14 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         from .channel_details import ChannelDetailsDialog
         ChannelDetailsDialog(self, chan).show()
 
-    def show_transaction(self, tx: Transaction, *, external_keypairs=None):
-        show_transaction(tx, parent=self, external_keypairs=external_keypairs)
+    def show_transaction(
+        self,
+        tx: Transaction,
+        *,
+        external_keypairs=None,
+        payment_identifier: PaymentIdentifier = None,
+    ):
+        show_transaction(tx, parent=self, external_keypairs=external_keypairs, payment_identifier=payment_identifier)
 
     def show_lightning_transaction(self, tx_item):
         from .lightning_tx_dialog import LightningTxDialog
@@ -1244,10 +1260,11 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
             return
         invoice = self.wallet.get_invoice(key)
         if invoice and invoice.is_lightning() and invoice.get_address():
+            # fixme: we should display this popup only if the user initiated the payment
             if self.question(_('Payment failed') + '\n\n' + reason + '\n\n'+ 'Fallback to onchain payment?'):
                 self.send_tab.pay_onchain_dialog(invoice.get_outputs())
         else:
-            self.show_error(_('Payment failed') + '\n\n' + reason)
+            self.notify(_('Payment failed') + '\n\n' + reason)
 
     def get_coins(self, **kwargs) -> Sequence[PartialTxInput]:
         coins = self.get_manually_selected_coins()
@@ -1273,23 +1290,25 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         return text
 
     def get_frozen_balance_str(self) -> Optional[str]:
-        frozen_bal = sum(self.wallet.get_frozen_balance())
-        if not frozen_bal:
+        frozen_mapping = self.wallet.get_asset_aware_frozen_balance()
+        frozen_bal = sum(frozen_mapping.get(None, [0]))
+        asset_count = sum(1 for asset, values in frozen_mapping.items() if asset is not None and sum(values) > 0)
+        if not frozen_bal and asset_count == 0:
             return None
-        return self.format_amount_and_units(frozen_bal)
+        return _('{}, {} asset(s)').format(self.format_amount_and_units(frozen_bal), asset_count)
 
-    def broadcast_or_show(self, tx: Transaction):
+    def broadcast_or_show(self, tx: Transaction, *, payment_identifier: PaymentIdentifier = None):
         if not tx.is_complete():
-            self.show_transaction(tx)
+            self.show_transaction(tx, payment_identifier=payment_identifier)
             return
         if not self.network:
             self.show_error(_("You can't broadcast a transaction without a live network connection."))
-            self.show_transaction(tx)
+            self.show_transaction(tx, payment_identifier=payment_identifier)
             return
-        self.broadcast_transaction(tx)
+        self.broadcast_transaction(tx, payment_identifier=payment_identifier)
 
-    def broadcast_transaction(self, tx: Transaction):
-        self.send_tab.broadcast_transaction(tx)
+    def broadcast_transaction(self, tx: Transaction, *, payment_identifier: PaymentIdentifier = None):
+        self.send_tab.broadcast_transaction(tx, payment_identifier=payment_identifier)
 
     @protected
     def sign_tx(self, tx, *, callback, external_keypairs, password, locking_script_overrides=None):
@@ -1396,11 +1415,13 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
             return None
         return clayout.selected_index()
 
-    def handle_payment_identifier(self, *args, **kwargs):
-        try:
-            self.send_tab.handle_payment_identifier(*args, **kwargs)
-        except FailedToParsePaymentIdentifier as e:
-            self.show_error(str(e))
+    def handle_payment_identifier(self, text: str):
+        pi = PaymentIdentifier(self.wallet, text)
+        if pi.is_valid():
+            self.send_tab.set_payment_identifier(text)
+        else:
+            if pi.error:
+                self.show_error(str(pi.error))
 
     def set_frozen_state_of_addresses(self, addrs, freeze: bool):
         self.wallet.set_frozen_state_of_addresses(addrs, freeze)
@@ -1506,7 +1527,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
             grid.addWidget(QLabel(format_time(invoice.exp + invoice.time)), 4, 1)
         if invoice.bip70:
             pr = paymentrequest.PaymentRequest(bytes.fromhex(invoice.bip70))
-            pr.verify(self.contacts)
+            pr.verify()
             grid.addWidget(QLabel(_("Requestor") + ':'), 5, 0)
             grid.addWidget(QLabel(pr.get_requestor()), 5, 1)
             grid.addWidget(QLabel(_("Signature") + ':'), 6, 0)
@@ -1535,6 +1556,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         d.exec_()
 
     def show_lightning_invoice(self, invoice: Invoice):
+        from electrum.util import format_short_id
         lnaddr = lndecode(invoice.lightning_invoice)
         d = WindowModalDialog(self, _("Lightning Invoice"))
         vbox = QVBoxLayout(d)
@@ -1569,6 +1591,11 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         invoice_e.setText(invoice.lightning_invoice)
         grid.addWidget(QLabel(_('Text') + ':'), 8, 0)
         grid.addWidget(invoice_e, 8, 1)
+        r_tags = lnaddr.get_routing_info('r')
+        r_tags = '\n'.join(repr([(x[0].hex(), format_short_id(x[1]), x[2], x[3]) for x in r]) for r in r_tags)
+        routing_e = QTextEdit(str(r_tags))
+        grid.addWidget(QLabel(_("Routing Hints") + ':'), 9, 0)
+        grid.addWidget(routing_e, 9, 1)
         vbox.addLayout(grid)
         vbox.addLayout(Buttons(CloseButton(d),))
         d.exec_()
@@ -1595,6 +1622,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
             'util': util,
             'bitcoin': bitcoin,
             'lnutil': lnutil,
+            'channels': list(self.wallet.lnworker.channels.values()) if self.wallet.lnworker else []
         })
 
         c = commands.Commands(

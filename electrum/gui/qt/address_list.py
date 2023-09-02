@@ -252,19 +252,25 @@ class AddressList(MyTreeView):
         balance_mapping = self.wallet.get_addr_balance(address, asset_aware=True)
         base_coin_balance = sum(balance_mapping.get(None, [0]))
         balance_text = self.main_window.format_amount(base_coin_balance, whitespaces=True)
+        balance_text_nots = self.main_window.format_amount(base_coin_balance, whitespaces=False, add_thousands_sep=False)
         # create item
         fx = self.main_window.fx
         if self.should_show_fiat():
             rate = fx.exchange_rate()
-            fiat_balance_str = fx.value_str(base_coin_balance, rate)
+            fiat_balance_str = fx.value_str(base_coin_balance, rate, add_thousands_sep=True)
+            fiat_balance_str_nots = fx.value_str(base_coin_balance, rate, add_thousands_sep=False)
         else:
             fiat_balance_str = ''
+            fiat_balance_str_nots = ''
         address_item = [self.std_model.item(row, col) for col in self.Columns]
         address_item[self.Columns.LABEL].setText(label)
         address_item[self.Columns.COIN_BALANCE].setText(balance_text)
         address_item[self.Columns.COIN_BALANCE].setData(base_coin_balance, self.ROLE_SORT_ORDER)
+        address_item[self.Columns.COIN_BALANCE].setData(balance_text_nots, self.ROLE_CLIPBOARD_DATA)
         address_item[self.Columns.ASSET_COUNT].setText(str(len([key for key, value in balance_mapping.items() if key and sum(value) > 0])))
         address_item[self.Columns.FIAT_BALANCE].setText(fiat_balance_str)
+        address_item[self.Columns.FIAT_BALANCE].setData(base_coin_balance, self.ROLE_SORT_ORDER)
+        address_item[self.Columns.FIAT_BALANCE].setData(fiat_balance_str_nots, self.ROLE_CLIPBOARD_DATA)
         address_item[self.Columns.NUM_TXS].setText("%d"%num)
         c = ColorScheme.BLUE.as_color(True) if self.wallet.is_frozen_address(address) else self._default_bg_brush
         address_item[self.Columns.ADDRESS].setBackground(c)

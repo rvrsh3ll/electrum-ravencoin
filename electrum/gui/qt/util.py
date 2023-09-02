@@ -16,7 +16,8 @@ from typing import (NamedTuple, Callable, Optional, TYPE_CHECKING, Union, List, 
 
 from PyQt5 import QtWidgets, QtCore
 from PyQt5.QtGui import (QFont, QColor, QCursor, QPixmap, QStandardItem, QImage, QMovie,
-                         QPalette, QIcon, QFontMetrics, QShowEvent, QPainter, QHelpEvent, QMouseEvent)
+                         QPalette, QIcon, QFontMetrics, QShowEvent, QPainter, QHelpEvent, QMouseEvent,
+                         QContextMenuEvent)
 from PyQt5.QtCore import (Qt, QPersistentModelIndex, QModelIndex, pyqtSignal,
                           QCoreApplication, QItemSelectionModel, QThread,
                           QSortFilterProxyModel, QSize, QLocale, QAbstractItemModel,
@@ -43,6 +44,8 @@ from electrum.boolean_ast_tree import AbstractBooleanASTNode
 if TYPE_CHECKING:
     from .main_window import ElectrumWindow
     from .installwizard import InstallWizard
+    from .paytoedit import PayToEdit
+
     from electrum.simple_config import SimpleConfig
 
 if platform.system() == 'Windows':
@@ -544,7 +547,7 @@ def get_iconname_camera() -> str:
     return "camera_white.png" if ColorScheme.dark_scheme else "camera_dark.png"
 
 
-def editor_contextMenuEvent(self, p, e):
+def editor_contextMenuEvent(self, p: 'PayToEdit', e: 'QContextMenuEvent') -> None:
     m = self.createStandardContextMenu()
     m.addSeparator()
     m.addAction(read_QIcon(get_iconname_camera()),    _("Read QR code with camera"), p.on_qr_from_camera_input_btn)
@@ -577,7 +580,10 @@ class GenericInputHandler:
                 new_text = self.text() + data + '\n'
             else:
                 new_text = data
-            setText(new_text)
+                try:
+                    setText(new_text)
+                except Exception as e:
+                    show_error(_('Invalid payment identifier in QR') + ':\n' + repr(e))
 
         from .qrreader import scan_qrcode
         if parent is None:
@@ -594,10 +600,15 @@ class GenericInputHandler:
         if setText is None:
             setText = self.setText
         from .qrreader import scan_qr_from_image
+        screenshots = [screen.grabWindow(0).toImage()
+                       for screen in QApplication.instance().screens()]
+        if all(screen.allGray() for screen in screenshots):
+            show_error(_("Failed to take screenshot."))
+            return
         scanned_qr = None
-        for screen in QApplication.instance().screens():
+        for screenshot in screenshots:
             try:
-                scan_result = scan_qr_from_image(screen.grabWindow(0).toImage())
+                scan_result = scan_qr_from_image(screenshot)
             except MissingQrDetectionLib as e:
                 show_error(_("Unable to scan image.") + "\n" + repr(e))
                 return
@@ -614,7 +625,10 @@ class GenericInputHandler:
             new_text = self.text() + data + '\n'
         else:
             new_text = data
-        setText(new_text)
+            try:
+                setText(new_text)
+            except Exception as e:
+                show_error(_('Invalid payment identifier in QR') + ':\n' + repr(e))
 
     def input_file(
             self,
@@ -643,7 +657,10 @@ class GenericInputHandler:
         except BaseException as e:
             show_error(_('Error opening file') + ':\n' + repr(e))
         else:
-            setText(data)
+            try:
+                setText(data)
+            except Exception as e:
+                show_error(_('Invalid payment identifier in file') + ':\n' + repr(e))
 
     def input_paste_from_clipboard(
             self,
@@ -1029,6 +1046,7 @@ class ColorScheme:
     YELLOW = ColorSchemeItem("#897b2a", "#ffff00")
     RED = ColorSchemeItem("#7c1111", "#f18c8c")
     BLUE = ColorSchemeItem("#123b7c", "#8cb3f2")
+    LIGHTBLUE = ColorSchemeItem("black", "#d0f0ff")
     DEFAULT = ColorSchemeItem("black", "white")
     GRAY = ColorSchemeItem("gray", "gray")
     LIGHT_GRAY = ColorSchemeItem("#303044", "#f0f0f0")

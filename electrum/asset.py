@@ -12,7 +12,7 @@ from .boolean_ast_tree import parse_boolean_equation, AbstractBooleanASTNode
 from .i18n import _
 
 from .transaction import PartialTxOutput, MalformedBitcoinScript, script_GetOp
-from .json_db import StoredObject
+from .json_db import StoredObject, stored_as
 
 from .util import ByteReader
 

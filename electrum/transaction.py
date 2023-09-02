@@ -53,6 +53,7 @@ from .crypto import sha256d
 from .logging import get_logger
 from .util import ShortID, OldTaskGroup, convert_bytes_to_utf8_safe
 from .descriptor import Descriptor, MissingSolutionPiece, create_dummy_descriptor_from_address
+from .json_db import stored_in
 
 if TYPE_CHECKING:
     from .wallet import Abstract_Wallet
@@ -2283,7 +2284,7 @@ class PartialTransaction(Transaction):
         raw_bytes = self.serialize_as_bytes()
         return base64.b64encode(raw_bytes).decode('ascii')
 
-    def update_signatures(self, signatures: Sequence[str], wallet: 'Abstract_Wallet'):
+    def update_signatures(self, signatures: Sequence[Union[str, None]], wallet: 'Abstract_Wallet'):
         """Add new signatures to a transaction
 
         `signatures` is expected to be a list of sigs with signatures[i]
@@ -2297,6 +2298,8 @@ class PartialTransaction(Transaction):
         for i, txin in enumerate(self.inputs()):
             pubkeys = [pk.hex() for pk in txin.pubkeys]
             sig = signatures[i]
+            if sig is None:
+                continue
             if bfh(sig) in list(txin.part_sigs.values()):
                 continue
             pre_hash = sha256d(bfh(self.serialize_preimage(i, wallet)))

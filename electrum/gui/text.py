@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Optional
 
 import electrum
 from electrum.gui import BaseElectrumGui
-from electrum import util
+from electrum.bip21 import parse_bip21_URI
 from electrum.util import format_satoshis, format_time
 from electrum.util import EventListener, event_listener
 from electrum.bitcoin import is_address, address_to_script, COIN
@@ -32,11 +32,13 @@ if TYPE_CHECKING:
 
 _ = lambda x:x  # i18n
 
+
 def parse_bip21(text):
     try:
-        return util.parse_URI(text)
+        return parse_bip21_URI(text)
     except Exception:
         return
+
 
 def parse_bolt11(text):
     from electrum.lnaddr import lndecode
@@ -44,7 +46,6 @@ def parse_bolt11(text):
         return lndecode(text)
     except Exception:
         return
-
 
 
 class ElectrumGui(BaseElectrumGui, EventListener):
@@ -59,8 +60,8 @@ class ElectrumGui(BaseElectrumGui, EventListener):
         if storage.is_encrypted():
             password = getpass.getpass('Password:', stream=None)
             storage.decrypt(password)
-        db = WalletDB(storage.read(), manual_upgrades=False)
-        self.wallet = Wallet(db, storage, config=config)  # type: Optional[Abstract_Wallet]
+        db = WalletDB(storage.read(), storage=storage, manual_upgrades=False)
+        self.wallet = Wallet(db, config=config)  # type: Optional[Abstract_Wallet]
         self.wallet.start_network(self.network)
         self.contacts = self.wallet.contacts
 
@@ -608,7 +609,7 @@ class ElectrumGui(BaseElectrumGui, EventListener):
             if invoice.amount_msat is None:
                 amount_sat = self.parse_amount(self.str_amount)
                 if amount_sat:
-                    invoice.amount_msat = int(amount_sat * 1000)
+                    invoice.set_amount_msat(int(amount_sat * 1000))
                 else:
                     self.show_error(_('No amount'))
                     return

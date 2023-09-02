@@ -4,9 +4,10 @@ from decimal import Decimal
 
 import attr
 
-from .json_db import StoredObject
+from .json_db import StoredObject, stored_in
 from .i18n import _
 from .util import age, InvoiceError, format_satoshis
+from .bip21 import create_bip21_uri
 from .lnutil import hex_to_bytes
 from .lnaddr import lndecode, LnAddr
 from . import constants
@@ -93,14 +94,19 @@ class BaseInvoice(StoredObject):
     """
     Base class for Invoice and Request
     In the code, we use 'invoice' for outgoing payments, and 'request' for incoming payments.
+
+    TODO this class is getting too complicated for "attrs"... maybe we should rewrite it without.
     """
 
     # mandatory fields
     asset = attr.ib(type=Optional[str], kw_only=True)
-    amount_msat = attr.ib(kw_only=True)  # type: Optional[Union[int, str]]  # can be '!' or None
+    amount_msat = attr.ib(  # can be '!' or None
+        kw_only=True, on_setattr=attr.setters.validate)  # type: Optional[Union[int, str]]
     message = attr.ib(type=str, kw_only=True)
-    time = attr.ib(type=int, kw_only=True, validator=attr.validators.instance_of(int))  # timestamp of the invoice
-    exp = attr.ib(type=int, kw_only=True, validator=attr.validators.instance_of(int))   # expiration delay (relative). 0 means never
+    time = attr.ib(  # timestamp of the invoice
+        type=int, kw_only=True, validator=attr.validators.instance_of(int), on_setattr=attr.setters.validate)
+    exp = attr.ib(  # expiration delay (relative). 0 means never
+        type=int, kw_only=True, validator=attr.validators.instance_of(int), on_setattr=attr.setters.validate)
 
     # optional fields.
     # an request (incoming) can be satisfied onchain, using lightning or using a swap
@@ -108,7 +114,8 @@ class BaseInvoice(StoredObject):
 
     # onchain only
     outputs = attr.ib(kw_only=True, converter=_decode_outputs)  # type: Optional[List[PartialTxOutput]]
-    height = attr.ib(type=int, kw_only=True, validator=attr.validators.instance_of(int)) # only for receiving
+    height = attr.ib(  # only for receiving
+        type=int, kw_only=True, validator=attr.validators.instance_of(int), on_setattr=attr.setters.validate)
     bip70 = attr.ib(type=str, kw_only=True)  # type: Optional[str]
     #bip70_requestor = attr.ib(type=str, kw_only=True)  # type: Optional[str]
 
@@ -174,6 +181,19 @@ class BaseInvoice(StoredObject):
 
     def get_asset(self):
         return self.asset
+
+    def set_amount_msat(self, amount_msat: Union[int, str]) -> None:
+        """The GUI uses this to fill the amount for a zero-amount invoice."""
+        if amount_msat == "!":
+            amount_sat = amount_msat
+        else:
+            assert isinstance(amount_msat, int), f"{amount_msat=!r}"
+            assert amount_msat >= 0, amount_msat
+            amount_sat = (amount_msat // 1000) + int(amount_msat % 1000 > 0)  # round up
+        if outputs := self.outputs:
+            assert len(self.outputs) == 1, len(self.outputs)
+            self.outputs = [PartialTxOutput(scriptpubkey=outputs[0].scriptpubkey, value=amount_sat)]
+        self.amount_msat = amount_msat
 
     @amount_msat.validator
     def _validate_amount(self, attribute, value):
@@ -250,6 +270,7 @@ class BaseInvoice(StoredObject):
         return d
 
 
+@stored_in('invoices')
 @attr.s
 class Invoice(BaseInvoice):
     lightning_invoice = attr.ib(type=str, kw_only=True)  # type: Optional[str]
@@ -295,20 +316,11 @@ class Invoice(BaseInvoice):
 
     def to_debug_json(self) -> Dict[str, Any]:
         d = self.to_json()
-        d.update({
-            'pubkey': self._lnaddr.pubkey.serialize().hex(),
-            'amount_BTC': str(self._lnaddr.amount),
-            'rhash': self._lnaddr.paymenthash.hex(),
-            'description': self._lnaddr.get_description(),
-            'exp': self._lnaddr.get_expiry(),
-            'time': self._lnaddr.date,
-        })
-        if ln_routing_info := self._lnaddr.get_routing_info('r'):
-            # show the last hop of routing hints. (our invoices only have one hop)
-            d['r_tags'] = [str((a.hex(),b.hex(),c,d,e)) for a,b,c,d,e in ln_routing_info[-1]]
+        d["lnaddr"] = self._lnaddr.to_debug_json()
         return d
 
 
+@stored_in('payment_requests')
 @attr.s
 class Request(BaseInvoice):
     payment_hash = attr.ib(type=bytes, kw_only=True, converter=hex_to_bytes)  # type: Optional[bytes]
@@ -332,7 +344,6 @@ class Request(BaseInvoice):
         *,
         lightning_invoice: Optional[str] = None,
     ) -> Optional[str]:
-        from electrum.util import create_bip21_uri
         addr = self.get_address()
         amount = self.get_amount_sat()
         asset = self.get_asset()

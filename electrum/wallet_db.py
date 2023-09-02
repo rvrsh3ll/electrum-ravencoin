@@ -42,29 +42,28 @@ from .invoices import Invoice, Request
 from .keystore import bip44_derivation
 from .transaction import Transaction, TxOutpoint, tx_from_any, PartialTransaction, PartialTxOutput
 from .logging import Logger
-from .lnutil import LOCAL, REMOTE, FeeUpdate, UpdateAddHtlc, LocalConfig, RemoteConfig, ChannelType
-from .lnutil import ImportedChannelBackupStorage, OnchainChannelBackupStorage
-from .lnutil import ChannelConstraints, Outpoint, ShachainElement
-from .json_db import StoredDict, JsonDB, locked, modifier, StoredObject
+
+from .lnutil import LOCAL, REMOTE, HTLCOwner, ChannelType
+from . import json_db
+from .json_db import StoredDict, JsonDB, locked, modifier, StoredObject, stored_in, stored_as
 from .plugin import run_hook, plugin_loaders
-from .submarine_swaps import SwapData
 from .version import ELECTRUM_VERSION
 from .atomic_swap import AtomicSwap
 
-if TYPE_CHECKING:
-    from .storage import WalletStorage
 
 
 # seed_version is now used for the version of the wallet file
 
 FINAL_SEED_VERSION = 1
 
+@stored_in('tx_fees', tuple)
 class TxFeesValue(NamedTuple):
     fee: Optional[int] = None
     is_calculated_by_us: bool = False
     num_inputs: Optional[int] = None
 
 
+@stored_as('db_metadata')
 @attr.s
 class DBMetadata(StoredObject):
     creation_timestamp = attr.ib(default=None, type=int)
@@ -84,24 +83,51 @@ class DBMetadata(StoredObject):
 #       separate tracking issues
 class WalletFileExceptionVersion51(WalletFileException): pass
 
+# register dicts that require value conversions not handled by constructor
+json_db.register_dict('transactions', lambda x: tx_from_any(x, deserialize=False), None)
+json_db.register_dict('prevouts_by_scripthash', lambda x: set(tuple(k) for k in x), None)
+json_db.register_dict('data_loss_protect_remote_pcp', lambda x: bytes.fromhex(x), None)
+json_db.register_dict('verified_asset_metadata', lambda metadata, tup1, tup2, tup3: (
+                AssetMetadata(**metadata),
+                (TxOutpoint.from_json(tup1[0]), tup1[1]),
+                (TxOutpoint.from_json(tup2[0]), tup2[1]) if tup2 else None,
+                (TxOutpoint.from_json(tup3[0]), tup3[1]) if tup3 else None,
+            ), tuple)
+# register dicts that require key conversion
+for key in [
+        'adds', 'locked_in', 'settles', 'fails', 'fee_updates', 'buckets',
+        'unacked_updates', 'unfulfilled_htlcs', 'fail_htlc_reasons', 'onion_keys']:
+    json_db.register_dict_key(key, int)
+for key in ['log']:
+    json_db.register_dict_key(key, lambda x: HTLCOwner(int(x)))
+for key in ['locked_in', 'fails', 'settles']:
+    json_db.register_parent_key(key, lambda x: HTLCOwner(int(x)))
+for key in ('assets_to_watch', 'asset_blacklist', 'broadcasts_to_watch', 'non_deterministic_txo_scriptpubkey'):
+    json_db.register_name(key, set, None)
 
 class WalletDB(JsonDB):
 
-    def __init__(self, raw, *, manual_upgrades: bool):
-        JsonDB.__init__(self, {})
-        self._manual_upgrades = manual_upgrades
-        self._called_after_upgrade_tasks = False
-        if raw:  # loading existing db
-            self.load_data(raw)
-            self.load_plugins()
-        else:  # creating new db
+    def __init__(self, data, *, storage=None, manual_upgrades: bool):
+        JsonDB.__init__(self, data, storage)
+        if not data:
+            # create new DB
             self.put('seed_version', FINAL_SEED_VERSION)
             self._add_db_creation_metadata()
             self._after_upgrade_tasks()
+        self._manual_upgrades = manual_upgrades
+        self._called_after_upgrade_tasks = False
+        if not self._manual_upgrades and self.requires_split():
+            raise WalletFileException("This wallet has multiple accounts and must be split")
+        if not self.requires_upgrade():
+            self._after_upgrade_tasks()
+        elif not self._manual_upgrades:
+            self.upgrade()
+        # load plugins that are conditional on wallet type
+        self.load_plugins()
 
     def load_data(self, s):
         try:
-            self.data = json.loads(s)
+            JsonDB.load_data(self, s)
         except Exception:
             try:
                 d = ast.literal_eval(s)
@@ -119,14 +145,6 @@ class WalletDB(JsonDB):
                 self.data[key] = value
         if not isinstance(self.data, dict):
             raise WalletFileException("Malformed wallet file (not dict)")
-
-        if not self._manual_upgrades and self.requires_split():
-            raise WalletFileException("This wallet has multiple accounts and must be split")
-
-        if not self.requires_upgrade():
-            self._after_upgrade_tasks()
-        elif not self._manual_upgrades:
-            self.upgrade()
 
     def requires_split(self):
         d = self.get('accounts', {})
@@ -589,7 +607,7 @@ class WalletDB(JsonDB):
             for i, addr in enumerate(self.change_addresses):
                 self._addr_to_addr_index[addr] = (1, i)
 
-    def load_assets(self):
+    def _load_assets(self):
         """ called from Abstract_Wallet.__init__ """
         if 'assets_to_watch' not in self.data:
             self.data['assets_to_watch'] = set()
@@ -993,69 +1011,6 @@ class WalletDB(JsonDB):
         self.tx_fees.clear()
         self._prevouts_by_scripthash.clear()
 
-    def _convert_dict(self, path, key, v):
-        if key == 'transactions':
-            # note: for performance, "deserialize=False" so that we will deserialize these on-demand
-            v = dict((k, tx_from_any(x, deserialize=False)) for k, x in v.items())
-        if key == 'invoices':
-            v = dict((k, Invoice(**x)) for k, x in v.items())
-        if key == 'payment_requests':
-            v = dict((k, Request(**x)) for k, x in v.items())
-        elif key == 'adds':
-            v = dict((k, UpdateAddHtlc.from_tuple(*x)) for k, x in v.items())
-        elif key == 'fee_updates':
-            v = dict((k, FeeUpdate(**x)) for k, x in v.items())
-        elif key == 'submarine_swaps':
-            v = dict((k, SwapData(**x)) for k, x in v.items())
-        elif key == 'imported_channel_backups':
-            v = dict((k, ImportedChannelBackupStorage(**x)) for k, x in v.items())
-        elif key == 'onchain_channel_backups':
-            v = dict((k, OnchainChannelBackupStorage(**x)) for k, x in v.items())
-        elif key == 'tx_fees':
-            v = dict((k, TxFeesValue(*x)) for k, x in v.items())
-        elif key == 'prevouts_by_scripthash':
-            v = dict((k, {(prevout, value, asset) for (prevout, value, asset) in x}) for k, x in v.items())
-        elif key == 'buckets':
-            v = dict((k, ShachainElement(bfh(x[0]), int(x[1]))) for k, x in v.items())
-        elif key == 'data_loss_protect_remote_pcp':
-            v = dict((k, bfh(x)) for k, x in v.items())
-        elif key == 'verified_asset_metadata':
-            v = dict((k, (
-                AssetMetadata(**metadata),
-                (TxOutpoint.from_json(tup1[0]), tup1[1]),
-                (TxOutpoint.from_json(tup2[0]), tup2[1]) if tup2 else None,
-                (TxOutpoint.from_json(tup3[0]), tup3[1]) if tup3 else None,
-            )) for k, (metadata, tup1, tup2, tup3) in v.items())
-        elif key == 'atomic_swap':
-            v = dict((k, AtomicSwap(**swap)) for k, swap in v.items())
-        # convert htlc_id keys to int
-        if key in ['adds', 'locked_in', 'settles', 'fails', 'fee_updates', 'buckets',
-                   'unacked_updates', 'unfulfilled_htlcs', 'fail_htlc_reasons', 'onion_keys']:
-            v = dict((int(k), x) for k, x in v.items())
-        # convert keys to HTLCOwner
-        if key == 'log' or (path and path[-1] in ['locked_in', 'fails', 'settles']):
-            if "1" in v:
-                v[LOCAL] = v.pop("1")
-                v[REMOTE] = v.pop("-1")
-        return v
-
-    def _convert_value(self, path, key, v):
-        if key == 'local_config':
-            v = LocalConfig(**v)
-        elif key == 'remote_config':
-            v = RemoteConfig(**v)
-        elif key == 'constraints':
-            v = ChannelConstraints(**v)
-        elif key == 'funding_outpoint':
-            v = Outpoint(**v)
-        elif key == 'channel_type':
-            v = ChannelType(v)
-        elif key == 'db_metadata':
-            v = DBMetadata(**v)
-        elif key in ('assets_to_watch', 'asset_blacklist', 'broadcasts_to_watch', 'non_deterministic_txo_scriptpubkey'):
-            v = set(v)
-        return v
-
     def _should_convert_to_stored_dict(self, key) -> bool:
         if key == 'keystore':
             return False
@@ -1063,21 +1018,6 @@ class WalletDB(JsonDB):
         if key in multisig_keystore_names:
             return False
         return True
-
-    def write(self, storage: 'WalletStorage'):
-        with self.lock:
-            self._write(storage)
-
-    @profiler
-    def _write(self, storage: 'WalletStorage'):
-        if threading.current_thread().daemon:
-            self.logger.warning('daemon thread cannot write db')
-            return
-        if not self.modified():
-            return
-        json_str = self.dump(human_readable=not storage.is_encrypted())
-        storage.write(json_str)
-        self.set_modified(False)
 
     def is_ready_to_be_used_by_wallet(self):
         return not self.requires_upgrade() and self._called_after_upgrade_tasks
@@ -1089,10 +1029,10 @@ class WalletDB(JsonDB):
         for data in result:
             path = root_path + '.' + data['suffix']
             storage = WalletStorage(path)
-            db = WalletDB(json.dumps(data), manual_upgrades=False)
+            db = WalletDB(json.dumps(data), storage=storage, manual_upgrades=False)
             db._called_after_upgrade_tasks = False
             db.upgrade()
-            db.write(storage)
+            db.write()
             out.append(path)
         return out
 
