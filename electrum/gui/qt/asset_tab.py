@@ -76,41 +76,49 @@ class AssetTab(QWidget, MessageBoxMixin, Logger):
         menu.addConfig(_('Show Metadata Sources'), window.config.cv.SHOW_METADATA_SOURCE, callback=self.view_asset_tab.update)
         menu.addConfig(_('Lookup IPFS using all gateways'), window.config.cv.ROUND_ROBIN_ALL_KNOWN_IPFS_GATEWAYS)
 
+        is_hardware = self.wallet.keystore and self.wallet.keystore.get_type_text()[:2] == 'hw'
+
         toolbar_button = QToolButton()
         toolbar_button.setIcon(read_QIcon("preferences.png"))
         toolbar_button.setMenu(menu)
         toolbar_button.setPopupMode(QToolButton.InstantPopup)
         toolbar_button.setFocusPolicy(Qt.NoFocus)
         toolbar = QHBoxLayout()
-        toolbar.addWidget(QLabel(_('Select a tab below to view, create, and manage your assets')))
+        if not is_hardware:
+            toolbar.addWidget(QLabel(_('Select a tab below to view, create, and manage your assets')))
         toolbar.addStretch()
         toolbar.addWidget(toolbar_button)
 
-        self.tabs = tabs = QTabWidget(self)
-        tabs.addTab(self.view_asset_tab, read_QIcon("eye1.png"), _('View'))
-        tabs.addTab(self.create_asset_tab, read_QIcon("unconfirmed.png"), _('Create'))
-        tabs.addTab(self.reissue_asset_tab, read_QIcon("reissue.png"), _('Reissue'))
-        tabs.addTab(self.qualifiy_tab, read_QIcon("tag.png"), _('Tagging'))
-        tabs.addTab(self.freeze_tab, read_QIcon("freeze.png"), _('Freezing'))
-        tabs.addTab(self.broadcast_tab, read_QIcon("broadcast_send.png"), _('Broadcast'))
+        self.searchable_list = self.view_asset_tab.asset_list
 
-        tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         vbox = QVBoxLayout(self)
         vbox.addLayout(toolbar)
-        vbox.addWidget(self.tabs)
+        if is_hardware:
+            vbox.addWidget(self.view_asset_tab)
+        else:
+            self.tabs = tabs = QTabWidget(self)
+            tabs.addTab(self.view_asset_tab, read_QIcon("eye1.png"), _('View'))
+            tabs.addTab(self.create_asset_tab, read_QIcon("unconfirmed.png"), _('Create'))
+            tabs.addTab(self.reissue_asset_tab, read_QIcon("reissue.png"), _('Reissue'))
+            tabs.addTab(self.qualifiy_tab, read_QIcon("tag.png"), _('Tagging'))
+            tabs.addTab(self.freeze_tab, read_QIcon("freeze.png"), _('Freezing'))
+            tabs.addTab(self.broadcast_tab, read_QIcon("broadcast_send.png"), _('Broadcast'))
 
-        self.searchable_list = self.view_asset_tab.asset_list
-        def on_change_tab(index):
-            if index == 0:
-                self.searchable_list = self.view_asset_tab.asset_list
-            elif index == 3 and not self.wallet.is_watching_only():
-                self.searchable_list = self.qualifiy_tab.searchable_list_grouping
-            elif index == 4 and not self.wallet.is_watching_only():
-                self.searchable_list = self.freeze_tab.asset_list
-            else:
-                self.searchable_list = DummySearchableList()
-        tabs.currentChanged.connect(on_change_tab)
+            tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+            vbox.addWidget(self.tabs)
+
+            def on_change_tab(index):
+                if index == 0:
+                    self.searchable_list = self.view_asset_tab.asset_list
+                elif index == 3 and not self.wallet.is_watching_only():
+                    self.searchable_list = self.qualifiy_tab.searchable_list_grouping
+                elif index == 4 and not self.wallet.is_watching_only():
+                    self.searchable_list = self.freeze_tab.asset_list
+                else:
+                    self.searchable_list = DummySearchableList()
+            tabs.currentChanged.connect(on_change_tab)
 
     def update(self):
         self.view_asset_tab.update()        

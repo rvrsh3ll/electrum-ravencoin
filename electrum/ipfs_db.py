@@ -104,6 +104,11 @@ class IPFSDB(JsonDB, EventListener):
     def _should_convert_to_stored_dict(self, key) -> bool:
         return False
 
+    def _local_path_for_ipfs_data(self, ipfs_hash: str):
+        # Windows doesn't like uppercase; could use bech32 but just convert to hex instead
+        raw_hash = base_decode(ipfs_hash, base=58)
+        return standardize_path(os.path.join(self.raw_ipfs_path, raw_hash.hex()))
+
     @locked
     @profiler
     def write(self) -> None:
@@ -141,7 +146,7 @@ class IPFSDB(JsonDB, EventListener):
         return v
     
     def _append_bytes_to_raw_ipfs_file(self, ipfs_hash: str, b: bytes):
-        ipfs_file = standardize_path(os.path.join(self.raw_ipfs_path, ipfs_hash))
+        ipfs_file = self._local_path_for_ipfs_data(ipfs_hash)
         with open(ipfs_file, 'ab') as f:
             f.write(b)
 
@@ -158,7 +163,7 @@ class IPFSDB(JsonDB, EventListener):
         self.remove_ipfs_data(ipfs_hash)
 
     def remove_ipfs_data(self, ipfs_hash: str):
-        ipfs_file = standardize_path(os.path.join(self.raw_ipfs_path, ipfs_hash))
+        ipfs_file = self._local_path_for_ipfs_data(ipfs_hash)
         try:
             os.remove(ipfs_file)
         except (FileNotFoundError, OSError):
@@ -450,7 +455,7 @@ class IPFSDB(JsonDB, EventListener):
         m = self.data.get(ipfs_hash, None)
         if m is None or not m.is_client_side:
             return None, None
-        path = standardize_path(os.path.join(self.raw_ipfs_path, ipfs_hash))
+        path = self._local_path_for_ipfs_data(ipfs_hash)
         if not os.path.exists(path):
             return None, None
         return path, m.known_mime
