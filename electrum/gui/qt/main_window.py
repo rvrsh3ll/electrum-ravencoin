@@ -1227,8 +1227,12 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
             # FIXME notification should only be shown if request was not PAID before
             msg = _('Payment received:')
             amount = req.get_amount_sat()
+            asset = req.get_asset()
             if amount:
-                msg += ' ' + self.format_amount_and_units(amount)
+                if asset:
+                    msg += ' ' + self.config.format_amount(amount) + asset
+                else:
+                    msg += ' ' + self.format_amount_and_units(amount)
             msg += '\n' + req.get_message()
             self.notify(msg)
             self.receive_tab.request_list.delete_item(key)
