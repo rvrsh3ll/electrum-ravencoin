@@ -452,8 +452,18 @@ class ManageAssetPanel(QWidget, Logger):
         return None
 
     def update(self):
-        self.payto_label.setVisible(self.parent.window.config.SHOW_CREATE_ASSET_PAY_TO)
-        self.payto_e.line_edit.setVisible(self.parent.window.config.SHOW_CREATE_ASSET_PAY_TO)
+        verifier_string = self.verifier_e.line_edit.text()
+        should_show_payto = self.parent.window.config.SHOW_CREATE_ASSET_PAY_TO
+        if verifier_string:
+            should_show_payto = True
+            try:
+                node = parse_verifier_string(verifier_string)
+                if node.is_always_true():
+                    should_show_payto = self.parent.window.config.SHOW_CREATE_ASSET_PAY_TO
+            except AbstractBooleanASTError:
+                pass
+        self.payto_label.setVisible(should_show_payto)
+        self.payto_e.line_edit.setVisible(should_show_payto)
         if not self.parent.window.config.SHOW_CREATE_ASSET_PAY_TO:
             self.payto_e.line_edit.setText('')
 
