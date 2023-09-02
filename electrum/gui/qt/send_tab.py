@@ -24,6 +24,7 @@ from electrum.transaction import Transaction, PartialTxInput, PartialTxOutput
 from electrum.network import TxBroadcastError, BestEffortRequestFailed
 from electrum.payment_identifier import PaymentIdentifierState, PaymentIdentifierType, PaymentIdentifier, \
     invoice_from_payment_identifier, payment_identifier_from_invoice
+from electrum.wallet import Multisig_Wallet
 
 from .asset_management_panel import AssetAmountEdit
 from .amountedit import AmountEdit, BTCAmountEdit, SizedFreezableLineEdit
@@ -76,8 +77,11 @@ class SendTab(QWidget, MessageBoxMixin, Logger):
         self.pay_selector.currentIndexChanged.connect(self._on_combo_update)
 
         self.is_hardware = self.wallet.keystore and self.wallet.keystore.get_type_text()[:2] == 'hw'
+        self.is_multisig = isinstance(self.wallet, Multisig_Wallet)
 
-        if not self.is_hardware:
+        self.handle_assets = not self.is_hardware and not self.is_multisig
+
+        if self.handle_assets:
             grid.addWidget(QLabel(_('Asset')), 5, 0)
             grid.addWidget(self.pay_selector, 5, 1, 1, 3)
 
@@ -246,7 +250,7 @@ class SendTab(QWidget, MessageBoxMixin, Logger):
 
     def update(self):
         self.invoice_list.update()
-        if not self.is_hardware:
+        if self.handle_assets:
             current_balance = self.window.wallet.get_balance(asset_aware=True)
             if self.current_balance.keys() != current_balance.keys():
                 assets = [constants.net.SHORT_NAME]
@@ -401,7 +405,7 @@ class SendTab(QWidget, MessageBoxMixin, Logger):
             w.setToolTip('')
         for w in [self.save_button, self.send_button]:
             w.setEnabled(False)
-        if not self.is_hardware:
+        if self.handle_assets:
             self.pay_selector.setCurrentIndex(0)
         self.window.update_status()
         self.paytomany_menu.setChecked(self.payto_e.multiline)
