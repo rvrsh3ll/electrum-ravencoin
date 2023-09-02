@@ -961,7 +961,8 @@ class Transaction:
             sc = desc.expand()
             if script := sc.scriptcode_for_sighash:
                 if txin.asset is not None:
-                    if txin.asset[-1] == '!':
+                    if wallet and txin.asset[-1] == '!':
+                        # If no wallet, guess that it is a transfer
                         asset_source_outpoint = wallet.adb.get_asset_metadata_outpoint(txin.asset)
                         if asset_source_outpoint is not None:
                             if txin.prevout == asset_source_outpoint:

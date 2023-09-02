@@ -1331,7 +1331,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         on_success = run_hook('tc_sign_wrapper', self.wallet, tx, on_success, on_failure) or on_success
         if external_keypairs:
             # can sign directly
-            task = partial(tx.sign, external_keypairs, locking_script_overrides=locking_script_overrides)
+            task = partial(tx.sign, external_keypairs, self.wallet, locking_script_overrides=locking_script_overrides)
         else:
             task = partial(self.wallet.sign_transaction, tx, password)
         msg = _('Signing transaction...')

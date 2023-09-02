@@ -221,7 +221,7 @@ async def sweep(
 
     tx = PartialTransaction.from_io(inputs, outputs, locktime=locktime, version=tx_version)
     #tx.set_rbf(True)
-    tx.sign(keypairs, locking_script_overrides=outpoint_to_locking_script)
+    tx.sign(keypairs, None, locking_script_overrides=outpoint_to_locking_script)
     return tx
 
 
