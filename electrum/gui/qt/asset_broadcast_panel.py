@@ -241,4 +241,7 @@ class MakeBroadcastPanel(QWidget, Logger):
 
     @property
     def associated_data(self):
-        return self.associated_data_e.line_edit.text()
+        raw = self.associated_data_e.line_edit.text()
+        if len(raw) == 64:
+            return f'5420{raw}'
+        return raw
