@@ -260,6 +260,8 @@ class IPFSDB(JsonDB, EventListener):
             m = self.get_metadata(ipfs_hash)
             try:
                 resp.raise_for_status()
+                if resp.content_type == 'application/octet-stream' and not resp.content_length:
+                    raise Exception('HEAD response returned default data')
                 m.known_mime = resp.content_type
                 m.known_size = resp.content_length
                 m.info_lookup_successful = True
