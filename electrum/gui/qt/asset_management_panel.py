@@ -156,6 +156,7 @@ class ManageAssetPanel(QWidget, Logger):
         def associated_data_fast_fail(input: str):
             self.associated_data_is_ok = False
             self.send_button.setEnabled(False)
+            input = input.strip()
             if len(input) == 0:
                 self.associated_data_is_ok = True
                 self._maybe_enable_pay_button()
@@ -687,7 +688,7 @@ class CreateAssetPanel(ManageAssetPanel):
         assert isinstance(divisions, int)
         reissuable = self.reissuable.isChecked()
         associated_data = None
-        associated_data_raw = self.associated_data_e.line_edit.text()
+        associated_data_raw = self.associated_data_e.line_edit.text().strip()
         if associated_data_raw:
             try:
                 associated_data = b'\x54\x20' + bytes.fromhex(associated_data_raw)
@@ -900,14 +901,8 @@ class ReissueAssetPanel(ManageAssetPanel):
         self.amount_e.setAmount(0)
 
     def _on_divisions_change(self, amount):
-        if amount is None:
-            return
-        assert isinstance(amount, int)
-        self.amount_e.divisions = amount
-        self.amount_e.is_int = amount == 0
-        self.amount_e.min_amount = 0
-        self.amount_e.numbify()
-        self.amount_e.update()
+        # You cannot send divided assets when reissuing
+        return
 
     def _create_tx(self):
         super()._create_tx()
@@ -921,7 +916,7 @@ class ReissueAssetPanel(ManageAssetPanel):
         assert isinstance(divisions, int)
         reissuable = self.reissuable.isChecked()
         associated_data = None
-        associated_data_raw = self.associated_data_e.line_edit.text()
+        associated_data_raw = self.associated_data_e.line_edit.text().strip()
         if associated_data_raw:
             try:
                 associated_data = b'\x54\x20' + bytes.fromhex(associated_data_raw)
@@ -1074,7 +1069,11 @@ class ReissueAssetPanel(ManageAssetPanel):
         asset_metadata, x = asset_metadata_tup
         self.divisions_e.setAmount(asset_metadata.divisions)
         self.divisions_e.min_amount = asset_metadata.divisions
+        self.amount_e.divisions = asset_metadata.divisions
+        self.amount_e.is_int = asset_metadata.divisions == 0
         self.amount_e.max_amount = DEFAULT_ASSET_AMOUNT_MAX * COIN - asset_metadata.sats_in_circulation
+        self.amount_e.numbify()
+        self.amount_e.update()
         if asset_metadata.associated_data is None:
             associated_data_string = ''
         elif asset_metadata.associated_data[:2] == b'\x54\x20':
