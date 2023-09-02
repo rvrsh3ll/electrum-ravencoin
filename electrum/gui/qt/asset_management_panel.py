@@ -328,11 +328,7 @@ class ManageAssetPanel(QWidget, Logger):
         vbox.addLayout(grid)
 
     def _maybe_enable_pay_button(self):
-        #print(f'{self.verifier_is_ok=}')
-        #print(f'{self.associated_data_is_ok=}')
-        #print(f'{self.address_is_ok=}')
-        #print(f'{self.asset_is_ok=}')
-        #print(f'{self.asset_combo_is_ok=}')
+        self.logger.debug(f'check fields, v={self.verifier_is_ok}, d={self.associated_data_is_ok}, s={self.address_is_ok}, a={self.asset_is_ok}, c={self.asset_combo_is_ok}')
         self.send_button.setEnabled(self.verifier_is_ok and self.associated_data_is_ok and self.address_is_ok and self.asset_is_ok and self.asset_combo_is_ok)
 
     def _on_divisions_change(self, amount):
@@ -535,8 +531,12 @@ class CreateAssetPanel(ManageAssetPanel):
             self.asset_combo_is_ok = True
         else:
             selected_index = self.asset_selector_combo.currentIndex()
-            self.asset_combo_is_ok = selected_index > 0 and len(self.combo_assets) > (selected_index - 1) and self.combo_assets[selected_index - 1][1]
+            # The asset is valid and is not in the mempool
+            self.asset_combo_is_ok = selected_index > 0 and len(self.combo_assets) > (selected_index - 1) and not self.combo_assets[selected_index - 1][1]
             if asset_type[1] == AssetType.RESTRICTED:
+                if self.asset_combo_is_ok:
+                    # A restricted asset has not already been created
+                    self.asset_combo_is_ok = not self.combo_assets[selected_index - 1][2]
                 self.asset_checker.line_edit.setEnabled(False)
                 if selected_index > 0 and len(self.combo_assets) > selected_index - 1:
                     selected_asset = self.combo_assets[selected_index - 1][0]
