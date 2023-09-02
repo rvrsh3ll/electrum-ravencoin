@@ -1173,6 +1173,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         if isinstance(self.wallet, Multisig_Wallet) and not constants.net.MULTISIG_ASSETS:
             error_label = QLabel(_('Multisig wallets currently cannot own assets'))
             error_label.setAlignment(Qt.AlignCenter)
+            error_label.is_shown_cv = self.config.cv.GUI_QT_SHOW_TAB_ATOMIC_SWAPS
             return error_label
         from .atomic_swap_tab import AtomicSwapTab
         tab = AtomicSwapTab(self)
