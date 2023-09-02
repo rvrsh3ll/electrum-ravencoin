@@ -350,6 +350,7 @@ class ManageAssetPanel(QWidget, Logger):
         else:
             parent_is_valid = not self.combo_assets[selected_parent_index - 1][1]
         self.asset_combo_is_ok = parent_is_valid
+        self._maybe_enable_pay_button()
         
     def _create_tx(self):
         if not self.reissuable.isChecked() and self.parent.window.config.SHOW_REISSUABLE_WARNING:
