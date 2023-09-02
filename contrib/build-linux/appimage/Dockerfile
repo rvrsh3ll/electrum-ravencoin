@@ -18,6 +18,8 @@ COPY apt.preferences /etc/apt/preferences.d/snapshot
 RUN apt-get update -q && \
     apt-get install -qy --allow-downgrades \
         sudo \
+        cmake \
+        g++ \
         git \
         wget \
         make \

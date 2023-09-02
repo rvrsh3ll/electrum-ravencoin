@@ -3,8 +3,8 @@
 <component type="desktop-application">
   <id>org.electrum.electrum</id>
 
-  <name>Electrum</name>
-  <summary>Bitcoin Wallet</summary>
+  <name>Electrum-Ravencoin</name>
+  <summary>Ravencoin Wallet</summary>
 
   <metadata_license>MIT</metadata_license>
   <project_license>MIT</project_license>
@@ -16,7 +16,7 @@
     </p>
   </description>
 
-  <launchable type="desktop-id">electrum.desktop</launchable>
+  <launchable type="desktop-id">electrum-ravencoin.desktop</launchable>
 
   <content_rating type="oars-1.1" />
 </component>

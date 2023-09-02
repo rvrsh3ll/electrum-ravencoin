@@ -4,7 +4,7 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules, coll
 
 import sys, os
 
-PACKAGE='Electrum'
+PACKAGE='Electrum-Ravencoin'
 PYPKG='electrum'
 MAIN_SCRIPT='run_electrum'
 ICONS_FILE=PYPKG + '/gui/icons/electrum.icns'
@@ -125,8 +125,8 @@ app = BUNDLE(
         'NSSupportsAutomaticGraphicsSwitching': 'True',
         'CFBundleURLTypes':
             [{
-                'CFBundleURLName': 'bitcoin',
-                'CFBundleURLSchemes': ['bitcoin', 'lightning', ],
+                'CFBundleURLName': 'raven',
+                'CFBundleURLSchemes': ['raven', ],
             }],
         'LSMinimumSystemVersion': '10.13.0',
         'NSCameraUsageDescription': 'Electrum would like to access the camera to scan for QR codes',
