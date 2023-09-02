@@ -294,7 +294,7 @@ class TxInOutWidget(QWidget):
                                     else:
                                         memo_str = base_encode(raw_memo, base=58)
 
-                                    timestamp_str = str(asset_info.asset_memo_timestamp or _('None'))
+                                    timestamp_str = str(asset_info.asset_memo_timestamp if asset_info.asset_memo_timestamp is not None else _('None'))
 
                                     cursor.insertBlock()
                                     cursor.insertText(_('\tMemo: {}').format(memo_str), tcf_ext)

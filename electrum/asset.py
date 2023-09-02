@@ -313,7 +313,7 @@ class AssetMemo:
     timestamp = attr.ib(default=None, type=int)
 
     def hex(self) -> str:
-        return f'{self.data.hex()}{int_to_hex(self.timestamp, 8) if self.timestamp else ""}'
+        return f'{self.data.hex()}{int_to_hex(self.timestamp, 8) if self.timestamp is not None else ""}'
 
 def _validate_sats(instance, attribute, value):
     if value <= 0:
