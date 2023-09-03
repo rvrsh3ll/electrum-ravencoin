@@ -39,6 +39,7 @@ else
         --password @env:APPLE_ID_PASSWORD \
         --output-format xml \
         --itc_provider $TEAM_ID
+)
 fi
 
 if [ $? -ne 0 ]; then
