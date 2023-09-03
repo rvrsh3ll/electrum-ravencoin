@@ -2649,6 +2649,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
             asset_amounts = defaultdict(int)
             for coin in asset_inputs:
                 asset_amounts[coin.asset] += coin.value_sats(asset_aware=True)
+            has_assets = len(set(asset_amounts.keys()).difference({None})) > 0
 
             non_qualified_asset_set = set()
             restricted_asset_to_address = dict()
@@ -2679,8 +2680,11 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
                         return fee_est(size + appended_size)
                     return new_fee_estimator
 
+                print(f'{[(x.asset, x.value_sats(asset_aware=True)) for x in base_inputs]=}')
+                print(f'{base_output=}')
                 additional_inputs = []
-                for coin in [coin for coin in self.get_coins(confirmed_only=confirmed_only) if coin.asset is None]:
+                my_coins = [coin for coin in self.get_coins(confirmed_only=confirmed_only) if coin.asset is None]
+                while True:
                     try:
                         tx = self.wallet.make_unsigned_transaction(
                             coins = additional_inputs,
@@ -2691,14 +2695,14 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
                             fee_mixin=fee_mixin,
                         )
                         break
-                    except NotEnoughFunds:
+                    except NotEnoughFunds as e:
+                        if not has_assets or not my_coins:
+                            raise e
                         # Use our own coins for change
                         if not message_use_own_coin:
                             message_use_own_coin = True
                             self.show_message(_('Some of your utxos will be used to handle fees'))
-                        additional_inputs.append(coin)
-                else:
-                    raise NotEnoughFunds()
+                        additional_inputs.append(my_coins.pop())
                 
                 tx.add_inputs(asset_inputs)
                 tx.add_outputs(asset_outputs)

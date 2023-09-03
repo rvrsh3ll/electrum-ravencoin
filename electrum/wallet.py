@@ -1895,7 +1895,7 @@ class Abstract_Wallet(ABC, Logger, EventListener):
 
         if not fixed_inputs:
             fixed_inputs = []
-        if not coins:  # any bitcoin tx must have at least 1 input by consensus
+        if not coins and not fixed_inputs:  # any bitcoin tx must have at least 1 input by consensus
             raise NotEnoughFunds()
         if any([c.already_has_some_signatures() for c in coins]):
             raise Exception("Some inputs already contain signatures!")
@@ -1997,7 +1997,7 @@ class Abstract_Wallet(ABC, Logger, EventListener):
                         raise NoQualifiedAddress()
         else:
             # Only for base coin
-            coins = [coin for coin in coins if coin.asset is None]
+            coins = [coin for coin in itertools.chain(coins, fixed_inputs) if coin.asset is None]
             assert not any(output.asset for output in outputs)
 
             # "spend max" branch
