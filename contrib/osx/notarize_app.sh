@@ -23,7 +23,7 @@ ditto -c -k --rsrc --keepParent "$APP_BUNDLE" "${APP_BUNDLE}.zip"
 
 # Submit for notarization
 echo "Submitting $APP_BUNDLE for notarization..."
-if [ -z "$TEAM_ID" ]; then
+if [ -z "$APPLE_SHORT_PROVIDER_ID" ]; then
     RESULT=$(xcrun altool --notarize-app --type osx \
         --file "${APP_BUNDLE}.zip" \
         --primary-bundle-id org.electrum.electrum \
@@ -32,14 +32,14 @@ if [ -z "$TEAM_ID" ]; then
         --output-format xml
 )
 else
-    echo "Using provider $TEAM_ID"
+    echo "Using provider $APPLE_SHORT_PROVIDER_ID"
     RESULT=$(xcrun altool --notarize-app --type osx \
         --file "${APP_BUNDLE}.zip" \
         --primary-bundle-id org.electrum.electrum \
         --username $APPLE_ID_USER \
         --password @env:APPLE_ID_PASSWORD \
         --output-format xml \
-        --itc_provider $TEAM_ID
+        --asc-provider $APPLE_SHORT_PROVIDER_ID
 )
 fi
 
