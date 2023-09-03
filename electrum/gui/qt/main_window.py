@@ -2680,8 +2680,6 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
                         return fee_est(size + appended_size)
                     return new_fee_estimator
 
-                print(f'{[(x.asset, x.value_sats(asset_aware=True)) for x in base_inputs]=}')
-                print(f'{base_output=}')
                 additional_inputs = []
                 my_coins = [coin for coin in self.get_coins(confirmed_only=confirmed_only) if coin.asset is None]
                 while True:
@@ -2738,6 +2736,8 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
                         self.sign_tx(tx,
                                      callback=sign_done2,
                                      external_keypairs=None)
+                    else:
+                        self.broadcast_or_show(tx)
 
             self.sign_tx(
                 tx,
