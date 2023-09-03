@@ -77,9 +77,9 @@ class SendTab(QWidget, MessageBoxMixin, Logger):
         self.pay_selector.currentIndexChanged.connect(self._on_combo_update)
 
         self.is_hardware = self.wallet.keystore and self.wallet.keystore.get_type_text()[:2] == 'hw'
-        self.is_multisig = isinstance(self.wallet, Multisig_Wallet)
+        self.is_multisig_and_bad = isinstance(self.wallet, Multisig_Wallet) and not constants.net.MULTISIG_ASSETS
 
-        self.handle_assets = not self.is_hardware and not self.is_multisig
+        self.handle_assets = not self.is_hardware and not self.is_multisig_and_bad
 
         if self.handle_assets:
             grid.addWidget(QLabel(_('Asset')), 5, 0)
