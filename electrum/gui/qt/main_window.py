@@ -2724,11 +2724,16 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
                 return
             
             def sign_done(success):
+                def sign_done2(success):
+                    if success:
+                        self.broadcast_or_show(tx)
+
                 if success:
                     if not tx.is_complete():
                         # We used some of our own coins for fees
-                        self.sign_tx(tx)
-                    self.broadcast_or_show(tx)
+                        self.sign_tx(tx,
+                                     callback=sign_done2,
+                                     external_keypairs=None)
 
             self.sign_tx(
                 tx,
