@@ -193,7 +193,6 @@ class CoinGecko(ExchangeBase):
     async def request_history(self, ccy):
         history = await self.get_json('api.coingecko.com',
                                       '/api/v3/coins/ravencoin/market_chart?vs_currency=%s&days=max' % ccy)
-        print(history)
         return dict([(datetime.utcfromtimestamp(h[0]/1000).strftime('%Y-%m-%d'), str(h[1]))
                      for h in history['prices']])
 
