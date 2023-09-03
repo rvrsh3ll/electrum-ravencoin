@@ -39,7 +39,7 @@ else
         --username $APPLE_ID_USER \
         --password @env:APPLE_ID_PASSWORD \
         --output-format xml \
-        --asc-provider $APPLE_SHORT_PROVIDER_ID
+        --asc_provider $APPLE_SHORT_PROVIDER_ID
 )
 fi
 
