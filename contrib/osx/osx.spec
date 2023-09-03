@@ -56,7 +56,6 @@ binaries += [(electrum + "electrum/libzbar.0.dylib", ".")]
 # Workaround for "Retro Look":
 binaries += [b for b in collect_dynamic_libs('PyQt5') if 'macstyle' in b[0]]
 
-# https://stackoverflow.com/questions/68459087/pyinstaller-with-python-3-10-0b4-importerror-no-module-named-bootlocale
 # We don't put these files in to actually include them in the script but to make the Analysis method scan them for imports
 a = Analysis([electrum+ MAIN_SCRIPT,
               electrum+'electrum/gui/qt/main_window.py',
@@ -73,7 +72,6 @@ a = Analysis([electrum+ MAIN_SCRIPT,
               ],
              binaries=binaries,
              datas=datas,
-             excludes=['_bootlocale'],
              hiddenimports=hiddenimports,
              hookspath=[])
 

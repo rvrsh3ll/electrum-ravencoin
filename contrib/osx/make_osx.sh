@@ -26,7 +26,7 @@ mkdir -p "$CACHEDIR" "$DLL_TARGET_DIR"
 cd "$PROJECT_ROOT"
 
 git -C "$PROJECT_ROOT" rev-parse 2>/dev/null || fail "Building outside a git clone is not supported."
-
+VERSION=$(git describe --tags --dirty --always)
 
 which brew > /dev/null 2>&1 || fail "Please install brew from https://brew.sh/ to continue"
 which xcodebuild > /dev/null 2>&1 || fail "Please install xcode command line tools to continue"
@@ -241,8 +241,6 @@ find "$VENV_DIR/lib/python$PY_VER_MAJOR/site-packages/" -type f -name '*.so' -pr
 
 info "Faking timestamps..."
 find . -exec touch -t '200101220000' {} + || true
-
-VERSION=$(git describe --tags --dirty --always)
 
 info "Building binary"
 ELECTRUM_VERSION=$VERSION pyinstaller --noconfirm --ascii --clean contrib/osx/osx.spec || fail "Could not build binary"
