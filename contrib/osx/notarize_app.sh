@@ -32,6 +32,7 @@ if [ -z "$TEAM_ID" ]; then
         --output-format xml
 )
 else
+    echo "Using provider $TEAM_ID"
     RESULT=$(xcrun altool --notarize-app --type osx \
         --file "${APP_BUNDLE}.zip" \
         --primary-bundle-id org.electrum.electrum \
