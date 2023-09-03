@@ -23,13 +23,23 @@ ditto -c -k --rsrc --keepParent "$APP_BUNDLE" "${APP_BUNDLE}.zip"
 
 # Submit for notarization
 echo "Submitting $APP_BUNDLE for notarization..."
-RESULT=$(xcrun altool --notarize-app --type osx \
-    --file "${APP_BUNDLE}.zip" \
-    --primary-bundle-id org.electrum.electrum \
-    --username $APPLE_ID_USER \
-    --password @env:APPLE_ID_PASSWORD \
-    --output-format xml
+if [ -z "$TEAM_ID" ]; then
+    RESULT=$(xcrun altool --notarize-app --type osx \
+        --file "${APP_BUNDLE}.zip" \
+        --primary-bundle-id org.electrum.electrum \
+        --username $APPLE_ID_USER \
+        --password @env:APPLE_ID_PASSWORD \
+        --output-format xml
 )
+else
+    RESULT=$(xcrun altool --notarize-app --type osx \
+        --file "${APP_BUNDLE}.zip" \
+        --primary-bundle-id org.electrum.electrum \
+        --username $APPLE_ID_USER \
+        --password @env:APPLE_ID_PASSWORD \
+        --output-format xml \
+        --itc_provider $TEAM_ID
+fi
 
 if [ $? -ne 0 ]; then
     echo "Submitting $APP_BUNDLE failed:"
