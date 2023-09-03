@@ -220,6 +220,16 @@ python3 -m pip install --no-build-isolation --no-dependencies --no-binary :all: 
     -Ir ./contrib/deterministic-build/requirements-binaries-mac.txt \
     || fail "Could not install dependencies specific to binaries"
 
+info "Installed dependencies sepcific to ravencoin..."
+python3 -m pip install --no-build-isolation --no-dependencies --no-binary :all: \
+    --no-warn-script-location \
+    -Ir ./contrib/deterministic-build/requirements-ravencoin-pypi.txt \
+    || fail "Could not install dependencies from pypi"
+python3 -m pip install --no-build-isolation --no-dependencies --no-binary :all: \
+    --no-warn-script-location \
+    -Ir ./contrib/deterministic-build/requirements-ravencoin-git.txt \
+    || fail "Could not install dependencies from git"
+
 info "Building $PACKAGE..."
 python3 -m pip install --no-build-isolation --no-dependencies \
     --no-warn-script-location . > /dev/null || fail "Could not build $PACKAGE"
