@@ -6,7 +6,7 @@ set -e
 PYTHON_VERSION=3.10.11
 PY_VER_MAJOR="3.10"  # as it appears in fs paths
 PACKAGE=Electrum-Ravencoin
-GIT_REPO=https://github.com/spesmilo/electrum
+GIT_REPO=https://github.com/Electrum-RVN-SIG/electrum-ravencoin
 
 export GCC_STRIP_BINARIES="1"
 export PYTHONDONTWRITEBYTECODE=1  # don't create __pycache__/ folders with .pyc files
@@ -261,7 +261,7 @@ fi
 info "Creating .DMG"
 hdiutil create -fs HFS+ -volname $PACKAGE -srcfolder dist/$PACKAGE.app dist/electrum-ravencoin-$VERSION.dmg || fail "Could not create .DMG"
 
-DoCodeSignMaybe ".DMG" "dist/electrum-${VERSION}.dmg"
+DoCodeSignMaybe ".DMG" "dist/electrum-ravencoin-${VERSION}.dmg"
 
 if [ -z "$CODESIGN_CERT" ]; then
     warn "App was built successfully but was not code signed. Users may get security warnings from macOS."
