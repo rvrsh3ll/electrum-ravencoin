@@ -58,7 +58,7 @@ class AssetTab(QWidget, MessageBoxMixin, Logger):
             self.freeze_tab = ViewFreezePanel(self)
 
         if self.wallet.is_watching_only():
-            self.broadcast_tab = QLabel(_('Watch only wallets cannot freeze assets'))
+            self.broadcast_tab = QLabel(_('Watch only wallets cannot broadcast assets'))
             self.broadcast_tab.setAlignment(Qt.AlignCenter)
         else:
             self.broadcast_tab = MakeBroadcastPanel(self)

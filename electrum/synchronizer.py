@@ -178,7 +178,9 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
         self._adding_assets.add(asset)
 
     def add_qualifier_for_tag(self, asset):
-        if get_error_for_asset_typed(asset, AssetType.QUALIFIER) and get_error_for_asset_typed(asset, AssetType.RESTRICTED): raise ValueError(f'invalid asset')
+        if get_error_for_asset_typed(asset, AssetType.QUALIFIER) and \
+            get_error_for_asset_typed(asset, AssetType.SUB_QUALIFIER) and \
+            get_error_for_asset_typed(asset, AssetType.RESTRICTED): raise ValueError(f'invalid asset')
         self._adding_qualifiers_for_tags.add(asset)
 
     def add_h160_for_tag(self, h160: str):

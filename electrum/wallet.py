@@ -1317,18 +1317,19 @@ class Abstract_Wallet(ABC, Logger, EventListener):
                 scripthash = bitcoin.script_to_scripthash(invoice_scriptpubkey.hex())
                 prevouts_and_values = self.db.get_prevouts_by_scripthash(scripthash)
                 confs_and_values = []
-                for prevout, v, asset in prevouts_and_values:
+                for prevout, v, asset_stringified in prevouts_and_values:
                     relevant_txs.add(prevout.txid.hex())
                     tx_height = self.adb.get_tx_height(prevout.txid.hex())
                     if 0 < tx_height.height <= invoice.height:  # exclude txs older than invoice
                         continue
-                    confs_and_values.append((tx_height.conf or 0, v, asset))
+                    confs_and_values.append((tx_height.conf or 0, v, asset_stringified or ''))
                 # check that there is at least one TXO, and that they pay enough.
                 # note: "at least one TXO" check is needed for zero amount invoice (e.g. OP_RETURN)
                 asset_data = get_asset_info_from_script(invoice_scriptpubkey)
                 vsum = 0
-                for conf, v, asset in reversed(sorted(confs_and_values)):
-                    if asset != asset_data.asset: continue
+                for conf, v, asset_stringified in reversed(sorted(confs_and_values)):
+                    # Falsy equates to None, needed string for comp
+                    if (asset_stringified or None) != asset_data.asset: continue
                     vsum += v
                     if vsum >= invoice_amt:
                         conf_needed = min(conf_needed, conf) if conf_needed is not None else conf
