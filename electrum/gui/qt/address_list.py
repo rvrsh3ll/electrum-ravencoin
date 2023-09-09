@@ -34,7 +34,7 @@ from PyQt5.QtWidgets import QAbstractItemView, QComboBox, QLabel, QMenu
 from electrum.i18n import _
 from electrum.util import block_explorer_URL, profiler
 from electrum.plugin import run_hook
-from electrum.bitcoin import is_address
+from electrum.bitcoin import is_address, is_b58_address, b58_address_to_hash160
 from electrum.wallet import InternalAddressCorruption
 from electrum.simple_config import SimpleConfig
 
@@ -83,10 +83,11 @@ class AddressList(MyTreeView):
         LABEL = enum.auto()
         COIN_BALANCE = enum.auto()
         ASSET_COUNT = enum.auto()
+        TAG_COUNT = enum.auto()
         FIAT_BALANCE = enum.auto()
         NUM_TXS = enum.auto()
 
-    filter_columns = [Columns.TYPE, Columns.ADDRESS, Columns.LABEL, Columns.COIN_BALANCE, Columns.ASSET_COUNT]
+    filter_columns = [Columns.TYPE, Columns.ADDRESS, Columns.LABEL, Columns.COIN_BALANCE]
 
     ROLE_SORT_ORDER = Qt.UserRole + 1000
     ROLE_ADDRESS_STR = Qt.UserRole + 1001
@@ -154,7 +155,8 @@ class AddressList(MyTreeView):
             self.Columns.ADDRESS: _('Address'),
             self.Columns.LABEL: _('Label'),
             self.Columns.COIN_BALANCE: _('Balance'),
-            self.Columns.ASSET_COUNT: _('Asset Count'),
+            self.Columns.ASSET_COUNT: _('Assets'),
+            self.Columns.TAG_COUNT: _('Tags'),
             self.Columns.FIAT_BALANCE: ccy + ' ' + _('Balance'),
             self.Columns.NUM_TXS: _('Tx'),
         }
@@ -250,6 +252,10 @@ class AddressList(MyTreeView):
         label = self.wallet.get_label_for_address(address)
         num = self.wallet.adb.get_address_history_len(address)
         balance_mapping = self.wallet.get_addr_balance(address, asset_aware=True)
+        tag_count = 0
+        if is_b58_address(address):
+            _, h160 = b58_address_to_hash160(address)
+            tag_count = len(self.wallet.adb.get_tags_for_h160(h160.hex()))
         base_coin_balance = sum(balance_mapping.get(None, [0]))
         balance_text = self.main_window.format_amount(base_coin_balance, whitespaces=True)
         balance_text_nots = self.main_window.format_amount(base_coin_balance, whitespaces=False, add_thousands_sep=False)
@@ -268,6 +274,7 @@ class AddressList(MyTreeView):
         address_item[self.Columns.COIN_BALANCE].setData(base_coin_balance, self.ROLE_SORT_ORDER)
         address_item[self.Columns.COIN_BALANCE].setData(balance_text_nots, self.ROLE_CLIPBOARD_DATA)
         address_item[self.Columns.ASSET_COUNT].setText(str(len([key for key, value in balance_mapping.items() if key and sum(value) > 0])))
+        address_item[self.Columns.TAG_COUNT].setText(str(tag_count))
         address_item[self.Columns.FIAT_BALANCE].setText(fiat_balance_str)
         address_item[self.Columns.FIAT_BALANCE].setData(base_coin_balance, self.ROLE_SORT_ORDER)
         address_item[self.Columns.FIAT_BALANCE].setData(fiat_balance_str_nots, self.ROLE_CLIPBOARD_DATA)

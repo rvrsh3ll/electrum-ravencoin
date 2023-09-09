@@ -10,6 +10,7 @@ import itertools
 from typing import TYPE_CHECKING, Set, Dict, Optional
 
 from aiohttp import ClientResponse
+from aiorpcx import run_in_thread
 from collections import defaultdict
 
 from .bitcoin import base_decode
@@ -177,7 +178,7 @@ class IPFSDB(JsonDB, EventListener):
                 # Ensure we aren't appending to something thats already there
                 self.remove_ipfs_data(ipfs_hash)
                 downloaded_length = 0
-                while chunk := await resp.content.read(8192):
+                async for chunk, _ in resp.content.iter_chunks():
                     downloaded_length += len(chunk)
                     if downloaded_length > network.config.MAX_IPFS_DOWNLOAD_SIZE:
                         self.logger.warning(f'oversized ipfs data for {ipfs_hash}')
@@ -185,7 +186,11 @@ class IPFSDB(JsonDB, EventListener):
                         m.known_size = downloaded_length
                         self.remove_ipfs_data(ipfs_hash)
                         break
-                    self._append_bytes_to_raw_ipfs_file(ipfs_hash, chunk)
+                    await run_in_thread(
+                        self._append_bytes_to_raw_ipfs_file,
+                        ipfs_hash,
+                        chunk
+                    )
                 else:
                     self.logger.info(f'successfully downloaded ipfs data for {ipfs_hash}')
                     m.known_size = downloaded_length

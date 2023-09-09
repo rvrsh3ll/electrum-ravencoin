@@ -1002,7 +1002,8 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
                     (_('Lightning frozen'), COLOR_FROZEN_LIGHTNING, f_lightning),
                 ])
                 balance = confirmed + unconfirmed + unmatured + frozen + lightning + f_lightning
-                balance_text =  _("Balance") + ": %s "%(self.format_amount_and_units(balance))
+                assets = len(set(self.wallet.get_balance(asset_aware=True).keys()).difference({None}))
+                balance_text =  _("Balance") + ": %s "%(self.format_amount_and_units(balance) + ' ' + _('({} Assets)'.format(assets)))
                 # append fiat balance and price
                 if self.fx.is_enabled():
                     balance_text += self.fx.get_fiat_status_text(balance,

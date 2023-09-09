@@ -184,25 +184,28 @@ class AddressDialog(WindowModalDialog):
             x, h160 = b58_address_to_hash160(self.address)
             h160_h = h160.hex()
 
-            tabs = QTabWidget()
+            if self.wallet.adb.get_tags_for_h160(h160_h):
+                tabs = QTabWidget()
 
-            history_widget = QWidget()
-            vbox_history = QVBoxLayout()
-            vbox_history.addWidget(self.hw.num_tx_label)
-            vbox_history.addWidget(self.hw)
+                vbox_history = QVBoxLayout()
+                vbox_history.addWidget(self.hw.num_tx_label)
+                vbox_history.addWidget(self.hw)
+                history_widget = QWidget()
+                history_widget.setLayout(vbox_history)
 
-            tags_widget = TaggedAddressList(self.window, h160_h)
-            tags_widget.update()
+                tags_widget = TaggedAddressList(self.window, h160_h)
+                tags_widget.update()
 
-            tabs.addTab(history_widget, read_QIcon('tab_history.png'), _('History'))
-            tabs.addTab(tags_widget, read_QIcon('tag.png'), _('Tags'))
+                tabs.addTab(history_widget, read_QIcon('tab_history.png'), _('History'))
+                tabs.addTab(tags_widget, read_QIcon('tag.png'), _('Tags'))
 
-            vbox.addWidget(tabs)
+                vbox.addWidget(tabs)
+            else:
+                vbox.addWidget(self.hw.num_tx_label)
+                vbox.addWidget(self.hw)
         else:
             vbox.addWidget(self.hw.num_tx_label)
             vbox.addWidget(self.hw)
-
-        history_widget.setLayout(vbox_history)
 
         vbox.addLayout(Buttons(CloseButton(self)))
         self.format_amount = self.window.format_amount
