@@ -12,7 +12,7 @@ Homepage: https://electrum.org/
 [![Help translate Electrum online](https://d322cqt584bo4o.cloudfront.net/electrum/localized.svg)](https://crowdin.com/project/electrum)
 
 
-## Run you own server!
+## Run your own server!
 
 https://github.com/Electrum-RVN-SIG/electrumx-ravencoin
 
