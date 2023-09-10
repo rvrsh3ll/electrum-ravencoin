@@ -431,8 +431,10 @@ class IPFSDB(JsonDB, EventListener):
     def dissociate_asset_with_ipfs(self, ipfs_hash: str, asset: str):
         m = self.data.get(ipfs_hash, None)
         if m:
+            self.logger.info(f'disassociating {asset} from {ipfs_hash}')
             m.associated_assets.discard(asset)
             if not m.associated_assets:
+                self.logger.info(f'nothing pinning {ipfs_hash}; removing')
                 self.remove_ipfs_info(ipfs_hash)
 
     @modifier

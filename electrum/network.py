@@ -1180,6 +1180,13 @@ class Network(Logger, NetworkRetryManager[ServerAddr]):
 
     @best_effort_reliable
     @catch_server_exceptions
+    async def get_freeze_status_for_restricted_asset(self, asset: str) -> Dict:
+        if self.interface is None:
+            raise RequestTimedOut
+        return await self.interface.get_freeze_status_for_restricted_asset(asset)
+
+    @best_effort_reliable
+    @catch_server_exceptions
     async def check_tag_for_h160(self, asset: str, h160: str) -> Dict:
         if self.interface is None:
             raise RequestTimedOut()

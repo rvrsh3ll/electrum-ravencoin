@@ -53,7 +53,7 @@ import electrum
 from electrum.gui import messages
 from electrum import (keystore, ecc, constants, util, bitcoin, commands,
                       paymentrequest, lnutil)
-from electrum.asset import get_error_for_asset_typed, AssetType, parse_verifier_string
+from electrum.asset import get_error_for_asset_typed, AssetType, parse_verifier_string, get_error_for_asset_name
 from electrum.bitcoin import COIN, is_address, is_b58_address, b58_address_to_hash160
 from electrum.plugin import run_hook, BasePlugin
 from electrum.i18n import _
@@ -763,6 +763,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         tools_menu.addAction(_("&Sign/verify message"), self.sign_verify_message)
         tools_menu.addAction(_("&Encrypt/decrypt message"), self.encrypt_message)
         tools_menu.addSeparator()
+        tools_menu.addAction(_('&Lookup Asset Data'), self.lookup_asset_data)
         tools_menu.addAction(_("&Identify Qualified Addresses"), self.find_qualified_address)
         tools_menu.addSeparator()
 
@@ -1002,7 +1003,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
                     (_('Lightning frozen'), COLOR_FROZEN_LIGHTNING, f_lightning),
                 ])
                 balance = confirmed + unconfirmed + unmatured + frozen + lightning + f_lightning
-                assets = len(set(self.wallet.get_balance(asset_aware=True).keys()).difference({None}))
+                assets = len(set(key for key, value in self.wallet.get_balance(asset_aware=True).items() if key and sum(value) > 0))
                 balance_text =  _("Balance") + ": %s "%(self.format_amount_and_units(balance) + ' ' + _('({} Assets)'.format(assets)))
                 # append fiat balance and price
                 if self.fx.is_enabled():
@@ -2387,6 +2388,22 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
             )
             return
         return raw_tx
+
+    def lookup_asset_data(self):
+        asset, ok = QInputDialog.getText(self, _('Get Asset Data'), _('Asset') + ':')
+        if not ok:
+            return
+        asset = asset.strip()
+        if error := get_error_for_asset_name(asset):
+            self.show_message(
+                    _("Not a valid asset") + ":\n" + error
+                )
+            return
+        
+        from .asset_dialog import AssetDialog
+        d = AssetDialog(self, asset)
+        if d.valid:
+            d.exec_()
 
     def find_qualified_address(self):
         asset, ok = QInputDialog.getText(self, _('Search addresses'), _('Restricted Asset') + ':')
