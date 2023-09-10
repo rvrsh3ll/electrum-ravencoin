@@ -12,6 +12,10 @@ Homepage: https://electrum.org/
 [![Help translate Electrum online](https://d322cqt584bo4o.cloudfront.net/electrum/localized.svg)](https://crowdin.com/project/electrum)
 
 
+## Need help?
+
+Find @kralverde on [discord](https://discord.com/invite/jn6uhur).
+
 ## Getting started
 
 _(If you've come here looking to simply run Electrum,
