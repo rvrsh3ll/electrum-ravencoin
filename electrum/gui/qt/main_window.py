@@ -764,7 +764,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         tools_menu.addAction(_("&Encrypt/decrypt message"), self.encrypt_message)
         tools_menu.addSeparator()
         tools_menu.addAction(_('&Get Asset Data'), self.lookup_asset_data)
-        tools_menu.addAction(_("&Identify Qualified Addresses"), self.find_qualified_address)
+        tools_menu.addAction(_("&Identify My Qualified Addresses"), self.find_qualified_address)
         tools_menu.addSeparator()
 
         raw_transaction_menu = tools_menu.addMenu(_("&Load transaction"))
