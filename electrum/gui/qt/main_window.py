@@ -763,7 +763,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         tools_menu.addAction(_("&Sign/verify message"), self.sign_verify_message)
         tools_menu.addAction(_("&Encrypt/decrypt message"), self.encrypt_message)
         tools_menu.addSeparator()
-        tools_menu.addAction(_('&Lookup Asset Data'), self.lookup_asset_data)
+        tools_menu.addAction(_('&Get Asset Data'), self.lookup_asset_data)
         tools_menu.addAction(_("&Identify Qualified Addresses"), self.find_qualified_address)
         tools_menu.addSeparator()
 
@@ -2457,10 +2457,18 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         else:
             # Do a normal lookup
             result = self.wallet.get_addresses_qualified_for_restricted_asset(asset, verifier_string_override=verifier_string)
-            if result:
-                self.show_message(_('The following addresses can receive this asset:') + '\n' + '\n'.join(sorted(result)))
+            not_qualified = set(self.wallet.get_change_addresses()).union(self.wallet.get_receiving_addresses()).difference(result)
+            if len(not_qualified) < len(result):
+                if not_qualified:
+                    self.show_message(_('All addresses can receive this asset except for:') + '\n' + '\n'.join(sorted(not_qualified)))
+                else:
+                    self.show_message(_('All addresses can receive this asset'))
+
             else:
-                self.show_message(_('No addresses can currently receive this asset'))
+                if result:
+                    self.show_message(_('The following addresses can receive this asset:') + '\n' + '\n'.join(sorted(result)))
+                else:
+                    self.show_message(_('No addresses can currently receive this asset'))
 
     @protected
     def export_privkeys_dialog(self, password):

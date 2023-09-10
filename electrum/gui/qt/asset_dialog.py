@@ -128,8 +128,9 @@ class AssetDialog(WindowModalDialog):
         self.valid = True
 
 
-    def close(self):
+    def closeEvent(self, event):
         self.m.ipfs_viewer.unregister_callbacks()
         if self.ipfs:
             trigger_callback('ipfs_hash_dissociate_asset', self.ipfs, self.asset)
-        super().close()
+        event.accept()
+

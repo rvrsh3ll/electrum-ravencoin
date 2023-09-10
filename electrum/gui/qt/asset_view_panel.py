@@ -205,7 +205,7 @@ class MetadataInfo(QWidget):
         self.source_seperator = QHSeperationLine()
         self.source_seperator.setVisible(False)
 
-        self.associated_data_source_label = QLabel(_('Associated data last changed') + ':')
+        self.associated_data_source_label = QLabel(_('Associated Data Last Changed') + ':')
         self.associated_data_source_label.setVisible(False)
         self.associated_data_source_txid = AutoResizingTextEdit()
         self.associated_data_source_txid.setReadOnly(True)
@@ -215,7 +215,7 @@ class MetadataInfo(QWidget):
         self.associated_data_source_button = EnterButton(_('View Transaction'), lambda: self._show_source_tx(self.associated_data_source_txid))
         self.associated_data_source_button.setVisible(False)
 
-        self.divisions_source_label = QLabel(_('Divisions last changed') + ':')
+        self.divisions_source_label = QLabel(_('Divisions Last Changed') + ':')
         self.divisions_source_label.setVisible(False)
         self.divisions_source_txid = AutoResizingTextEdit()
         self.divisions_source_txid.setReadOnly(True)
@@ -235,6 +235,26 @@ class MetadataInfo(QWidget):
         self.main_source_button = EnterButton(_('View Transaction'), lambda: self._show_source_tx(self.main_source_txid))
         self.main_source_button.setVisible(False)
 
+        self.verifier_source_label = QLabel(_('Verifier String Last Changed' + ':'))
+        self.verifier_source_label.setVisible(False)
+        self.verifier_source_txid = AutoResizingTextEdit()
+        self.verifier_source_txid.setReadOnly(True)
+        self.verifier_source_txid.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.verifier_source_txid.setAlignment(Qt.AlignVCenter)
+        self.verifier_source_txid.setVisible(False)
+        self.verifier_source_button = EnterButton(_('View Transaction'), lambda: self._show_source_tx(self.verifier_source_txid))
+        self.verifier_source_button.setVisible(False)
+
+        self.freeze_source_label = QLabel(_('Frozen Status Last Changed' + ':'))
+        self.freeze_source_label.setVisible(False)
+        self.freeze_source_txid = AutoResizingTextEdit()
+        self.freeze_source_txid.setReadOnly(True)
+        self.freeze_source_txid.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.freeze_source_txid.setAlignment(Qt.AlignVCenter)
+        self.freeze_source_txid.setVisible(False)
+        self.freeze_source_button = EnterButton(_('View Transaction'), lambda: self._show_source_tx(self.freeze_source_txid))
+        self.freeze_source_button.setVisible(False)
+
         source_layout = QVBoxLayout()
         source_layout.addWidget(self.source_seperator)
         source_layout.addWidget(self.associated_data_source_label)
@@ -246,6 +266,12 @@ class MetadataInfo(QWidget):
         source_layout.addWidget(self.main_source_label)
         source_layout.addWidget(self.main_source_txid)
         source_layout.addWidget(self.main_source_button)
+        source_layout.addWidget(self.verifier_source_label)
+        source_layout.addWidget(self.verifier_source_txid)
+        source_layout.addWidget(self.verifier_source_button)
+        source_layout.addWidget(self.freeze_source_label)
+        source_layout.addWidget(self.freeze_source_txid)
+        source_layout.addWidget(self.freeze_source_button)
 
         self.ipfs_viewer = IPFSViewer(window)
 
@@ -328,9 +354,9 @@ class MetadataInfo(QWidget):
                 x.setVisible(self.window.config.SHOW_METADATA_SOURCE)
             self.main_source_txid.setText(metadata_sources[0].hex())
             if metadata_sources[1] or metadata_sources[2]:
-                source_text = _('Other data last changed')
+                source_text = _('Other Data Last Changed')
             else:
-                source_text = _('Metadata last changed')
+                source_text = _('Metadata Last Changed')
             self.main_source_label.setText(source_text + ':')
 
             if metadata_sources[1]:
@@ -354,6 +380,26 @@ class MetadataInfo(QWidget):
                 for x in [self.associated_data_source_txid, self.associated_data_source_label,
                           self.associated_data_source_button]:
                     x.setVisible(False)
+
+            if verifier_string_data:
+                for x in [self.verifier_source_button, self.verifier_source_label,
+                          self.verifier_source_txid]:
+                    x.setVisible(self.window.config.SHOW_METADATA_SOURCE)
+                self.verifier_source_txid.setText(verifier_string_data['tx_hash'])
+            else:
+                for x in [self.verifier_source_button, self.verifier_source_label,
+                          self.verifier_source_txid]:
+                    x.setVisible(False)
+
+            if freeze_data:
+                for x in [self.freeze_source_button, self.freeze_source_label,
+                          self.freeze_source_txid]:
+                    x.setVisible(self.window.config.SHOW_METADATA_SOURCE)
+                self.freeze_source_txid.setText(freeze_data['tx_hash'])
+            else:
+                for x in [self.freeze_source_button, self.freeze_source_label,
+                          self.freeze_source_txid]:
+                    x.setVisible(False)
         else:
             for x in [self.main_source_txid, self.divisions_source_txid, self.associated_data_source_txid]:
                 x.clear()
@@ -361,7 +407,10 @@ class MetadataInfo(QWidget):
                         self.associated_data_source_label, self.associated_data_source_button,
                         self.divisions_source_txid, self.divisions_source_label,
                         self.divisions_source_button, self.main_source_txid,
-                        self.main_source_label, self.main_source_button]:
+                        self.main_source_label, self.main_source_button,
+                        self.verifier_source_txid, self.verifier_source_button,
+                        self.verifier_source_label, self.freeze_source_txid,
+                        self.freeze_source_button, self.freeze_source_label]:
                 x.setVisible(False)
 
     def clear(self):
@@ -375,7 +424,10 @@ class MetadataInfo(QWidget):
                   self.associated_data_source_label, self.associated_data_source_button,
                   self.divisions_source_txid, self.divisions_source_label,
                   self.divisions_source_button, self.main_source_txid,
-                  self.main_source_label, self.main_source_button]:
+                  self.main_source_label, self.main_source_button,
+                  self.verifier_source_label, self.verifier_source_txid,
+                  self.verifier_source_button, self.freeze_source_label,
+                  self.freeze_source_txid, self.freeze_source_button]:
             x.setVisible(False)
 
         self.ipfs_viewer.clear()
@@ -449,6 +501,14 @@ class MetadataViewer(QFrame):
                 for x in [self.metadata_info.associated_data_source_txid, self.metadata_info.associated_data_source_label,
                           self.metadata_info.associated_data_source_button]:
                     x.setVisible(self.parent.parent.window.config.SHOW_METADATA_SOURCE)
+        if self.metadata_info.verifier_source_txid.toPlainText():
+            for x in [self.metadata_info.verifier_source_button, self.metadata_info.verifier_source_label,
+                      self.metadata_info.verifier_source_txid]:
+                x.setVisible(self.parent.parent.window.config.SHOW_METADATA_SOURCE)
+        if self.metadata_info.freeze_source_txid.toPlainText():
+            for x in [self.metadata_info.freeze_source_txid, self.metadata_info.freeze_source_button,
+                      self.metadata_info.freeze_source_label]:
+                x.setVisible(self.parent.parent.window.config.SHOW_METADATA_SOURCE)
 
     def update(self):
         self.update_visibility()
