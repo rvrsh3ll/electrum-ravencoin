@@ -1,4 +1,4 @@
-# Electrum - Lightweight Bitcoin client
+# Electrum Ravencoin - Lightweight Ravencoin client
 
 ```
 Licence: MIT Licence
@@ -11,6 +11,10 @@ Homepage: https://electrum.org/
 [![Test coverage statistics](https://coveralls.io/repos/github/spesmilo/electrum/badge.svg?branch=master)](https://coveralls.io/github/spesmilo/electrum?branch=master)
 [![Help translate Electrum online](https://d322cqt584bo4o.cloudfront.net/electrum/localized.svg)](https://crowdin.com/project/electrum)
 
+
+## Run you own server!
+
+https://github.com/Electrum-RVN-SIG/electrumx-ravencoin
 
 ## Need help?
 
