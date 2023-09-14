@@ -23,7 +23,7 @@ Find @kralverde on [discord](https://discord.com/invite/jn6uhur).
 ## Getting started
 
 _(If you've come here looking to simply run Electrum,
-[you may download it here]([https://electrum.org/#download](https://github.com/Electrum-RVN-SIG/electrum-ravencoin/releases/latest)).)_
+[you may download it here]([https://github.com/Electrum-RVN-SIG/electrum-ravencoin/releases/latest]).)_
 
 Electrum itself is pure Python, and so are most of the required dependencies,
 but not everything. The following sections describe how to run from source, but here
