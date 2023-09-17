@@ -114,7 +114,7 @@ class RavencoinMainnet(AbstractNet):
     ADDRTYPE_P2SH = 122
     ADDRTYPE_P2SH_ALT = 122
     MATURE = 60
-    SEGWIT_HRP = ""
+    SEGWIT_HRP = "rc"
     BOLT11_HRP = SEGWIT_HRP
     GENESIS = "0000006b444bc2f2ffe627be9d9e7e7a0730000870ef6eb6da46c8eae389df90"
     DEFAULT_PORTS = {'t': '50001', 's': '50002'}
@@ -192,7 +192,7 @@ class RavencoinTestnet(AbstractNet):
     ADDRTYPE_P2SH = 196
     ADDRTYPE_P2SH_ALT = 196
     MATURE = 60
-    SEGWIT_HRP = ""
+    SEGWIT_HRP = "tc"
     BOLT11_HRP = SEGWIT_HRP
     GENESIS = "000000ecfc5e6324a079542221d00e10362bdc894d56500c414060eea8a3ad5a"
     DEFAULT_PORTS = {'t': '51001', 's': '51002'}
