@@ -1,4 +1,4 @@
-# Electrum - Lightweight Bitcoin client
+# Electrum Ravencoin - Lightweight Ravencoin client
 
 ```
 Licence: MIT Licence
@@ -12,6 +12,10 @@ Homepage: https://electrum.org/
 [![Help translate Electrum online](https://d322cqt584bo4o.cloudfront.net/electrum/localized.svg)](https://crowdin.com/project/electrum)
 
 
+## Run your own server!
+
+https://github.com/Electrum-RVN-SIG/electrumx-ravencoin
+
 ## Need help?
 
 Find @kralverde on [discord](https://discord.com/invite/jn6uhur).
@@ -19,7 +23,7 @@ Find @kralverde on [discord](https://discord.com/invite/jn6uhur).
 ## Getting started
 
 _(If you've come here looking to simply run Electrum,
-[you may download it here](https://electrum.org/#download).)_
+[you may download it here](https://github.com/Electrum-RVN-SIG/electrum-ravencoin/releases/latest).)_
 
 Electrum itself is pure Python, and so are most of the required dependencies,
 but not everything. The following sections describe how to run from source, but here
