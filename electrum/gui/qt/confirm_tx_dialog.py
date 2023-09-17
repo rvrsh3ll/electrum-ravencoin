@@ -407,11 +407,12 @@ class TxEditor(WindowModalDialog):
             self.toggle_locktime,
             _('Edit Locktime'), '', enabled=self.allow_edit_locktime)
         self.pref_menu.addSeparator()
-        add_pref_action(
-            self.config.WALLET_SEND_CHANGE_TO_LIGHTNING,
-            self.toggle_send_change_to_lightning,
-            _('Send change to Lightning'),
-            _('If possible, send the change of this transaction to your channels, with a submarine swap'))
+        # No lightning on ravencoin
+        #add_pref_action(
+        #    self.config.WALLET_SEND_CHANGE_TO_LIGHTNING,
+        #    self.toggle_send_change_to_lightning,
+        #    _('Send change to Lightning'),
+        #    _('If possible, send the change of this transaction to your channels, with a submarine swap'))
         add_pref_action(
             self.wallet.use_change,
             self.toggle_use_change,
