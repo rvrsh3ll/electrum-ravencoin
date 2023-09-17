@@ -99,7 +99,20 @@ class Plugins(DaemonThread):
         return cls._all_found_plugins
 
     def load_plugins(self):
-        for name, d in self.find_all_plugins().items():
+        for loader, name, ispkg in pkgutil.iter_modules([self.pkgpath]):
+            full_name = f'electrum.plugins.{name}'
+            spec = importlib.util.find_spec(full_name)
+            if spec is None:  # pkgutil found it but importlib can't ?!
+                raise Exception(f"Error pre-loading {full_name}: no spec")
+            try:
+                module = importlib.util.module_from_spec(spec)
+                # sys.modules needs to be modified for relative imports to work
+                # see https://stackoverflow.com/a/50395128
+                sys.modules[spec.name] = module
+                spec.loader.exec_module(module)
+            except Exception as e:
+                raise Exception(f"Error pre-loading {full_name}: {repr(e)}") from e
+            d = module.__dict__
             gui_good = self.gui_name in d.get('available_for', [])
             if not gui_good:
                 continue
