@@ -5,7 +5,7 @@ from PyQt5.QtWidgets import QLabel, QVBoxLayout, QGridLayout, QPushButton
 
 from electrum.i18n import _
 from electrum.util import NotEnoughFunds, NoDynamicFeeEstimates
-from electrum.lnutil import ln_dummy_address
+from electrum.bitcoin import DummyAddress
 from electrum.transaction import PartialTxOutput, PartialTransaction
 
 from electrum.gui import messages
@@ -173,7 +173,7 @@ class SwapDialog(WindowModalDialog, QtEventListener):
 
     def _spend_max_forward_swap(self, tx: Optional[PartialTransaction]) -> None:
         if tx:
-            amount = tx.output_value_for_address(ln_dummy_address())
+            amount = tx.output_value_for_address(DummyAddress.SWAP)
             self.send_amount_e.setAmount(amount)
         else:
             self.send_amount_e.setAmount(None)
@@ -256,7 +256,7 @@ class SwapDialog(WindowModalDialog, QtEventListener):
                 lightning_amount_sat=lightning_amount,
                 expected_onchain_amount_sat=onchain_amount + self.swap_manager.get_claim_fee(),
             )
-            self.window.run_coroutine_from_thread(coro, _('Swapping funds'))
+            self.window.run_coroutine_from_thread(coro, _('Swapping funds'), on_result=self.window.on_swap_result)
             return True
         else:
             lightning_amount = self.recv_amount_e.get_amount()
@@ -294,7 +294,8 @@ class SwapDialog(WindowModalDialog, QtEventListener):
                 raise InvalidSwapParameters("swap_manager.max_amount_forward_swap() is None")
             if max_amount > max_swap_amount:
                 onchain_amount = max_swap_amount
-        outputs = [PartialTxOutput.from_address_and_value(ln_dummy_address(), onchain_amount)]
+        self.config.WALLET_SEND_CHANGE_TO_LIGHTNING = False
+        outputs = [PartialTxOutput.from_address_and_value(DummyAddress.SWAP, onchain_amount)]
         try:
             tx = self.window.wallet.make_unsigned_transaction(
                 coins=coins,
@@ -316,24 +317,25 @@ class SwapDialog(WindowModalDialog, QtEventListener):
         self.ok_button.setEnabled(bool(send_amount) and bool(recv_amount))
 
     def do_normal_swap(self, lightning_amount, onchain_amount, password):
-        tx = self._create_tx(onchain_amount)
-        assert tx
-        coro = self.swap_manager.normal_swap(
+        dummy_tx = self._create_tx(onchain_amount)
+        assert dummy_tx
+        sm = self.swap_manager
+        coro = sm.request_normal_swap(
             lightning_amount_sat=lightning_amount,
             expected_onchain_amount_sat=onchain_amount,
-            password=password,
-            tx=tx,
             channels=self.channels,
         )
-        def on_result(txid):
-            msg = _("Submarine swap") + ': ' + (_("Success") if txid else _("Expired")) + '\n'
-            if txid:
-                msg += _("Funding transaction") + ': ' + txid + '\n'
-                msg += _("Please remain online until your transaction is confirmed")
-            else:
-                msg += _("The server failed to send lightning funds to you")
-            self.window.show_error_signal.emit(msg)
-        self.window.run_coroutine_from_thread(coro, _('Swapping funds'), on_result=on_result)
+        try:
+            swap, invoice = self.network.run_from_another_thread(coro)
+        except Exception as e:
+            self.window.show_error(str(e))
+            return
+        tx = sm.create_funding_tx(swap, dummy_tx, password)
+        coro2 = sm.wait_for_htlcs_and_broadcast(swap, invoice, tx)
+        self.window.run_coroutine_dialog(
+            coro2, _('Awaiting swap payment...'),
+            on_result=self.window.on_swap_result,
+            on_cancelled=lambda: sm.cancel_normal_swap(swap))
 
     def get_description(self):
         onchain_funds = "onchain funds"

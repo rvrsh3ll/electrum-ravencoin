@@ -49,6 +49,7 @@ from .bip32 import BIP32Node
 from .i18n import _
 from .transaction import (Transaction, multisig_script, TxOutput, PartialTransaction, PartialTxOutput,
                           tx_from_any, PartialTxInput, TxOutpoint)
+from . import transaction
 from .invoices import PR_PAID, PR_UNPAID, PR_UNKNOWN, PR_EXPIRED
 from .synchronizer import Notifier
 from .wallet import Abstract_Wallet, create_new_wallet, restore_wallet_from_text, Deterministic_Wallet
@@ -58,7 +59,7 @@ from .lnutil import SENT, RECEIVED
 from .lnutil import LnFeatures
 from .lnutil import extract_nodeid
 from .lnpeer import channel_id_from_funding_tx
-from .plugin import run_hook, DeviceMgr
+from .plugin import run_hook, DeviceMgr, Plugins
 from .version import ELECTRUM_VERSION
 from .simple_config import SimpleConfig
 from .invoices import Invoice
@@ -145,6 +146,12 @@ def command(s):
                         if wallet is None:
                             raise Exception('wallet not loaded')
                         kwargs['wallet'] = wallet
+                    if cmd.requires_password and password is None and wallet.has_password():
+                        password = wallet.get_unlocked_password()
+                        if password:
+                            kwargs['password'] = password
+                        else:
+                            raise Exception('Password required. Unlock the wallet, or add a --password option to your command')
             wallet = kwargs.get('wallet')  # type: Optional[Abstract_Wallet]
             if cmd.requires_wallet and not wallet:
                 raise Exception('wallet not loaded')
@@ -304,7 +311,11 @@ class Commands:
     @command('')
     async def getconfig(self, key):
         """Return a configuration variable. """
-        return self.config.get(key)
+        if Plugins.is_plugin_enabler_config_key(key):
+            return self.config.get(key)
+        else:
+            cv = self.config.cv.from_key(key)
+            return cv.get()
 
     @classmethod
     def _setconfig_normalize_value(cls, key, value):
@@ -325,14 +336,12 @@ class Commands:
             self.daemon.commands_server.rpc_user = value
         if self.daemon and key == SimpleConfig.RPC_PASSWORD.key():
             self.daemon.commands_server.rpc_password = value
-        self.config.set_key(key, value)
+        if Plugins.is_plugin_enabler_config_key(key):
+            self.config.set_key(key, value)
+        else:
+            cv = self.config.cv.from_key(key)
+            cv.set(value)
         return True
-
-    @command('')
-    async def get_ssl_domain(self):
-        """Check and return the SSL domain set in ssl_keyfile and ssl_certfile
-        """
-        return self.config.get_ssl_domain()
 
     @command('')
     async def make_seed(self, nbits=None, language=None, seed_type=None):
@@ -622,6 +631,12 @@ class Commands:
         return ret
 
     @command('w')
+    async def unlock(self, password=None, wallet: Abstract_Wallet = None):
+        """Unlock the wallet. The wallet password will be stored in memory"""
+        wallet.unlock(password)
+        return "wallet unlocked" if password else "wallet locked"
+
+    @command('w')
     async def getmpk(self, wallet: Abstract_Wallet = None):
         """Get master public key. Return your wallet\'s master public key"""
         return wallet.get_master_public_key()
@@ -782,8 +797,19 @@ class Commands:
 
     @command('wp')
     async def bumpfee(self, tx, new_fee_rate, from_coins=None, decrease_payment=False, password=None, unsigned=False, wallet: Abstract_Wallet = None):
-        """ Bump the Fee for an unconfirmed Transaction """
-        tx = Transaction(tx)
+        """Bump the fee for an unconfirmed transaction.
+        'tx' can be either a raw hex tx or a txid. If txid, the corresponding tx must already be part of the wallet history.
+        """
+        if is_hash256_str(tx):  # txid
+            tx = wallet.db.get_transaction(tx)
+            if tx is None:
+                raise Exception("Transaction not in wallet.")
+        else:  # raw tx
+            try:
+                tx = Transaction(tx)
+                tx.deserialize()
+            except transaction.SerializationError as e:
+                raise Exception(f"Failed to deserialize transaction: {e}") from e
         domain_coins = from_coins.split(',') if from_coins else None
         coins = wallet.get_spendable_coins(None)
         if domain_coins is not None:
@@ -1191,16 +1217,6 @@ class Commands:
         ]
 
     @command('wnl')
-    async def dumpgraph(self, wallet: Abstract_Wallet = None):
-        return wallet.lnworker.channel_db.to_dict()
-
-    @command('n')
-    async def inject_fees(self, fees):
-        # e.g. use from Qt console:  inject_fees("{25: 1009, 10: 15962, 5: 18183, 2: 23239}")
-        fee_est = ast.literal_eval(fees)
-        self.network.update_fee_estimates(fee_est=fee_est)
-
-    @command('wnl')
     async def enable_htlc_settle(self, b: bool, wallet: Abstract_Wallet = None):
         wallet.lnworker.enable_htlc_settle = b
 
@@ -1269,8 +1285,8 @@ class Commands:
         from .lnutil import ShortChannelID
         from_scid = ShortChannelID.from_str(from_scid)
         dest_scid = ShortChannelID.from_str(dest_scid)
-        from_channel = wallet.lnworker.get_channel_by_scid(from_scid)
-        dest_channel = wallet.lnworker.get_channel_by_scid(dest_scid)
+        from_channel = wallet.lnworker.get_channel_by_short_id(from_scid)
+        dest_channel = wallet.lnworker.get_channel_by_short_id(dest_scid)
         amount_sat = satoshis(amount)
         success, log = await wallet.lnworker.rebalance_channels(
             from_channel,
@@ -1593,7 +1609,7 @@ def get_parser():
     # gui
     parser_gui = subparsers.add_parser('gui', description="Run Electrum's Graphical User Interface.", help="Run GUI (default)")
     parser_gui.add_argument("url", nargs='?', default=None, help="bitcoin URI (or bip70 file)")
-    parser_gui.add_argument("-g", "--gui", dest=SimpleConfig.GUI_NAME.key(), help="select graphical user interface", choices=['qt', 'kivy', 'text', 'stdio', 'qml'])
+    parser_gui.add_argument("-g", "--gui", dest=SimpleConfig.GUI_NAME.key(), help="select graphical user interface", choices=['qt', 'text', 'stdio', 'qml'])
     parser_gui.add_argument("-m", action="store_true", dest=SimpleConfig.GUI_QT_HIDE_ON_STARTUP.key(), default=False, help="hide GUI on startup")
     parser_gui.add_argument("-L", "--lang", dest=SimpleConfig.LOCALIZATION_LANGUAGE.key(), default=None, help="default language used in GUI")
     parser_gui.add_argument("--daemon", action="store_true", dest="daemon", default=False, help="keep daemon running after GUI is closed")

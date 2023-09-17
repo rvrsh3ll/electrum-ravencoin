@@ -4,7 +4,7 @@ import time
 import os
 import stat
 from decimal import Decimal
-from typing import Union, Optional, Dict, Sequence, Tuple, Any, Set
+from typing import Union, Optional, Dict, Sequence, Tuple, Any, Set, Callable
 from numbers import Real
 from functools import cached_property
 
@@ -52,25 +52,41 @@ _logger = get_logger(__name__)
 FINAL_CONFIG_VERSION = 3
 
 
+_config_var_from_key = {}  # type: Dict[str, 'ConfigVar']
+
+
 class ConfigVar(property):
 
-    def __init__(self, key: str, *, default, type_=None):
+    def __init__(
+        self,
+        key: str,
+        *,
+        default: Union[Any, Callable[['SimpleConfig'], Any]],  # typically a literal, but can also be a callable
+        type_=None,
+    ):
         self._key = key
         self._default = default
         self._type = type_
         property.__init__(self, self._get_config_value, self._set_config_value)
+        assert key not in _config_var_from_key, f"duplicate config key str: {key!r}"
+        _config_var_from_key[key] = self
 
     def _get_config_value(self, config: 'SimpleConfig'):
-        value = config.get(self._key, default=self._default)
-        if self._type is not None and value != self._default:
-            assert value is not None, f"got None for key={self._key!r}"
-            try:
-                value = self._type(value)
-            except Exception as e:
-                raise ValueError(
-                    f"ConfigVar.get type-check and auto-conversion failed. "
-                    f"key={self._key!r}. type={self._type}. value={value!r}") from e
-        return value
+        with config.lock:
+            if config.is_set(self._key):
+                value = config.get(self._key)
+                if self._type is not None:
+                    assert value is not None, f"got None for key={self._key!r}"
+                    try:
+                        value = self._type(value)
+                    except Exception as e:
+                        raise ValueError(
+                            f"ConfigVar.get type-check and auto-conversion failed. "
+                            f"key={self._key!r}. type={self._type}. value={value!r}") from e
+            else:
+                d = self._default
+                value = d(config) if callable(d) else d
+            return value
 
     def _set_config_value(self, config: 'SimpleConfig', value, *, save=True):
         if self._type is not None and value is not None:
@@ -90,8 +106,8 @@ class ConfigVar(property):
         return f"<ConfigVar key={self._key!r}>"
 
     def __deepcopy__(self, memo):
-        cv = ConfigVar(self._key, default=self._default, type_=self._type)
-        return cv
+        # We can be considered ~stateless. State is stored in the config, which is external.
+        return self
 
 
 class ConfigVarWithConfig:
@@ -120,6 +136,11 @@ class ConfigVarWithConfig:
 
     def __repr__(self):
         return f"<ConfigVarWithConfig key={self.key()!r}>"
+
+    def __eq__(self, other) -> bool:
+        if not isinstance(other, ConfigVarWithConfig):
+            return False
+        return self._config is other._config and self._config_var is other._config_var
 
 
 class SimpleConfig(Logger):
@@ -817,9 +838,17 @@ class SimpleConfig(Logger):
         """
         class CVLookupHelper:
             def __getattribute__(self, name: str) -> ConfigVarWithConfig:
+                if name in ("from_key", ):  # don't apply magic, just use standard lookup
+                    return super().__getattribute__(name)
                 config_var = config.__class__.__getattribute__(type(config), name)
                 if not isinstance(config_var, ConfigVar):
                     raise AttributeError()
+                return ConfigVarWithConfig(config=config, config_var=config_var)
+            def from_key(self, key: str) -> ConfigVarWithConfig:
+                try:
+                    config_var = _config_var_from_key[key]
+                except KeyError:
+                    raise KeyError(f"No ConfigVar with key={key!r}") from None
                 return ConfigVarWithConfig(config=config, config_var=config_var)
             def __setattr__(self, name, value):
                 raise Exception(
@@ -827,14 +856,14 @@ class SimpleConfig(Logger):
                     f"Either use config.cv.{name}.set() or assign to config.{name} instead.")
         return CVLookupHelper()
 
-    def get_swapserver_url(self):
+    def _default_swapserver_url(self) -> str:
         if constants.net == constants.BitcoinMainnet:
             default = 'https://swaps.electrum.org/api'
         elif constants.net == constants.BitcoinTestnet:
             default = 'https://swaps.electrum.org/testnet'
         else:
             default = 'http://localhost:5455'
-        return self.SWAPSERVER_URL or default
+        return default
 
     # config variables ----->
     NETWORK_AUTO_CONNECT = ConfigVar('auto_connect', default=True, type_=bool)
@@ -858,6 +887,7 @@ class SimpleConfig(Logger):
     WALLET_PAYREQ_EXPIRY_SECONDS = ConfigVar('request_expiry', default=invoices.PR_DEFAULT_EXPIRATION_WHEN_CREATING, type_=int)
     WALLET_USE_SINGLE_PASSWORD = ConfigVar('single_password', default=False, type_=bool)
     # note: 'use_change' and 'multiple_change' are per-wallet settings
+    WALLET_SEND_CHANGE_TO_LIGHTNING = ConfigVar('send_change_to_lightning', default=False, type_=bool)
 
     FX_USE_EXCHANGE_RATE = ConfigVar('use_exchange_rate', default=False, type_=bool)
     FX_CURRENCY = ConfigVar('currency', default='EUR', type_=str)
@@ -940,6 +970,7 @@ class SimpleConfig(Logger):
     CLI_TIMEOUT = ConfigVar('timeout', default=60, type_=float)
     AUTOMATIC_CENTRALIZED_UPDATE_CHECKS = ConfigVar('check_updates', default=False, type_=bool)
     WRITE_LOGS_TO_DISK = ConfigVar('log_to_file', default=False, type_=bool)
+    LOGS_NUM_FILES_KEEP = ConfigVar('logs_num_files_keep', default=10, type_=int)
     GUI_ENABLE_DEBUG_LOGS = ConfigVar('gui_enable_debug_logs', default=False, type_=bool)
     LOCALIZATION_LANGUAGE = ConfigVar('language', default="", type_=str)
     BLOCKCHAIN_PREFERRED_BLOCK = ConfigVar('blockchain_preferred_block', default=None)
@@ -955,7 +986,7 @@ class SimpleConfig(Logger):
     CONFIG_FORGET_CHANGES = ConfigVar('forget_config', default=False, type_=bool)
 
     # submarine swap server
-    SWAPSERVER_URL = ConfigVar('swapserver_url', default='', type_=str)
+    SWAPSERVER_URL = ConfigVar('swapserver_url', default=_default_swapserver_url, type_=str)
     SWAPSERVER_PORT = ConfigVar('swapserver_port', default=5455, type_=int)
     TEST_SWAPSERVER_REFUND = ConfigVar('test_swapserver_refund', default=False, type_=bool)
 

@@ -11,7 +11,7 @@ import operator
 import enum
 from enum import IntEnum, Enum
 from typing import (Optional, Sequence, Tuple, List, Set, Dict, TYPE_CHECKING,
-                    NamedTuple, Union, Mapping, Any, Iterable, AsyncGenerator, DefaultDict, Callable)
+                    NamedTuple, Union, Mapping, Any, Iterable, AsyncGenerator, DefaultDict, Callable, Awaitable)
 import threading
 import socket
 import aiohttp
@@ -56,7 +56,7 @@ from .lnchannel import ChannelState, PeerState, HTLCWithStatus
 from .lnrater import LNRater
 from . import lnutil
 from .lnutil import funding_output_script
-from .bitcoin import redeem_script_to_address
+from .bitcoin import redeem_script_to_address, DummyAddress
 from .lnutil import (Outpoint, LNPeerAddr,
                      get_compressed_pubkey_from_bech32, extract_nodeid,
                      PaymentFailure, split_host_port, ConnStringFormatError,
@@ -66,7 +66,7 @@ from .lnutil import (Outpoint, LNPeerAddr,
                      UpdateAddHtlc, Direction, LnFeatures, ShortChannelID,
                      HtlcLog, derive_payment_secret_from_payment_preimage,
                      NoPathFound, InvalidGossipMsg)
-from .lnutil import ln_dummy_address, ln_compare_features, IncompatibleLightningFeatures
+from .lnutil import ln_compare_features, IncompatibleLightningFeatures
 from .transaction import PartialTxOutput, PartialTransaction, PartialTxInput
 from .lnonion import OnionFailureCode, OnionRoutingFailure, OnionPacket
 from .lnmsg import decode_msg
@@ -842,8 +842,8 @@ class LNWallet(LNWorker):
         self.final_onion_forwarding_failures = {} # todo: should be persisted
         # map forwarded htlcs (fw_info=(scid_hex, htlc_id)) to originating peer pubkeys
         self.downstream_htlc_to_upstream_peer_map = {}  # type: Dict[Tuple[str, int], bytes]
-        # payment_hash -> callback, timeout:
-        self.hold_invoice_callbacks = {}                # type: Dict[bytes, Tuple[Callable[[bytes], None], int]]
+        # payment_hash -> callback:
+        self.hold_invoice_callbacks = {}                # type: Dict[bytes, Callable[[bytes], Awaitable[None]]]
         self.payment_bundles = []                       # lists of hashes. todo:persist
         self.swap_manager = SwapManager(wallet=self.wallet, lnworker=self)
 
@@ -881,11 +881,6 @@ class LNWallet(LNWorker):
 
     def get_channel_by_id(self, channel_id: bytes) -> Optional[Channel]:
         return self._channels.get(channel_id, None)
-
-    def get_channel_by_scid(self, scid: bytes) -> Optional[Channel]:
-        for chan in self._channels.values():
-            if chan.short_channel_id == scid:
-                return chan
 
     def diagnostic_name(self):
         return self.wallet.diagnostic_name()
@@ -1134,13 +1129,20 @@ class LNWallet(LNWorker):
                     label += f' (refundable in {-delta} blocks)' # fixme: only if unspent
             self._labels_cache[txid] = label
             out[txid] = {
-                'txid': txid,
                 'group_id': txid,
-                'amount_msat': 0,
-                #'amount_msat': amount_msat, # must not be added
+                'amount_msat': 0, # must be zero for onchain tx
                 'type': 'swap',
-                'label': self.get_label_for_txid(txid),
+                'label': _('Funding transaction'),
             }
+            if not swap.is_reverse:
+                # if the spending_tx is in the wallet, this will add it
+                # to the group (see wallet.get_full_history)
+                out[swap.spending_txid] = {
+                    'group_id': txid,
+                    'amount_msat': 0, # must be zero for onchain tx
+                    'type': 'swap',
+                    'label': _('Refund transaction'),
+                }
         return out
 
     def get_history(self):
@@ -1274,7 +1276,7 @@ class LNWallet(LNWorker):
             funding_sat: int,
             node_id: bytes,
             fee_est=None) -> PartialTransaction:
-        outputs = [PartialTxOutput.from_address_and_value(ln_dummy_address(), funding_sat)]
+        outputs = [PartialTxOutput.from_address_and_value(DummyAddress.CHANNEL, funding_sat)]
         if self.has_recoverable_channels():
             dummy_scriptpubkey = make_op_return(self.cb_data(node_id))
             outputs.append(PartialTxOutput(scriptpubkey=dummy_scriptpubkey, value=0))
@@ -1326,6 +1328,8 @@ class LNWallet(LNWorker):
     def get_channel_by_short_id(self, short_channel_id: bytes) -> Optional[Channel]:
         for chan in self.channels.values():
             if chan.short_channel_id == short_channel_id:
+                return chan
+            if chan.get_remote_scid_alias() == short_channel_id:
                 return chan
 
     def can_pay_invoice(self, invoice: Invoice) -> bool:
@@ -2039,23 +2043,30 @@ class LNWallet(LNWorker):
         return payment_hash
 
     def bundle_payments(self, hash_list):
-        self.payment_bundles.append(hash_list)
+        payment_keys = [self._get_payment_key(x) for x in hash_list]
+        self.payment_bundles.append(payment_keys)
 
-    def get_payment_bundle(self, payment_hash):
-        for hash_list in self.payment_bundles:
-            if payment_hash in hash_list:
-                return hash_list
+    def get_payment_bundle(self, payment_key):
+        for key_list in self.payment_bundles:
+            if payment_key in key_list:
+                return key_list
 
     def save_preimage(self, payment_hash: bytes, preimage: bytes, *, write_to_disk: bool = True):
-        assert sha256(preimage) == payment_hash
+        if sha256(preimage) != payment_hash:
+            raise Exception("tried to save incorrect preimage for payment_hash")
         self.preimages[payment_hash.hex()] = preimage.hex()
         if write_to_disk:
             self.wallet.save_db()
 
     def get_preimage(self, payment_hash: bytes) -> Optional[bytes]:
         assert isinstance(payment_hash, bytes), f"expected bytes, but got {type(payment_hash)}"
-        r = self.preimages.get(payment_hash.hex())
-        return bytes.fromhex(r) if r else None
+        preimage_hex = self.preimages.get(payment_hash.hex())
+        if preimage_hex is None:
+            return None
+        preimage_bytes = bytes.fromhex(preimage_hex)
+        if sha256(preimage_bytes) != payment_hash:
+            raise Exception("found incorrect preimage for payment_hash")
+        return preimage_bytes
 
     def get_payment_info(self, payment_hash: bytes) -> Optional[PaymentInfo]:
         """returns None if payment_hash is a payment we are forwarding"""
@@ -2069,8 +2080,11 @@ class LNWallet(LNWorker):
         info = PaymentInfo(payment_hash, lightning_amount_sat * 1000, RECEIVED, PR_UNPAID)
         self.save_payment_info(info, write_to_disk=False)
 
-    def register_callback_for_hold_invoice(self, payment_hash: bytes, cb: Callable[[bytes], None]):
+    def register_hold_invoice(self, payment_hash: bytes, cb: Callable[[bytes], Awaitable[None]]):
         self.hold_invoice_callbacks[payment_hash] = cb
+
+    def unregister_hold_invoice(self, payment_hash: bytes):
+        self.hold_invoice_callbacks.pop(payment_hash)
 
     def save_payment_info(self, info: PaymentInfo, *, write_to_disk: bool = True) -> None:
         key = info.payment_hash.hex()
@@ -2093,13 +2107,9 @@ class LNWallet(LNWorker):
             payment_key=payment_key, scid=short_channel_id, htlc=htlc, expected_msat=expected_msat)
         mpp_resolution = self.received_mpp_htlcs[payment_key].resolution
         if mpp_resolution == RecvMPPResolution.WAITING:
-            bundle = self.get_payment_bundle(payment_hash)
+            bundle = self.get_payment_bundle(payment_key)
             if bundle:
-                payment_keys = [self._get_payment_key(h) for h in bundle]
-                if payment_key not in payment_keys:
-                    # outer trampoline onion secret differs from inner onion
-                    # the latter, not the former, might be part of a bundle
-                    payment_keys = [payment_key]
+                payment_keys = bundle
             else:
                 payment_keys = [payment_key]
             first_timestamp = min([self.get_first_timestamp_of_mpp(pkey) for pkey in payment_keys])
@@ -2549,7 +2559,7 @@ class LNWallet(LNWorker):
             # check that we can send onchain
             swap_server_mining_fee = 10000 # guessing, because we have not called get_pairs yet
             swap_funding_sat = swap_recv_amount + swap_server_mining_fee
-            swap_output = PartialTxOutput.from_address_and_value(ln_dummy_address(), int(swap_funding_sat))
+            swap_output = PartialTxOutput.from_address_and_value(DummyAddress.SWAP, int(swap_funding_sat))
             if not self.wallet.can_pay_onchain([swap_output], coins=coins):
                 continue
             return (chan, swap_recv_amount)
@@ -2614,7 +2624,7 @@ class LNWallet(LNWorker):
         await self.network.broadcast_transaction(tx)
         return tx.txid()
 
-    def schedule_force_closing(self, chan_id: bytes) -> 'asyncio.Task[None]':
+    def schedule_force_closing(self, chan_id: bytes) -> 'asyncio.Task[bool]':
         """Schedules a task to force-close the channel and returns it.
         Network-related exceptions are suppressed.
         (automatic rebroadcasts will be scheduled)

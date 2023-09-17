@@ -24,7 +24,7 @@ from . import constants
 from .util import (bfh, log_exceptions, ignore_exceptions, chunks, OldTaskGroup,
                    UnrelatedTransactionException, error_text_bytes_to_safe_str)
 from . import transaction
-from .bitcoin import make_op_return
+from .bitcoin import make_op_return, DummyAddress
 from .transaction import PartialTxOutput, match_script_against_template, Sighash
 from .logging import Logger
 from .lnonion import (new_onion_packet, OnionFailureCode, calc_hops_data_for_payment,
@@ -48,7 +48,6 @@ from .lntransport import LNTransport, LNTransportBase
 from .lnmsg import encode_msg, decode_msg, UnknownOptionalMsgType, FailedToParseMsg
 from .interface import GracefulDisconnect
 from .lnrouter import fee_for_edge_msat
-from .lnutil import ln_dummy_address
 from .json_db import StoredDict
 from .invoices import PR_PAID
 from .simple_config import FEE_LN_ETA_TARGET
@@ -813,11 +812,7 @@ class Peer(Logger):
         redeem_script = funding_output_script(local_config, remote_config)
         funding_address = bitcoin.redeem_script_to_address('p2wsh', redeem_script)
         funding_output = PartialTxOutput.from_address_and_value(funding_address, funding_sat)
-        dummy_output = PartialTxOutput.from_address_and_value(ln_dummy_address(), funding_sat)
-        if dummy_output not in funding_tx.outputs(): raise Exception("LN dummy output (err 1)")
-        funding_tx._outputs.remove(dummy_output)
-        if dummy_output in funding_tx.outputs(): raise Exception("LN dummy output (err 2)")
-        funding_tx.add_outputs([funding_output])
+        funding_tx.replace_output_address(DummyAddress.CHANNEL, funding_address)
         # find and encrypt op_return data associated to funding_address
         has_onchain_backup = self.lnworker and self.lnworker.has_recoverable_channels()
         if has_onchain_backup:
@@ -1885,14 +1880,6 @@ class Peer(Logger):
                     trampoline_onion=trampoline_onion)
                 return None, callback
 
-        preimage = self.lnworker.get_preimage(payment_hash)
-        hold_invoice_callback = self.lnworker.hold_invoice_callbacks.get(payment_hash)
-        if hold_invoice_callback:
-            if preimage:
-                return preimage, None
-            else:
-                return None, lambda: hold_invoice_callback(payment_hash)
-
         # TODO don't accept payments twice for same invoice
         # TODO check invoice expiry
         info = self.lnworker.get_payment_info(payment_hash)
@@ -1901,12 +1888,9 @@ class Peer(Logger):
             raise exc_incorrect_or_unknown_pd
 
         preimage = self.lnworker.get_preimage(payment_hash)
-        if not preimage:
-            self.logger.info(f"missing preimage and no hold invoice callback {payment_hash.hex()}")
-            raise exc_incorrect_or_unknown_pd
-
         expected_payment_secrets = [self.lnworker.get_payment_secret(htlc.payment_hash)]
-        expected_payment_secrets.append(derive_payment_secret_from_payment_preimage(preimage)) # legacy secret for old invoices
+        if preimage:
+            expected_payment_secrets.append(derive_payment_secret_from_payment_preimage(preimage)) # legacy secret for old invoices
         if payment_secret_from_onion not in expected_payment_secrets:
             log_fail_reason(f'incorrect payment secret {payment_secret_from_onion.hex()} != {expected_payment_secrets[0].hex()}')
             raise exc_incorrect_or_unknown_pd
@@ -1914,6 +1898,15 @@ class Peer(Logger):
         if not (invoice_msat is None or invoice_msat <= total_msat <= 2 * invoice_msat):
             log_fail_reason(f"total_msat={total_msat} too different from invoice_msat={invoice_msat}")
             raise exc_incorrect_or_unknown_pd
+
+        hold_invoice_callback = self.lnworker.hold_invoice_callbacks.get(payment_hash)
+        if hold_invoice_callback and not preimage:
+            return None, lambda: hold_invoice_callback(payment_hash)
+
+        if not preimage:
+            self.logger.info(f"missing preimage and no hold invoice callback {payment_hash.hex()}")
+            raise exc_incorrect_or_unknown_pd
+
         self.logger.info(f"maybe_fulfill_htlc. will FULFILL HTLC: chan {chan.short_channel_id}. htlc={str(htlc)}")
         return preimage, None
 
@@ -2422,7 +2415,7 @@ class Peer(Logger):
                     payment_key = payment_hash + payment_secret
                     # trampoline- HTLC we are supposed to forward, but haven't forwarded yet
                     if not self.lnworker.enable_htlc_forwarding:
-                        pass
+                        return None, None, None
                     elif payment_key in self.lnworker.final_onion_forwardings:
                         # we are already forwarding this payment
                         self.logger.info(f"we are already forwarding this.")
@@ -2441,8 +2434,9 @@ class Peer(Logger):
                                 # remove from list of payments, so that another attempt can be initiated
                                 self.lnworker.final_onion_forwardings.remove(payment_key)
                         asyncio.ensure_future(wrapped_callback())
-                        fw_info = payment_key.hex()
-                        return None, fw_info, None
+                    # return fw_info so that maybe_fulfill_htlc will not be called again
+                    fw_info = payment_key.hex()
+                    return None, fw_info, None
             else:
                 # trampoline- HTLC we are supposed to forward, and have already forwarded
                 payment_key_outer_onion = bytes.fromhex(forwarding_info)

@@ -39,6 +39,7 @@ from electrum.plugin import run_hook
 from electrum.transaction import Transaction, PartialTransaction
 from electrum.wallet import InternalAddressCorruption
 from electrum.simple_config import SimpleConfig
+from electrum.bitcoin import DummyAddress
 
 from .util import (WindowModalDialog, ColorScheme, HelpLabel, Buttons, CancelButton,
                    BlockingWaitingDialog, PasswordLineEdit, WWLabel, read_QIcon)
@@ -98,6 +99,7 @@ class TxEditor(WindowModalDialog):
         vbox.addLayout(grid)
         vbox.addWidget(self.io_widget)
         self.message_label = WWLabel('')
+        self.message_label.setMinimumHeight(70)
         vbox.addWidget(self.message_label)
 
         buttons = self.create_buttons_bar()
@@ -406,6 +408,11 @@ class TxEditor(WindowModalDialog):
             _('Edit Locktime'), '', enabled=self.allow_edit_locktime)
         self.pref_menu.addSeparator()
         add_pref_action(
+            self.config.WALLET_SEND_CHANGE_TO_LIGHTNING,
+            self.toggle_send_change_to_lightning,
+            _('Send change to Lightning'),
+            _('If possible, send the change of this transaction to your channels, with a submarine swap'))
+        add_pref_action(
             self.wallet.use_change,
             self.toggle_use_change,
             _('Use change addresses'),
@@ -479,6 +486,11 @@ class TxEditor(WindowModalDialog):
     def toggle_batch_rbf(self):
         b = not self.config.WALLET_BATCH_RBF
         self.config.WALLET_BATCH_RBF = b
+        self.trigger_update()
+
+    def toggle_send_change_to_lightning(self):
+        b = not self.config.WALLET_SEND_CHANGE_TO_LIGHTNING
+        self.config.WALLET_SEND_CHANGE_TO_LIGHTNING = b
         self.trigger_update()
 
     def toggle_confirmed_only(self):
@@ -582,6 +594,8 @@ class TxEditor(WindowModalDialog):
                 self.error = long_warning
             else:
                 messages.append(long_warning)
+        if self.tx.has_dummy_output(DummyAddress.SWAP):
+            messages.append(_('This transaction will send funds to a submarine swap.'))
         # warn if spending unconf
         if any((txin.block_height is not None and txin.block_height<=0) for txin in self.tx.inputs()):
             messages.append(_('This transaction will spend unconfirmed coins.'))
@@ -592,6 +606,9 @@ class TxEditor(WindowModalDialog):
         num_change = sum(int(o.is_change) for o in self.tx.outputs())
         if num_change > 1:
             messages.append(_('This transaction has {} change outputs.'.format(num_change)))
+        if num_change == 0:
+            messages.append(_('Make sure you pay enough mining fees; you will not be able to bump the fee later.'))
+
         # TODO: warn if we send change back to input address
         return messages
 

@@ -1,8 +1,5 @@
 from electrum.i18n import _
 
-# note: kivy uses its own i18n methods in order to allow changing the language at runtime.
-#       These strings use electrum.i18n directly, to be GUI-agnostic, so the language for these
-#       cannot be changed at runtime.
 
 def to_rtf(msg):
     return '\n'.join(['<p>' + x + '</p>' for x in msg.split('\n\n')])
@@ -55,8 +52,7 @@ Downloading the network gossip uses quite some bandwidth and storage, and is not
 MSG_LEGACY_ADD_TRAMPOLINE = _(
 """When paying a non-trampoline invoice, add an extra trampoline to the route, in order to improve your privacy.
 
-This will result in longer routes; it might increase your fees and decrease the success rate of your payments.
-"""
+This will result in longer routes; it might increase your fees and decrease the success rate of your payments."""
 )
 
 MGS_CONFLICTING_BACKUP_INSTANCE = _(

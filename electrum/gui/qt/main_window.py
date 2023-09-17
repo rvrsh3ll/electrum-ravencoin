@@ -54,7 +54,7 @@ from electrum.gui import messages
 from electrum import (keystore, ecc, constants, util, bitcoin, commands,
                       paymentrequest, lnutil)
 from electrum.asset import get_error_for_asset_typed, AssetType, parse_verifier_string, get_error_for_asset_name
-from electrum.bitcoin import COIN, is_address, is_b58_address, b58_address_to_hash160
+from electrum.bitcoin import COIN, is_address, is_b58_address, b58_address_to_hash160, DummyAddress
 from electrum.plugin import run_hook, BasePlugin
 from electrum.i18n import _
 from electrum.util import (format_time, UserCancelled, profiler, bfh, InvalidPassword, NotEnoughFunds, NoQualifiedAddress,
@@ -73,7 +73,7 @@ from electrum.network import Network, UntrustedServerReturnedError, NetworkExcep
 from electrum.exchange_rate import FxThread
 from electrum.simple_config import SimpleConfig
 from electrum.logging import Logger
-from electrum.lnutil import ln_dummy_address, extract_nodeid, ConnStringFormatError
+from electrum.lnutil import extract_nodeid, ConnStringFormatError
 from electrum.lnaddr import lndecode
 from electrum.submarine_swaps import SwapServerError
 
@@ -166,6 +166,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
     computing_privkeys_signal = pyqtSignal()
     show_privkeys_signal = pyqtSignal()
     show_error_signal = pyqtSignal(str)
+    show_message_signal = pyqtSignal(str)
     labels_changed_signal = pyqtSignal()
 
     def __init__(self, gui_object: 'ElectrumGui', wallet: Abstract_Wallet):
@@ -273,6 +274,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         self.app.update_fiat_signal.connect(self.update_fiat)
 
         self.show_error_signal.connect(self.show_error)
+        self.show_message_signal.connect(self.show_message)
         self.history_list.setFocus()
 
         # network callbacks
@@ -306,6 +308,27 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
             self._update_check_thread = UpdateCheckThread()
             self._update_check_thread.checked.connect(on_version_received)
             self._update_check_thread.start()
+
+    def run_coroutine_dialog(self, coro, text, on_result, on_cancelled):
+        """ run coroutine in a waiting dialog, with a Cancel button that cancels the coroutine """
+        from electrum import util
+        loop = util.get_asyncio_loop()
+        assert util.get_running_loop() != loop, 'must not be called from asyncio thread'
+        future = asyncio.run_coroutine_threadsafe(coro, loop)
+        def task():
+            try:
+                return future.result()
+            except concurrent.futures.CancelledError:
+                on_cancelled()
+        try:
+            WaitingDialog(
+                self, text, task,
+                on_success=on_result,
+                on_error=self.on_error,
+                on_cancel=future.cancel)
+        except Exception as e:
+            self.show_error(str(e))
+            raise
 
     def run_coroutine_from_thread(self, coro, name, on_result=None):
         if self._cleaned_up:
@@ -1325,6 +1348,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         '''Sign the transaction in a separate thread.  When done, calls
         the callback with a success code of True or False.
         '''
+
         def on_success(result):
             callback(True)
         def on_failure(exc_info):
@@ -1368,7 +1392,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
     @protected
     def _open_channel(self, connect_str, funding_sat, push_amt, funding_tx, password):
         # read funding_sat from tx; converts '!' to int value
-        funding_sat = funding_tx.output_value_for_address(ln_dummy_address())
+        funding_sat = funding_tx.output_value_for_address(DummyAddress.CHANNEL)
         def task():
             return self.wallet.lnworker.open_channel(
                 connect_str=connect_str,
@@ -3097,3 +3121,14 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
             return
         d = RebalanceDialog(self, chan1, chan2, amount_sat)
         d.run()
+
+    def on_swap_result(self, txid):
+        msg = _("Submarine swap") + ': ' + (_("Success") if txid else _("Expired")) + '\n\n'
+        if txid:
+            msg += _("Funding transaction") + ': ' + txid + '\n'
+            msg += _("Please remain online until the funding transaction is confirmed.")
+            self.show_message_signal.emit(msg)
+        else:
+            msg += _("Lightning funds were not received.")
+            self.show_error_signal.emit(msg)
+
