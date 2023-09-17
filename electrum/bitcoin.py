@@ -734,9 +734,8 @@ def is_b58_address(addr: str, *, net=None) -> bool:
     return True
 
 def is_address(addr: str, *, net=None) -> bool:
-    return is_b58_address(addr, net=net)
-    #return is_segwit_address(addr, net=net) \
-    #       or is_b58_address(addr, net=net)
+    return is_segwit_address(addr, net=net) \
+           or is_b58_address(addr, net=net)
 
 
 def is_private_key(key: str, *, raise_on_error=False) -> bool:
