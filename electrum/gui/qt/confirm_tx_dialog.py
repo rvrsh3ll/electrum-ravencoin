@@ -40,6 +40,7 @@ from electrum.transaction import Transaction, PartialTransaction
 from electrum.wallet import InternalAddressCorruption
 from electrum.simple_config import SimpleConfig
 from electrum.bitcoin import DummyAddress
+from electrum.asset import get_asset_info_from_script
 
 from .util import (WindowModalDialog, ColorScheme, HelpLabel, Buttons, CancelButton,
                    BlockingWaitingDialog, PasswordLineEdit, WWLabel, read_QIcon)
@@ -697,6 +698,7 @@ class ConfirmTxDialog(TxEditor):
         confirmed_only = self.config.WALLET_SPEND_CONFIRMED_ONLY
         try:
             self.tx = self.make_tx(fee_estimator, confirmed_only=confirmed_only)
+            assert all(get_asset_info_from_script(output.scriptpubkey).well_formed_script for output in self.tx.outputs())
             self.not_enough_funds = False
             self.no_dynfee_estimates = False
         except NotEnoughFunds:

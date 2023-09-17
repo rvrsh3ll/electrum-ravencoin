@@ -1965,13 +1965,14 @@ class Abstract_Wallet(ABC, Logger, EventListener):
                 ops = [x for x in script_GetOp(outputs[i].scriptpubkey)]
                 for j, (op, _, _) in enumerate(ops):
                     if op == opcodes.OP_ASSET:
-                        base_script = outputs[i].scriptpubkey[:ops[j][2]]
+                        base_script = outputs[i].scriptpubkey[:ops[j-1][2]]
                 asset_info: TransferAssetVoutInformation = get_asset_info_from_script(outputs[i].scriptpubkey)
                 assert isinstance(asset_info, TransferAssetVoutInformation)
                 outputs[i].scriptpubkey = bytes.fromhex(generate_transfer_script_from_base(asset, val, base_script.hex(), memo = AssetMemo(asset_info.asset_memo, asset_info.asset_memo_timestamp) if asset_info.asset_memo else None))
                 distr_amount += val
 
         assert all(output.value == 0 for output in outputs if output.asset)
+        assert all(get_asset_info_from_script(output.scriptpubkey).well_formed_script for output in outputs)
 
         if fee is None and self.config.fee_per_kb() is None:
             raise NoDynamicFeeEstimates()

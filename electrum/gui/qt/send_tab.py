@@ -874,6 +874,7 @@ class SendTab(QWidget, MessageBoxMixin, Logger):
     def broadcast_transaction(self, tx: Transaction, *, payment_identifier: PaymentIdentifier = None):
         # note: payment_identifier is explicitly passed as self.payto_e.payment_identifier might
         #       already be cleared or otherwise have changed.
+        
         if hasattr(tx, 'swap_payment_hash'):
             sm = self.wallet.lnworker.swap_manager
             swap = sm.get_swap(tx.swap_payment_hash)
