@@ -314,6 +314,9 @@ class Ledger_Client(HardwareClientBase, ABC):
         hid_device.open()
                     
         transport = ledger_bitcoin.TransportClient('hid', hid=hid_device)
+        
+        # RVN is only on legacy
+        return Ledger_Client_Legacy(hid_device, *args, **kwargs)
         try:
             cl = ledger_bitcoin.createClient(transport, chain=get_chain())
         except (ledger_bitcoin.exception.errors.InsNotSupportedError,
