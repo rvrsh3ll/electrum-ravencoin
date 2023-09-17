@@ -571,6 +571,8 @@ class TxEditor(WindowModalDialog):
         amount = self.tx.output_value() if self.output_value == '!' else self.output_value
         if isinstance(amount, Mapping):
             amount = amount.get(None, 0)
+            if amount == '!':
+                amount = self.tx.output_value()
         tx_size = self.tx.estimated_size()
         fee_warning_tuple = self.wallet.get_tx_fee_warning(
             invoice_amt=amount, tx_size=tx_size, fee=fee)
@@ -644,8 +646,29 @@ class ConfirmTxDialog(TxEditor):
                 amount_str = "max"
         elif isinstance(self.output_value, Mapping):
             base_amount = self.output_value.get(None, 0)
-            amount_str = self.main_window.format_amount_and_units(base_amount)
-            amount_str += ', ' + ', '.join((f'{self.main_window.config.format_amount(amount)} {asset}' for asset, amount in self.output_value.items() if asset))
+            if base_amount == '!':
+                if tx:
+                    amount = tx.output_value()
+                    base_amount_str = self.main_window.format_amount_and_units(amount)
+                else:
+                    base_unit = self.config.get_base_unit()
+                    base_amount_str = f'max {base_unit}'
+            else:
+                base_amount_str = self.main_window.format_amount_and_units(base_amount)
+
+            asset_amounts = []
+            for asset, amount in self.output_value.items():
+                if asset is None: continue
+                if amount == '!':
+                    if tx:
+                        amount = tx.output_value(asset_aware=True)[asset]
+                        asset_amounts.append(f'{self.main_window.config.format_amount(amount)} {asset}')
+                    else:
+                        asset_amounts.append(f'max {asset}')
+                else:
+                    asset_amounts.append(f'{self.main_window.config.format_amount(amount)} {asset}')
+
+            amount_str = base_amount_str + ', ' + ', '.join(asset_amounts)
         else:
             amount = self.output_value
             amount_str = self.main_window.format_amount_and_units(amount)
