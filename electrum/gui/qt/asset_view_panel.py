@@ -151,7 +151,7 @@ class MetadataInfo(QWidget):
         self.asset_text = QLabel()
         type_label = QLabel(_('Type: '))
         self.type_text = QLabel()
-
+        
         asset_layout = QHBoxLayout()
         type_layout = QHBoxLayout()
         asset_layout.addWidget(asset_label)
@@ -176,6 +176,12 @@ class MetadataInfo(QWidget):
         basic_info_layout.addWidget(reissuable_label)
         basic_info_layout.addWidget(self.reissuable_text, 1, Qt.AlignLeft)
         basic_info_layout.setSpacing(5)
+
+        circulation_layout = QHBoxLayout()
+        sats_label = QLabel(_('Total Created: '))
+        self.sats_text = QLabel()
+        circulation_layout.addWidget(sats_label)
+        circulation_layout.addWidget(self.sats_text, 1, Qt.AlignLeft)
 
         self.verifier_string_label = QLabel(_('Verifier String:'))
         self.verifier_string_label.setVisible(False)
@@ -279,6 +285,7 @@ class MetadataInfo(QWidget):
         vbox.addLayout(asset_layout)
         vbox.addLayout(type_layout)
         vbox.addLayout(basic_info_layout)
+        vbox.addLayout(circulation_layout)
         vbox.addWidget(QHSeperationLine())
         vbox.addWidget(self.ipfs_viewer)
         vbox.addLayout(restricted_verifier_layout)
@@ -320,6 +327,7 @@ class MetadataInfo(QWidget):
 
         self.divisions_text.setText(str(metadata.divisions))
         self.reissuable_text.setText(str(metadata.reissuable))
+        self.sats_text.setText(self.window.config.format_amount(metadata.sats_in_circulation, add_thousands_sep=True))
         self.ipfs_viewer.update(asset, metadata.associated_data)
         
         if verifier_string_data:
@@ -415,7 +423,7 @@ class MetadataInfo(QWidget):
 
     def clear(self):
         self.header.setText('<h3>{}</h3>'.format(_('Asset Metadata')))
-        for x in [self.asset_text, self.type_text, self.divisions_text, self.reissuable_text]:
+        for x in [self.asset_text, self.type_text, self.divisions_text, self.reissuable_text, self.sats_text]:
             x.setText(_('N/A'))
 
         for x in [self.verifier_string_label, 
