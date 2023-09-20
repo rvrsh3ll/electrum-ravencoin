@@ -266,8 +266,11 @@ class ViewBroadcastTab(QWidget, Logger, MessageBoxMixin):
         
         def watch_asset():
             asset = self.add_asset.text()
+            if not asset:
+                self.show_message(_('No asset entered.'))
+                return
             if get_error_for_asset_typed(asset, AssetType.OWNER) and get_error_for_asset_typed(asset, AssetType.MSG_CHANNEL):
-                self.show_warning(_('Not a valid owner asset or message channel.'))
+                self.show_message(_('Not a valid owner asset or message channel.'))
                 return
             window.wallet.adb.add_broadcast_to_watch(asset)
             self.add_asset.clear()
