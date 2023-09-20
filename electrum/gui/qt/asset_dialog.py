@@ -38,6 +38,7 @@ class AssetDialog(WindowModalDialog):
         verifier_string_text = None
         freeze_data = None
         freeze_text = None
+        tag_overrides = None
         if local_metadata is None:
             if not window.network:
                 self.window.show_message(_("You are offline."))
@@ -75,6 +76,13 @@ class AssetDialog(WindowModalDialog):
                     )
                     if d:
                         freeze_data = d
+
+                if asset[0] in ('$', '#'):
+                    d = self.network.run_from_another_thread(
+                        self.network.get_tags_for_qualifier(asset)
+                    )
+                    if d:
+                        tag_overrides = d
 
             except UntrustedServerReturnedError as e:
                 self.logger.info(f"Error getting info from network: {repr(e)}")
@@ -116,7 +124,7 @@ class AssetDialog(WindowModalDialog):
         self.m = MetadataInfo(self.window)
         self.m.update(asset, type_text, metadata, metadata_sources,
                     verifier_string_text, verifier_string_data, 
-                    freeze_text, freeze_data)
+                    freeze_text, freeze_data, tag_overrides=tag_overrides)
         
         scroll = QScrollArea()
         scroll.setWidget(self.m)

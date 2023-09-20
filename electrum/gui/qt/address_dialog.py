@@ -57,7 +57,7 @@ class AddressHistoryModel(HistoryModel):
         return False
 
 
-class TaggedAddressList(MyTreeView):
+class TaggedQualifierList(MyTreeView):
     class Columns(MyTreeView.BaseColumnsEnum):
         ASSET = enum.auto()
         TAGGED = enum.auto()
@@ -193,7 +193,7 @@ class AddressDialog(WindowModalDialog):
                 history_widget = QWidget()
                 history_widget.setLayout(vbox_history)
 
-                tags_widget = TaggedAddressList(self.window, h160_h)
+                tags_widget = TaggedQualifierList(self.window, h160_h)
                 tags_widget.update()
 
                 tabs.addTab(history_widget, read_QIcon('tab_history.png'), _('History'))

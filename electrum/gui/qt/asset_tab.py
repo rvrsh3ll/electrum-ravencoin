@@ -111,7 +111,7 @@ class AssetTab(QWidget, MessageBoxMixin, Logger):
 
             def on_change_tab(index):
                 if index == 0:
-                    self.searchable_list = self.view_asset_tab.asset_list
+                    self.searchable_list = self.view_asset_tab.searchable_list_grouping
                 elif index == 3 and not self.wallet.is_watching_only():
                     self.searchable_list = self.qualifiy_tab.searchable_list_grouping
                 elif index == 4 and not self.wallet.is_watching_only():

@@ -5,17 +5,18 @@ from PyQt5.QtGui import QFont, QStandardItemModel, QStandardItem
 from PyQt5.QtCore import pyqtSignal, Qt, QItemSelectionModel
 from PyQt5.QtWidgets import (QLabel, QVBoxLayout, QSplitter, QScrollArea,
                              QHBoxLayout, QWidget, QFrame, QAbstractItemView,
-                             QCheckBox, QMenu)
+                             QCheckBox, QMenu, QTabWidget)
 
 from electrum.asset import AssetMetadata
 from electrum.i18n import _
-from electrum.util import format_satoshis_plain, profiler
+from electrum.util import format_satoshis_plain, profiler, SearchableListGrouping
 from electrum.address_synchronizer import METADATA_UNCONFIRMED, METADATA_UNVERIFIED
 from electrum.logging import Logger
 
 from .util import HelpLabel, ColorScheme, HelpButton, AutoResizingTextEdit
 from .util import QHSeperationLine, read_QIcon, MONOSPACE_FONT, IPFSViewer, EnterButton
 from .my_treeview import MyTreeView
+from .asset_qualifier_tag_panel import TaggedAddressList
 
 if TYPE_CHECKING:
     from .main_window import ElectrumWindow
@@ -287,12 +288,24 @@ class MetadataInfo(QWidget):
         vbox.addLayout(basic_info_layout)
         vbox.addLayout(circulation_layout)
         vbox.addWidget(QHSeperationLine())
-        vbox.addWidget(self.ipfs_viewer)
-        vbox.addLayout(restricted_verifier_layout)
-        vbox.addLayout(source_layout)
-        vbox.addWidget(QWidget(), 1)
-        self.clear()
 
+        metadata_vbox = QVBoxLayout()
+        metadata_vbox.addWidget(self.ipfs_viewer)
+        metadata_vbox.addLayout(restricted_verifier_layout)
+        metadata_vbox.addLayout(source_layout)
+        metadata_vbox.addWidget(QWidget(), 1)
+        metadata_widget = QWidget()
+        metadata_widget.setLayout(metadata_vbox)
+
+        self.address_list = TaggedAddressList(self.window)
+        self.address_list.update()
+
+        self.tabs = tabs = QTabWidget(self)
+        tabs.addTab(metadata_widget, read_QIcon("copy.png"), _('Metadata'))
+        tabs.addTab(self.address_list, read_QIcon("tag.png"), _('Tags'))
+        vbox.addWidget(tabs)
+
+        self.clear()
         self.current_asset = None
 
     def _show_source_tx(self, txid_widget):
@@ -302,7 +315,8 @@ class MetadataInfo(QWidget):
     def update(self, asset: str, type_text: Optional[str], metadata: AssetMetadata,
                metadata_sources: Optional[Tuple[bytes, Optional[bytes], Optional[bytes]]],
                verifier_text, verifier_string_data,
-               freeze_text, freeze_data):
+               freeze_text, freeze_data,
+               *, tag_overrides=None):
         self.current_asset = asset
         if type_text:
             header_text = '<h3>{} ({})</h3>'.format(_('Asset Metadata'), type_text)
@@ -421,6 +435,14 @@ class MetadataInfo(QWidget):
                         self.freeze_source_button, self.freeze_source_label]:
                 x.setVisible(False)
 
+        if asset[0] in ('#', "$"):
+            self.address_list.tagger = asset
+            self.address_list.update(override_tags=tag_overrides)
+            self.tabs.tabBar().show()
+        else:
+            self.tabs.setCurrentIndex(0)
+            self.tabs.tabBar().hide()
+
     def clear(self):
         self.header.setText('<h3>{}</h3>'.format(_('Asset Metadata')))
         for x in [self.asset_text, self.type_text, self.divisions_text, self.reissuable_text, self.sats_text]:
@@ -439,6 +461,8 @@ class MetadataInfo(QWidget):
             x.setVisible(False)
 
         self.ipfs_viewer.clear()
+        self.tabs.setCurrentIndex(0)
+        self.tabs.tabBar().hide()
 
 class MetadataViewer(QFrame):
     def __init__(self, parent: 'ViewAssetPanel'):
@@ -545,6 +569,10 @@ class ViewAssetPanel(QSplitter, Logger):
         self.setStretchFactor(1, 0)
 
         self.update_asset_trigger.connect(lambda asset: self.metadata_viewer.update_info(asset))
+        self.searchable_list_grouping = SearchableListGrouping(
+            self.asset_list,
+            self.metadata_viewer.metadata_info.address_list
+        )
 
     def update(self):
         self.asset_list.update()

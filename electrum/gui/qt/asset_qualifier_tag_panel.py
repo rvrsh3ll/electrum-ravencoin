@@ -46,12 +46,11 @@ class TaggedAddressList(MyTreeView):
     ROLE_TAG_BOOL = Qt.UserRole + 1001
     key_role = ROLE_ADDRESS_STR
 
-    def __init__(self, parent: 'QualifierAssetPanel'):
+    def __init__(self, window: 'ElectrumWindow', callback=None):
         super().__init__(
-            main_window=parent.parent.window,
+            main_window=window,
             stretch_columns=[self.Columns.ADDRESS]
         )
-        self.parent = parent
         self.wallet = self.main_window.wallet
         self.std_model = QStandardItemModel(self)
         self.setModel(self.std_model)
@@ -59,25 +58,28 @@ class TaggedAddressList(MyTreeView):
         self.setSortingEnabled(True)
         self.last_selected_address = None
         self.current_h160s = None
-        self.taggee = None
+        self.tagger = None
+        self.callback = callback
 
         def selectionChange(new, old):
             rows = [x.row() for x in new.indexes()]
             if not rows:
-                self.parent.update_address_trigger.emit((None, True))
+                if self.callback:
+                    self.callback(None, True)
                 return
             first_row = min(rows)
             m = self.model().index(first_row, self.Columns.ADDRESS)
             self.last_selected_address = address = m.data(self.ROLE_ADDRESS_STR)
             flag = m.data(self.ROLE_TAG_BOOL)
-            self.parent.update_address_trigger.emit((address, flag))
+            if self.callback:
+                self.callback(address, flag)
 
         self.selectionModel().selectionChanged.connect(selectionChange)
 
     @profiler(min_threshold=0.05)
-    def update(self):
+    def update(self, *, override_tags=None):
         # not calling maybe_defer_update() as it interferes with coincontrol status bar
-        new_h160s = self.wallet.adb.get_tags_for_qualifier(self.taggee) if self.taggee else dict()
+        new_h160s = override_tags or (self.wallet.adb.get_tags_for_qualifier(self.tagger) if self.tagger else dict())
         if self.current_h160s == new_h160s:
             return
         self.model().clear()
@@ -393,7 +395,7 @@ class TagAddress(QWidget):
             self.in_mempool_label.setVisible(self.selected_asset_in_mempool)
 
 class TaggingStack(QWidget):    
-    def __init__(self, parent, qual_id, res_id):
+    def __init__(self, parent: 'QualifierAssetPanel', qual_id, res_id):
         QWidget.__init__(self)
 
         self.parent = parent
@@ -401,7 +403,7 @@ class TaggingStack(QWidget):
         self.res_id = res_id
 
         self.info_label = QLabel(_('Select an asset to view its tags'))
-        self.list = TaggedAddressList(parent)
+        self.list = TaggedAddressList(parent.parent.window, self.on_update_tag)
         self.tag_address = TagAddress(parent)
         view = QVBoxLayout(self)
         view.addWidget(self.info_label)
@@ -411,6 +413,9 @@ class TaggingStack(QWidget):
         
         self.qual_is_none = False
         self.res_is_none = False
+
+    def on_update_tag(self, address, flag):
+        self.parent.update_address_trigger.emit((address, flag))
 
     def update_address_selection(self, address, is_tagged):
         if address is None:
@@ -425,14 +430,14 @@ class TaggingStack(QWidget):
             if id == self.qual_id:
                 self.qual_is_none = True
                 if self.res_is_none:
-                    self.list.taggee = asset
+                    self.list.tagger = asset
                     self.list.update()
                     self.info_label.setText(_('Select an asset to view its tags'))
                     self.tag_address.setEnabled(False, True)
             else:
                 self.res_is_none = True
                 if self.qual_is_none:
-                    self.list.taggee = asset
+                    self.list.tagger = asset
                     self.list.update()
                     self.info_label.setText(_('Select an asset to view its tags'))
                     self.tag_address.setEnabled(False, True)
@@ -447,7 +452,7 @@ class TaggingStack(QWidget):
             tagger = f'${asset[:-1]}'
         self.info_label.setText(_('Tags for {}').format(tagger))
         self.tag_address.setEnabled(asset, in_mempool)
-        self.list.taggee = tagger
+        self.list.tagger = tagger
         self.list.update()
 
     def update(self):
