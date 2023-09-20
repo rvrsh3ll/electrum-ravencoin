@@ -99,6 +99,7 @@ class ManageAssetPanel(QWidget, Logger):
         self.address_is_ok = True
         self.asset_combo_is_ok = True
         self.verifier_is_ok = True
+        self.amount_is_ok = True
         self.combo_assets = set()
 
         self.asset_selector_combo = QComboBox()
@@ -123,8 +124,12 @@ class ManageAssetPanel(QWidget, Logger):
         grid.addWidget(self.asset_checker.line_edit, 1, 2, 1, 9)
         grid.addWidget(self.asset_checker.error_button, 1, 11)
 
+        self.send_button = EnterButton(_("Pay") + f" {self.burn_amount} RVN...", self._create_tx)
+        self.send_button.setEnabled(False)
+        self.send_button.setMinimumWidth(char_width_in_lineedit() * 16)
+
         amount_label = QLabel(_('Amount'))
-        self.amount_e = AssetAmountEdit(lambda: self.asset_checker.line_edit.text()[:4], 0, DEFAULT_ASSET_AMOUNT_MAX * COIN, parent=self, min_amount=COIN)
+        self.amount_e = AssetAmountEdit(lambda: self.asset_checker.line_edit.text()[:4], 0, DEFAULT_ASSET_AMOUNT_MAX * COIN, parent=self, min_amount=COIN, callback=self._on_amount_change)
         self.amount_e.setText('1')
         grid.addWidget(amount_label, 2, 1)
         grid.addWidget(self.amount_e, 2, 2)
@@ -319,19 +324,19 @@ class ManageAssetPanel(QWidget, Logger):
         self.payto_label.setVisible(self.parent.window.config.SHOW_CREATE_ASSET_PAY_TO)
         self.payto_e.line_edit.setVisible(self.parent.window.config.SHOW_CREATE_ASSET_PAY_TO)
 
-        self.send_button = EnterButton(_("Pay") + f" {self.burn_amount} RVN...", self._create_tx)
-        self.send_button.setEnabled(False)
-        self.send_button.setMinimumWidth(char_width_in_lineedit() * 16)
-
         grid.addWidget(self.send_button, 6, 10)
 
         vbox = QVBoxLayout(self)
         vbox.addLayout(grid)
 
     def _maybe_enable_pay_button(self):
-        self.logger.debug(f'check fields, v={self.verifier_is_ok}, d={self.associated_data_is_ok}, s={self.address_is_ok}, a={self.asset_is_ok}, c={self.asset_combo_is_ok}')
-        self.send_button.setEnabled(self.verifier_is_ok and self.associated_data_is_ok and self.address_is_ok and self.asset_is_ok and self.asset_combo_is_ok)
+        self.logger.debug(f'check fields, v={self.verifier_is_ok}, d={self.associated_data_is_ok}, s={self.address_is_ok}, a={self.asset_is_ok}, c={self.asset_combo_is_ok} m={self.amount_is_ok}')
+        self.send_button.setEnabled(self.verifier_is_ok and self.associated_data_is_ok and self.address_is_ok and self.asset_is_ok and self.asset_combo_is_ok and self.amount_is_ok)
 
+    def _on_amount_change(self, amount):
+        self.amount_is_ok = isinstance(amount, int)
+        self._maybe_enable_pay_button()
+        
     def _on_divisions_change(self, amount):
         if amount is None:
             return

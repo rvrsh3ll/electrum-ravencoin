@@ -2096,6 +2096,7 @@ class Abstract_Wallet(ABC, Logger, EventListener):
             tx = PartialTransaction.from_io(list(coins), list(outputs))
 
         assert not any(isinstance(output.value, str) for output in tx.outputs())
+        assert not any(isinstance(output.asset_aware_value(), str) for output in tx.outputs())
         # Timelock tx to current height.
         tx.locktime = get_locktime_for_new_transaction(self.network)
         tx.rbf_merge_txid = rbf_merge_txid

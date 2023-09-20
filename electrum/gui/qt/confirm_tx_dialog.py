@@ -608,8 +608,12 @@ class TxEditor(WindowModalDialog):
         num_change = sum(int(o.is_change) for o in self.tx.outputs())
         if num_change > 1:
             messages.append(_('This transaction has {} change outputs.'.format(num_change)))
-        if num_change == 0:
-            messages.append(_('Make sure you pay enough mining fees; you will not be able to bump the fee later.'))
+        # warn if null outputs
+        if any(output.asset_aware_value() == 0 for output in self.tx.outputs()):
+            messages.append(_('This transaction has outputs with 0 amount.'))
+        # NOTE: RVN doesnt bump fees apparently
+        #if num_change == 0:
+        #    messages.append(_('Make sure you pay enough mining fees; you will not be able to bump the fee later.'))
 
         # TODO: warn if we send change back to input address
         return messages
