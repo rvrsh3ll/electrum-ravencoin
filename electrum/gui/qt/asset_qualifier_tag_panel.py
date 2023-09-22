@@ -4,7 +4,7 @@ import math
 from decimal import Decimal
 from typing import Optional, TYPE_CHECKING
 
-from PyQt5.QtGui import QFont, QStandardItemModel, QStandardItem
+from PyQt5.QtGui import QFont, QStandardItemModel, QStandardItem, QBrush
 from PyQt5.QtCore import pyqtSignal, Qt, QItemSelectionModel
 from PyQt5.QtWidgets import (QLabel, QVBoxLayout, QSplitter, QScrollArea,
                              QHBoxLayout, QWidget, QFrame, QAbstractItemView,
@@ -21,7 +21,7 @@ from electrum.transaction import PartialTxOutput
 from electrum.wallet import get_locktime_for_new_transaction
 
 from .util import HelpLabel, HelpButton, ValidatedDelayedCallbackEditor, char_width_in_lineedit
-from .util import QHSeperationLine, read_QIcon, MONOSPACE_FONT, font_height, EnterButton
+from .util import QHSeperationLine, read_QIcon, MONOSPACE_FONT, font_height, EnterButton, ColorScheme
 from .my_treeview import MyTreeView
 from .confirm_tx_dialog import ConfirmTxDialog
 
@@ -111,6 +111,13 @@ class TaggedAddressList(MyTreeView):
         asset_item = [self.std_model.item(row, col) for col in self.Columns]
         tooltip = 'In the mempool' if data['height'] < 0 else 'Confirmed'
         asset_item[self.Columns.ADDRESS].setToolTip(tooltip)
+        
+        address = asset_item[self.Columns.ADDRESS].data(self.ROLE_ADDRESS_STR)
+        if self.wallet.is_mine(address):
+            if self.wallet.is_change(address):
+                asset_item[self.Columns.ADDRESS].setBackground(QBrush(ColorScheme.YELLOW.as_color(True)))
+            else:
+                asset_item[self.Columns.ADDRESS].setBackground(QBrush(ColorScheme.GREEN.as_color(True)))
 
     def on_double_click(self, idx):
         txid = self.get_role_data_for_current_item(col=self.Columns.ADDRESS, role=self.ROLE_TXID_STR)
