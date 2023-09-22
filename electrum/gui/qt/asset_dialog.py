@@ -1,7 +1,7 @@
 from typing import TYPE_CHECKING
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QVBoxLayout, QScrollArea
+from PyQt5.QtWidgets import QVBoxLayout, QScrollArea, QLineEdit, QDialog
 
 from electrum.address_synchronizer import METADATA_UNCONFIRMED, METADATA_UNVERIFIED
 from electrum.asset import AssetMetadata
@@ -10,16 +10,17 @@ from electrum.network import UntrustedServerReturnedError
 from electrum.util import trigger_callback
 
 from .asset_view_panel import MetadataInfo
-from .util import WindowModalDialog, Buttons, CloseButton
+from .util import Buttons, CloseButton, MessageBoxMixin
 
 if TYPE_CHECKING:
     from .main_window import ElectrumWindow
 
-class AssetDialog(WindowModalDialog):
-    def __init__(self, window: 'ElectrumWindow', asset: str, *, parent=None):
-        if parent is None:
-            parent = window
-        WindowModalDialog.__init__(self, parent, _("Asset"))
+class AssetDialog(QDialog, MessageBoxMixin):
+    def __init__(self, window: 'ElectrumWindow', asset: str):
+        QDialog.__init__(self, parent=window)
+        self.setWindowTitle(asset)
+
+        #self.setWindowModality(Qt.NonModal)
         self.asset = asset
         self.ipfs = None
         self.window = window
@@ -31,6 +32,10 @@ class AssetDialog(WindowModalDialog):
         self.setMinimumWidth(700)
         vbox = QVBoxLayout()
         self.setLayout(vbox)
+
+        self.search_box = QLineEdit()
+        self.search_box.textChanged.connect(self.do_search)
+        self.search_box.hide()
 
         local_metadata = self.wallet.adb.get_asset_metadata(asset)
         type_text = None
@@ -131,6 +136,7 @@ class AssetDialog(WindowModalDialog):
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
+        vbox.addWidget(self.search_box)
         vbox.addWidget(scroll)
         vbox.addLayout(Buttons(CloseButton(self)))
         self.valid = True
@@ -142,3 +148,17 @@ class AssetDialog(WindowModalDialog):
             trigger_callback('ipfs_hash_dissociate_asset', self.ipfs, self.asset)
         event.accept()
 
+
+    def do_search(self, text):
+        self.m.address_list.filter(text)
+
+
+    def keyPressEvent(self, event):
+        if event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_F:
+            self.search_box.setHidden(not self.search_box.isHidden())
+            if not self.search_box.isHidden():
+                self.search_box.setFocus(1)
+            else:
+                self.do_search('')
+
+        super().keyPressEvent(event)

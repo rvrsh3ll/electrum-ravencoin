@@ -337,10 +337,11 @@ class IPFSDB(JsonDB, EventListener):
         finally:
             curr_time = int(time.time())
             m = self.get_metadata(ipfs_hash)
-            m.last_attemped_info_query = curr_time
-            self._modified = True
-            self._ipfs_lookup_current.discard(ipfs_hash)
-            util.trigger_callback('ipfs_download', ipfs_hash)
+            if m:
+                m.last_attemped_info_query = curr_time
+                self._modified = True
+                self._ipfs_lookup_current.discard(ipfs_hash)
+                util.trigger_callback('ipfs_download', ipfs_hash)
 
     @modifier
     async def maybe_download_data_for_ipfs_hash(self, network: 'Network', ipfs_hash: str):

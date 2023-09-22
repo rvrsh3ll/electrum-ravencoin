@@ -2427,7 +2427,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         from .asset_dialog import AssetDialog
         d = AssetDialog(self, asset)
         if d.valid:
-            d.exec_()
+            d.show()
 
     def find_qualified_address(self):
         asset, ok = QInputDialog.getText(self, _('Search addresses'), _('Restricted Asset') + ':')
