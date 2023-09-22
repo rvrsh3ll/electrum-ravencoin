@@ -303,6 +303,7 @@ class MetadataInfo(QWidget):
         self.tabs = tabs = QTabWidget(self)
         tabs.addTab(metadata_widget, read_QIcon("copy.png"), _('Metadata'))
         tabs.addTab(self.address_list, read_QIcon("tag.png"), _('Tags'))
+        #tabs.addTab()
         vbox.addWidget(tabs)
 
         self.clear()

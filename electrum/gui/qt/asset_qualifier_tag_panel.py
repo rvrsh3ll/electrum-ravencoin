@@ -44,6 +44,7 @@ class TaggedAddressList(MyTreeView):
 
     ROLE_ADDRESS_STR = Qt.UserRole + 1000
     ROLE_TAG_BOOL = Qt.UserRole + 1001
+    ROLE_TXID_STR = Qt.UserRole + 1002
     key_role = ROLE_ADDRESS_STR
 
     def __init__(self, window: 'ElectrumWindow', callback=None):
@@ -96,6 +97,7 @@ class TaggedAddressList(MyTreeView):
             self.set_editability(row_item)
             row_item[self.Columns.ADDRESS].setData(addr, self.ROLE_ADDRESS_STR)
             row_item[self.Columns.ADDRESS].setData(data['flag'], self.ROLE_TAG_BOOL)
+            row_item[self.Columns.ADDRESS].setData(data['tx_hash'], self.ROLE_TXID_STR)
             row_item[self.Columns.ADDRESS].setFont(QFont(MONOSPACE_FONT))
             self.model().insertRow(idx, row_item)
             self.refresh_row(h160, data, idx)
@@ -107,10 +109,13 @@ class TaggedAddressList(MyTreeView):
     def refresh_row(self, key: str, data, row: int) -> None:
         assert row is not None
         asset_item = [self.std_model.item(row, col) for col in self.Columns]
-        
         tooltip = 'In the mempool' if data['height'] < 0 else 'Confirmed'
-
         asset_item[self.Columns.ADDRESS].setToolTip(tooltip)
+
+    def on_double_click(self, idx):
+        txid = self.get_role_data_for_current_item(col=self.Columns.ADDRESS, role=self.ROLE_TXID_STR)
+        self.main_window.do_process_from_txid(txid=txid)
+
 
 class SmallAssetList(MyTreeView):
     class Columns(MyTreeView.BaseColumnsEnum):

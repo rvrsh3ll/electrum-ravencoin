@@ -112,6 +112,11 @@ class AssetFreezeList(MyTreeView):
         tooltip = 'In the mempool' if data and data[0]['height'] < 0 else 'Confirmed'
         asset_item[self.Columns.ASSET].setToolTip(tooltip)
 
+    def on_double_click(self, idx):
+        d = self.get_role_data_for_current_item(col=self.Columns.ASSET, role=self.ROLE_DATA_DICT)
+        self.main_window.do_process_from_txid(txid=d['tx_hash'])
+
+
 class FreezePanel(QWidget):
     def __init__(self, parent: 'ViewFreezePanel'):
         QWidget.__init__(self)
