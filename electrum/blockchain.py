@@ -33,13 +33,9 @@ from . import constants
 from .util import bfh, with_lock
 from .logging import get_logger, Logger
 
-try:
-    import x16r_hash
-    import x16rv2_hash
-    import kawpow
-except ImportError as e:
-    import sys
-    sys.exit("x16r, x16rv2 and kawpow modules are required")
+import x16r_hash
+import x16rv2_hash
+import kawpow
     
 if TYPE_CHECKING:
     from .simple_config import SimpleConfig
