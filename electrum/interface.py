@@ -1221,6 +1221,11 @@ class Interface(Logger):
         res = await self.session.send_request('blockchain.asset.broadcasts', [asset])
         return res
 
+    async def get_associations_for_qualifier(self, asset: str) -> dict:
+        assert isinstance(asset, str)
+        res = await self.session.send_request('blockchain.asset.restricted_associations', [asset])
+        return res
+
     async def get_verifier_string_for_restricted_asset(self, asset: str) -> dict:
         assert isinstance(asset, str)
         res = await self.session.send_request('blockchain.asset.verifier_string', [asset])

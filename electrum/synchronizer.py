@@ -91,6 +91,12 @@ def broadcast_status(broadcasts):
     status = ';'.join(f'{d["tx_hash"]}:{d["height"]}{d["tx_pos"]}{d["data"]}{d["expiration"]}' for d in sorted(broadcasts, key=lambda x: (x["height"], x['tx_hash'], x["tx_pos"])))
     return hashlib.sha256(status.encode('ascii')).digest().hex()
 
+def qualifier_associations_status(data):
+    if not data:
+        return None
+    status = ';'.join(f'{restricted}:{d["height"]}{d["tx_hash"]}{d["restricted_tx_pos"]}{d["qualifying_tx_pos"]}{d["associated"]}' for restricted, d in sorted(data.items(), key=lambda x: x[0]))
+    return hashlib.sha256(status.encode('ascii')).digest().hex()
+
 class SynchronizerBase(NetworkJobOnDefaultServer):
     """Subscribe over the network to a set of addresses, and monitor their statuses.
     Every time a status changes, run a coroutine provided by the subclass.
@@ -138,6 +144,11 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
         self._handling_broadcast_statuses = set()
         self._processed_some_broadcasts = False
 
+        self._adding_qualifier_associations = set()
+        self.requested_qualifier_associations = set()
+        self._handling_qualifier_association_statuses = set()
+        self._processed_some_qualifier_associations = False
+
         # Queues
         self.asset_status_queue = asyncio.Queue()
         self.status_queue = asyncio.Queue()
@@ -146,6 +157,7 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
         self.restricted_verifier_queue = asyncio.Queue()
         self.restricted_freeze_queue = asyncio.Queue()
         self.broadcast_status_queue = asyncio.Queue()
+        self.qualifier_association_status_queue = asyncio.Queue()
 
     async def _run_tasks(self, *, taskgroup):
         await super()._run_tasks(taskgroup=taskgroup)
@@ -158,6 +170,7 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
                 await group.spawn(self.handle_restricted_for_verifier_update())
                 await group.spawn(self.handle_restricted_for_freeze_update())
                 await group.spawn(self.handle_broadcast_status())
+                await group.spawn(self.handle_qualifier_associations_status())
                 await group.spawn(self.main())
         finally:
             # we are being cancelled now
@@ -168,6 +181,7 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
             self.session.unsubscribe(self.restricted_verifier_queue)
             self.session.unsubscribe(self.restricted_freeze_queue)
             self.session.unsubscribe(self.broadcast_status_queue)
+            self.session.unsubscribe(self.qualifier_association_status_queue)
 
     def add(self, addr):
         if not is_address(addr): raise ValueError(f"invalid bitcoin address {addr}")
@@ -198,6 +212,11 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
     def add_broadcast(self, asset: str):
         if error := get_error_for_asset_name(asset): raise ValueError(f'invalid asset: {error}')
         self._adding_broadcasts.add(asset)
+
+    def add_associations_for_qualifier(self, asset: str):
+        if (error := get_error_for_asset_typed(asset, AssetType.QUALIFIER)) and \
+            (error := get_error_for_asset_typed(AssetType.SUB_QUALIFIER)): raise ValueError(f'invalid asset: {error}')
+        self._adding_qualifier_associations.add(asset)
 
     async def _add_address(self, addr: str):
         try:
@@ -257,6 +276,14 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
         finally:
             self._adding_broadcasts.discard(asset)
 
+    async def _add_associations_for_qualifier(self, asset: str):
+        try:
+            if asset in self.requested_qualifier_associations: return
+            self.requested_qualifier_associations.add(asset)
+            await self.taskgroup.spawn(self._subscribe_to_qualifier_associations, asset)
+        finally:
+            self._adding_qualifier_associations.discard(asset)
+
     async def _on_address_status(self, addr, status):
         """Handle the change of the status of an address.
         Should remove addr from self._handling_addr_statuses when done.
@@ -279,6 +306,9 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
         raise NotImplementedError()
 
     async def _on_broadcast_status(self, asset, status):
+        raise NotImplementedError()
+    
+    async def _on_qualifier_associations_status(self, asset, status):
         raise NotImplementedError()
 
     async def _subscribe_to_address(self, addr):
@@ -328,6 +358,12 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
         self._requests_sent += 1
         async with self._network_request_semaphore:
             await self.session.subscribe('blockchain.asset.broadcasts.subscribe', [asset], self.broadcast_status_queue)
+        self._requests_answered += 1
+
+    async def _subscribe_to_qualifier_associations(self, asset):
+        self._requests_sent += 1
+        async with self._network_request_semaphore:
+            await self.session.subscribe('blockchain.asset.restricted_associations.subscribe', [asset], self.qualifier_association_status_queue)
         self._requests_answered += 1
 
     async def handle_status(self):
@@ -387,6 +423,14 @@ class SynchronizerBase(NetworkJobOnDefaultServer):
             await self.taskgroup.spawn(self._on_broadcast_status, asset, status)
             self._processed_some_broadcasts = True
 
+    async def handle_qualifier_associations_status(self):
+        while True:
+            asset, status = await self.qualifier_association_status_queue.get()
+            self._handling_qualifier_association_statuses.add(asset)
+            self.requested_qualifier_associations.discard(asset)
+            await self.taskgroup.spawn(self._on_qualifier_associations_status, asset, status)
+            self._processed_some_qualifier_associations = True
+
     async def main(self):
         raise NotImplementedError()  # implemented by subclasses
 
@@ -415,6 +459,7 @@ class Synchronizer(SynchronizerBase):
         self.requested_restricted_for_verifier_results = set()
         self.requested_restricted_for_freeze_results = set()
         self.requested_broadcast_history = set()
+        self.requested_qualifier_associations_results = set()
 
         self._stale_histories = dict()  # type: Dict[str, asyncio.Task]
         self._stale_asset_metadatas = dict()  # type: Dict[str, asyncio.Task]
@@ -423,6 +468,7 @@ class Synchronizer(SynchronizerBase):
         self._stale_restricted_for_verifier = dict()
         self._stale_restricted_for_freeze = dict()
         self._stale_broadcast_history = dict()
+        self._stale_qualifier_associations = dict()
 
     def diagnostic_name(self):
         return self.adb.diagnostic_name()
@@ -472,13 +518,20 @@ class Synchronizer(SynchronizerBase):
                 and not self.requested_broadcast_history
                 and not self._stale_broadcast_history
 
+                and not self._adding_qualifier_associations
+                and not self.requested_qualifier_associations
+                and not self._handling_qualifier_association_statuses
+                and not self.requested_qualifier_associations_results
+                and not self._stale_qualifier_associations
+
                 and self.status_queue.empty()
                 and self.asset_status_queue.empty()
                 and self.qualifier_tags_status_queue.empty()
                 and self.h160_tags_status_queue.empty()
                 and self.restricted_verifier_queue.empty()
                 and self.restricted_freeze_queue.empty()
-                and self.broadcast_status_queue.empty())
+                and self.broadcast_status_queue.empty()
+                and self.qualifier_association_status_queue.empty())
 
     async def _on_restricted_for_freeze_update(self, asset, data):
         data_id = f'{data["frozen"]}:{data["tx_hash"]}:{data["height"]}' if data else ''
@@ -523,6 +576,35 @@ class Synchronizer(SynchronizerBase):
             raise SynchronizerFailure(f'Server is trying to send old tag verifier string for {asset}')            
         self.adb.add_unverified_or_unconfirmed_verifier_string_for_restricted(asset, data)
         self.requested_restricted_for_verifier_results.discard((asset, data_id))
+
+    async def _on_qualifier_associations_status(self, asset, status):
+        try:
+            associations = self.adb.get_associations_for_synchronizer(asset)
+            if qualifier_associations_status(associations) == status:
+                return
+            if (asset, status) in self.requested_qualifier_associations_results:
+                return
+            self.requested_qualifier_associations_results.add((asset, status))
+            self._stale_qualifier_associations.pop(asset, asyncio.Future()).cancel()
+        finally:
+            self._handling_qualifier_association_statuses.discard(asset)
+        self._requests_sent += 1
+        async with self._network_request_semaphore:
+            result = await self.interface.get_associations_for_qualifier(asset)
+        self._requests_answered += 1
+        self.logger.info(f'receiving associations for {asset}: {status}')
+        if qualifier_associations_status(result) != status:
+            self.logger.info(f'error: association status mistmatch {asset}. we\'ll wait a bit for a status update.')
+            async def disconnect_if_still_stale():
+                timeout = self.network.get_network_timeout_seconds(NetworkTimeout.Generic)
+                await asyncio.sleep(timeout)
+                raise SynchronizerFailure(f'timeout reached waiting for association {asset}: still stale')
+            self._stale_qualifier_associations[asset] = self.taskgroup.spawn(disconnect_if_still_stale)
+        else:
+            self._stale_qualifier_associations.pop(asset, asyncio.Future()).cancel()
+            # TODO: Incoming data checks
+            self.adb.add_unverified_or_unconfirmed_associations(asset, result)
+        self.requested_qualifier_associations_results.discard((asset, status))
 
     async def _on_broadcast_status(self, asset, status):
         try:
@@ -778,6 +860,7 @@ class Synchronizer(SynchronizerBase):
                     await self._add_restricted_for_freeze(restricted_asset)
             if asset[0] == '#':
                 await self._add_qualifier_for_tags(asset)
+                await self._add_associations_for_qualifier(asset)
             if asset[0] == '$':
                 await self._add_qualifier_for_tags(asset)
                 await self._add_restricted_for_verifier(asset)
@@ -805,13 +888,15 @@ class Synchronizer(SynchronizerBase):
                 await self._add_restricted_for_freeze(asset)
             for asset in self._adding_broadcasts.copy():
                 await self._add_broadcast(asset)
+            for asset in self._adding_qualifier_associations.copy():
+                await self._add_associations_for_qualifier(asset)
             up_to_date = self.adb.is_up_to_date()
             # see if status changed
             if (up_to_date != prev_uptodate
                     or up_to_date and (self._processed_some_notifications or self._processed_some_asset_notifications or
                                        self._processed_some_qualifier_for_tags_notifications or self._processed_some_h160_for_tags_notifications or
                                        self._processed_some_restricted_for_verifier or self._processed_some_restricted_for_freeze or
-                                       self._processed_some_broadcasts)):
+                                       self._processed_some_broadcasts or self._processed_some_qualifier_associations)):
                 self._processed_some_notifications = False
                 self._processed_some_asset_notifications = False
                 self._processed_some_qualifier_for_tags_notifications = False
@@ -819,6 +904,7 @@ class Synchronizer(SynchronizerBase):
                 self._processed_some_restricted_for_verifier = False
                 self._processed_some_restricted_for_freeze = False
                 self._processed_some_broadcasts = False
+                self._processed_some_qualifier_associations = False
                 self.adb.up_to_date_changed()
             prev_uptodate = up_to_date
 

@@ -914,6 +914,13 @@ class AddressSynchronizer(Logger, EventListener):
             self.db.add_verified_restricted_verifier(asset, d)
         util.trigger_callback('adb_added_verified_restricted_verifier', self, asset, d['string'])
 
+    def add_unverified_or_unconfirmed_associations(self, asset: str, data: Dict):
+        #print(f'{asset=} {data=}')
+        pass
+
+    def get_associations_for_synchronizer(self, asset: str) -> Dict:
+        return dict()
+
     def add_unverified_or_unconfirmed_broadcasts(self, asset: str, tx_map: Dict):
         with self.lock:
             self.unconfirmed_broadcast.pop(asset, None)
