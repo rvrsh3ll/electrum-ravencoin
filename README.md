@@ -11,6 +11,12 @@ Homepage: https://electrum.org/
 [![Test coverage statistics](https://coveralls.io/repos/github/spesmilo/electrum/badge.svg?branch=master)](https://coveralls.io/github/spesmilo/electrum?branch=master)
 [![Help translate Electrum online](https://d322cqt584bo4o.cloudfront.net/electrum/localized.svg)](https://crowdin.com/project/electrum)
 
+_(If you've come here looking to simply run Electrum,
+[you may download it here](https://github.com/Electrum-RVN-SIG/electrum-ravencoin/releases/latest).)_
+
+## Binary not opening on windows?
+
+You may need to install https://aka.ms/vs/17/release/vc_redist.x86.exe
 
 ## Run your own server!
 
@@ -21,9 +27,6 @@ https://github.com/Electrum-RVN-SIG/electrumx-ravencoin
 Find @kralverde on [discord](https://discord.com/invite/jn6uhur).
 
 ## Getting started
-
-_(If you've come here looking to simply run Electrum,
-[you may download it here](https://github.com/Electrum-RVN-SIG/electrum-ravencoin/releases/latest).)_
 
 Electrum itself is pure Python, and so are most of the required dependencies,
 but not everything. The following sections describe how to run from source, but here
