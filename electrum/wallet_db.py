@@ -626,6 +626,7 @@ class WalletDB(JsonDB):
         self.verified_restricted_verifiers = self.get_dict('verified_verifier_strings')
         self.verified_restricted_freezes = self.get_dict('verified_freezes')
         self.verified_broadcasts = self.get_dict('verified_broadcasts')
+        self.verified_associations = self.get_dict('verified_associations')
         self.asset_blacklist = self.get('asset_blacklist')  # type: Set[str]
 
         self.my_swaps = self.get_dict('atomic_swap')
@@ -877,6 +878,40 @@ class WalletDB(JsonDB):
                     if asset not in d:
                         d[asset] = set()
                     d[asset].add(tx_hash)
+        return d
+
+    @locked
+    def get_verified_associations(self, asset: str) -> Dict[str, Dict[str, Any]]:
+        assert isinstance(asset, str)
+        return dict(self.verified_associations.get(asset, dict()))
+    
+    @modifier
+    def remove_verified_association(self, asset: str, res: str):
+        assert isinstance(asset, str)
+        assert isinstance(res, str)
+        self.verified_associations.get(asset, dict()).pop(res, None)
+
+    @modifier
+    def add_verified_association(self, asset: str, res: str, d):
+        assert isinstance(asset, str)
+        assert isinstance(res, str)
+        assert isinstance(d['associated'], bool)
+        assert isinstance(d['tx_hash'], str)
+        assert isinstance(d['restricted_tx_pos'], int)
+        assert isinstance(d['qualifying_tx_pos'], int)
+        assert isinstance(d['height'], int)
+        if self.verified_associations.get(asset) is None:
+            self.verified_associations[asset] = dict()
+        self.verified_associations[asset][res] = d
+
+    @locked
+    def get_verified_associations_after_height(self, height: int) -> Dict[str, Set[str]]:
+        assert isinstance(height, int)
+        d = defaultdict(set)
+        for asset, res_dict in self.verified_associations.items():
+            for res, d1 in res_dict.items():
+                if d1['height'] > height:
+                    d[asset].add(res)
         return d
 
     @locked

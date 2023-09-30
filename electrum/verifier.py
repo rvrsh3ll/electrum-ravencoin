@@ -22,6 +22,7 @@
 # SOFTWARE.
 
 import asyncio
+import re
 from typing import Sequence, Optional, TYPE_CHECKING, Tuple
 
 import aiorpcx
@@ -121,7 +122,8 @@ class SPV(NetworkJobOnDefaultServer):
                 source_height = associated_data_tuple[1]
                 if await self._maybe_defer(source_txid, source_height, add_to_requested_set=False, alt_id=verifying_id): continue
             self.logger.info(f'attempting to verify {asset}')
-            await self.taskgroup.spawn(self._verify_unverified_asset_metadata(asset, metadata, source_tuple, divisions_tuple, associated_data_tuple))
+            self.verifying.add(verifying_id)
+            await self.taskgroup.spawn(self._verify_unverified_asset_metadata(asset, metadata, source_tuple, divisions_tuple, associated_data_tuple, verifying_id))
                 
         unverified_tags_for_qualifier = self.wallet.get_unverified_tags_for_qualifier()
         for asset, h160_dict in unverified_tags_for_qualifier.items():
@@ -132,7 +134,8 @@ class SPV(NetworkJobOnDefaultServer):
 
                 if await self._maybe_defer(txid, height, add_to_requested_set=False, alt_id=verifying_id): continue
                 self.logger.info(f'attempting to verify tag for {asset}, {h160}')
-                await self.taskgroup.spawn(self._verify_unverified_tags_for_qualifier(asset, h160, d))
+                self.verifying.add(verifying_id)
+                await self.taskgroup.spawn(self._verify_unverified_tags_for_qualifier(asset, h160, d, verifying_id))
 
         unverified_tags_for_h160 = self.wallet.get_unverified_tags_for_h160()
         for h160, asset_dict in unverified_tags_for_h160.items():
@@ -143,7 +146,8 @@ class SPV(NetworkJobOnDefaultServer):
                 
                 if await self._maybe_defer(txid, height, add_to_requested_set=False, alt_id=verifying_id): continue
                 self.logger.info(f'attempting to verify tag for {h160}, {asset}')
-                await self.taskgroup.spawn(self._verify_unverified_tags_for_h160(h160, asset, d))
+                self.verifying.add(verifying_id)
+                await self.taskgroup.spawn(self._verify_unverified_tags_for_h160(h160, asset, d, verifying_id))
 
         unverified_resticted_verifiers = self.wallet.get_unverified_restricted_verifier_strings()
         for asset, d in unverified_resticted_verifiers.items():
@@ -153,7 +157,8 @@ class SPV(NetworkJobOnDefaultServer):
             
             if await self._maybe_defer(txid, height, add_to_requested_set=False, alt_id=verifying_id): continue
             self.logger.info(f'attempting to verify restricted verifier for {asset}: {d["string"]}')
-            await self.taskgroup.spawn(self._verify_unverified_restricted_verifier(asset, d))
+            self.verifying.add(verifying_id)
+            await self.taskgroup.spawn(self._verify_unverified_restricted_verifier(asset, d, verifying_id))
 
         unverified_resticted_freezes = self.wallet.get_unverified_restricted_freezes()
         for asset, d in unverified_resticted_freezes.items():
@@ -163,7 +168,8 @@ class SPV(NetworkJobOnDefaultServer):
 
             if await self._maybe_defer(txid, height, add_to_requested_set=False, alt_id=verifying_id): continue
             self.logger.info(f'attempting to verify restricted freeze for {asset}: {d["frozen"]}')
-            await self.taskgroup.spawn(self._verify_unverified_restricted_freeze(asset, d))
+            self.verifying.add(verifying_id)
+            await self.taskgroup.spawn(self._verify_unverified_restricted_freeze(asset, d, verifying_id))
 
         unverified_broadcasts = self.wallet.get_unverified_broadcasts()
         for asset, d1 in unverified_broadcasts.items():
@@ -173,13 +179,70 @@ class SPV(NetworkJobOnDefaultServer):
 
                 if await self._maybe_defer(tx_hash, height, add_to_requested_set=False, alt_id=verifying_id): continue
                 self.logger.info(f'attempting to verify broadcast for {asset}: {tx_hash}')
-                await self.taskgroup.spawn(self._verify_unverified_broadcast(asset, tx_hash, d2))
+                self.verifying.add(verifying_id)
+                await self.taskgroup.spawn(self._verify_unverified_broadcast(asset, tx_hash, d2, verifying_id))
 
-    async def _verify_unverified_broadcast(self, asset: str, tx_hash: str, d):
+        unverified_associations = self.wallet.get_unverified_associations()
+        for asset, d1 in unverified_associations.items():
+            for res, d2 in d1.items():
+                tx_hash = d2['tx_hash']
+                height = d2['height']
+                verifying_id = f'a:{tx_hash}'
+
+                if await self._maybe_defer(tx_hash, height, add_to_requested_set=False, alt_id=verifying_id): continue
+                self.logger.info(f'attempting to verify association for {asset}: {res}')
+                self.verifying.add(verifying_id)
+                await self.taskgroup.spawn(self._verify_unverified_association(asset, res, d2, verifying_id))
+
+    async def _verify_unverified_association(self, asset: str, res: str, d, verifying_id):
+        height = d['height']
+        tx_hash = d['tx_hash']
+
+        try:
+            await self._request_and_verify_single_proof(tx_hash, height, quick_return=True)
+            tx = self.wallet.get_transaction(tx_hash)
+            if not tx:
+                self._requests_sent += 1
+                try:
+                    async with self._network_request_semaphore:
+                        raw_tx = await self.interface.get_transaction(tx_hash)
+                finally:
+                    self._requests_answered += 1
+                tx = Transaction(raw_tx)
+            qual_idx = d['qualifying_tx_pos']
+            res_idx = d['restricted_tx_pos']
+            asset_info = get_asset_info_from_script(tx.outputs()[qual_idx].scriptpubkey)
+            if (_type := asset_info.get_type()) != AssetVoutType.VERIFIER:
+                raise AssetException(f'bad asset type: {_type}')
+            main_qualifier = asset.split('/')[0]
+            if d['associated']:
+                if main_qualifier[1:] not in re.findall(r'([A-Z0-9_.]+)', asset_info.verifier_string):
+                    raise AssetException(f'qualifier not in verifier string {asset} {res}: {asset_info.verifier_string} ({main_qualifier[1:]})')
+            else:
+                if main_qualifier[1:] in re.findall(r'([A-Z0-9_.]+)', asset_info.verifier_string):
+                    raise AssetException(f'qualifier in verifier string {asset} {res}: {asset_info.verifier_string} ({main_qualifier[1:]})')
+            
+            asset_info = get_asset_info_from_script(tx.outputs()[res_idx].scriptpubkey)
+            if (_type := asset_info.get_type()) not in (AssetVoutType.REISSUE, AssetVoutType.CREATE):
+                raise AssetException(f'bad asset type: {_type}')
+            if asset_info.asset != res:
+                raise AssetException(f'restricted asset does not match for {asset} {res} ({asset_info.asset})')
+
+        except (aiorpcx.jsonrpc.RPCError, RequestCorrupted, AssetException, IndexError) as e:
+            import traceback
+            traceback.print_exc()
+            self.logger.info(f'bad association {asset} for {res}: {repr(e)}')
+            self.wallet.remove_unverified_association(asset, res, height)
+            raise GracefulDisconnect(e) from e
+        finally:
+            self.verifying.discard(verifying_id)
+
+        self.logger.info(f'verified association for {asset} {res}')
+        self.wallet.add_verified_association(asset, res, d)
+
+    async def _verify_unverified_broadcast(self, asset: str, tx_hash: str, d, verifying_id):
         height = d['height']
 
-        verifying_id = f'b:{tx_hash}'
-        self.verifying.add(verifying_id)
         try:
             await self._request_and_verify_single_proof(tx_hash, height, quick_return=True)
             tx = self.wallet.get_transaction(tx_hash)
@@ -193,7 +256,7 @@ class SPV(NetworkJobOnDefaultServer):
                 tx = Transaction(raw_tx)
             idx = d['tx_pos']
             asset_info = get_asset_info_from_script(tx.outputs()[idx].scriptpubkey)
-            if _type := asset_info.get_type() != AssetVoutType.TRANSFER:
+            if (_type := asset_info.get_type()) != AssetVoutType.TRANSFER:
                 raise AssetException(f'bad asset type: {_type}')
             if asset_info.asset != asset:
                 raise AssetException(f'bad asset: {asset}')
@@ -231,12 +294,10 @@ class SPV(NetworkJobOnDefaultServer):
         self.logger.info(f'verified broadcast for {asset} {d["data"]}')
         self.wallet.add_verified_broadcast(asset, tx_hash, d)
 
-    async def _verify_unverified_restricted_freeze(self, asset: str, d):
+    async def _verify_unverified_restricted_freeze(self, asset: str, d, verifying_id):
         txid = d['tx_hash']
         height = d['height']
 
-        verifying_id = f'rf:{txid}'
-        self.verifying.add(verifying_id)
         try:
             await self._request_and_verify_single_proof(txid, height, quick_return=True)
             tx = self.wallet.get_transaction(txid)
@@ -250,7 +311,7 @@ class SPV(NetworkJobOnDefaultServer):
                     self._requests_answered += 1
             idx = d['tx_pos']
             asset_info = get_asset_info_from_script(tx.outputs()[idx].scriptpubkey)
-            if _type := asset_info.get_type() != AssetVoutType.FREEZE:
+            if (_type := asset_info.get_type()) != AssetVoutType.FREEZE:
                 raise AssetException(f'bad asset type: {_type}')
             if asset_info.asset != asset:
                 raise AssetException(f'bad asset: {asset}')
@@ -266,12 +327,10 @@ class SPV(NetworkJobOnDefaultServer):
         self.logger.info(f'verified freeze for {asset} {d["frozen"]}')
         self.wallet.add_verified_restricted_freeze(asset, d)
 
-    async def _verify_unverified_restricted_verifier(self, asset: str, d):
+    async def _verify_unverified_restricted_verifier(self, asset: str, d, verifying_id):
         txid = d['tx_hash']
         height = d['height']
 
-        verifying_id = f'rs:{txid}'
-        self.verifying.add(verifying_id)
         try:
             await self._request_and_verify_single_proof(txid, height, quick_return=True)
             tx = self.wallet.get_transaction(txid)
@@ -285,13 +344,13 @@ class SPV(NetworkJobOnDefaultServer):
                     self._requests_answered += 1
             idx_qual = d['qualifying_tx_pos']
             asset_info = get_asset_info_from_script(tx.outputs()[idx_qual].scriptpubkey)
-            if _type := asset_info.get_type() != AssetVoutType.VERIFIER:
+            if (_type := asset_info.get_type()) != AssetVoutType.VERIFIER:
                 raise AssetException(f'bad asset type: {_type}')
             if d['string'] != asset_info.verifier_string:
                 raise AssetException(f'verifier string mismatch: {d["string"]} vs {asset_info.verifier_string}')
             idx_restricted = d['restricted_tx_pos']
             asset_info = get_asset_info_from_script(tx.outputs()[idx_restricted].scriptpubkey)
-            if _type := asset_info.get_type() not in (AssetVoutType.CREATE, AssetVoutType.REISSUE):
+            if (_type := asset_info.get_type()) not in (AssetVoutType.CREATE, AssetVoutType.REISSUE):
                 raise AssetException(f'bad asset type: {_type}')
             if asset_info.asset != asset:
                 raise AssetException(f'bad asset: {asset}')
@@ -311,11 +370,9 @@ class SPV(NetworkJobOnDefaultServer):
             metadata: AssetMetadata, 
             source: Tuple[TxOutpoint, int],
             divisions_source: Tuple[TxOutpoint, int] | None, 
-            associated_data_source: Tuple[TxOutpoint, int] | None):
+            associated_data_source: Tuple[TxOutpoint, int] | None,
+            verifying_id):
         
-        verifying_id = f'm:{asset}'
-        self.verifying.add(verifying_id)
-
         verified_metadata = self.wallet.db.get_verified_asset_metadata(asset)
         if verified_metadata:
             if metadata.sats_in_circulation < verified_metadata.sats_in_circulation:
@@ -438,12 +495,10 @@ class SPV(NetworkJobOnDefaultServer):
         self.logger.info(f'verified metadata for {asset}')
         self.wallet.add_verified_asset_metadata(asset, metadata, source, divisions_source, associated_data_source)
 
-    async def _verify_unverified_tags_for_qualifier(self, asset, h160, d):
+    async def _verify_unverified_tags_for_qualifier(self, asset, h160, d, verifying_id):
         txid = d['tx_hash']
         height = d['height']
 
-        verifying_id = f't4q:{txid}'
-        self.verifying.add(verifying_id)
         try:
             await self._request_and_verify_single_proof(txid, height, quick_return=True)
             tx = self.wallet.get_transaction(txid)
@@ -457,7 +512,7 @@ class SPV(NetworkJobOnDefaultServer):
                     self._requests_answered += 1
             idx = d['tx_pos']
             asset_info = get_asset_info_from_script(tx.outputs()[idx].scriptpubkey)
-            if _type := asset_info.get_type() != AssetVoutType.NULL:
+            if (_type := asset_info.get_type()) != AssetVoutType.NULL:
                 raise AssetException(f'bad asset type: {_type}')
             if h160 != asset_info.h160:
                 raise AssetException(f'h160 mismatch: {h160} vs {asset_info.h160}')
@@ -476,12 +531,10 @@ class SPV(NetworkJobOnDefaultServer):
         self.wallet.add_verified_tag_for_qualifier(asset, h160, d)
 
 
-    async def _verify_unverified_tags_for_h160(self, h160, asset, d):
+    async def _verify_unverified_tags_for_h160(self, h160, asset, d, verifying_id):
         txid = d['tx_hash']
         height = d['height']
 
-        verifying_id = f't4h:{txid}'
-        self.verifying.add(verifying_id)
         try:
             await self._request_and_verify_single_proof(txid, height, quick_return=True)
             tx = self.wallet.get_transaction(txid)
@@ -495,7 +548,7 @@ class SPV(NetworkJobOnDefaultServer):
                     self._requests_answered += 1
             idx = d['tx_pos']
             asset_info = get_asset_info_from_script(tx.outputs()[idx].scriptpubkey)
-            if _type := asset_info.get_type() != AssetVoutType.NULL:
+            if (_type := asset_info.get_type()) != AssetVoutType.NULL:
                 raise AssetException(f'bad asset type: {_type}')
             if h160 != asset_info.h160:
                 raise AssetException(f'h160 mismatch: {h160} vs {asset_info.h160}')
@@ -628,6 +681,7 @@ class SPV(NetworkJobOnDefaultServer):
         #print(f'{self.wallet.unverified_verifier_for_restricted=}')
         #print(f'{self.wallet.unverified_freeze_for_restricted=}')
         #print(f'{self.wallet.unverified_broadcast=}')
+        #print(f'{self.wallet.unverified_association=}')
 
         return (not self.requested_merkle
                 and not self.wallet.unverified_tx
@@ -636,7 +690,8 @@ class SPV(NetworkJobOnDefaultServer):
                 and not self.wallet.unverified_tags_for_h160
                 and not self.wallet.unverified_verifier_for_restricted
                 and not self.wallet.unverified_freeze_for_restricted
-                and not self.wallet.unverified_broadcast)
+                and not self.wallet.unverified_broadcast
+                and not self.wallet.unverified_association)
 
 def verify_tx_is_in_block(tx_hash: str, merkle_branch: Sequence[str],
                           leaf_pos_in_tree: int, block_header: Optional[dict],

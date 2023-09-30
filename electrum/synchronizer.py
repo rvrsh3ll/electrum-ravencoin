@@ -24,7 +24,7 @@
 # SOFTWARE.
 import asyncio
 import hashlib
-from typing import Dict, List, TYPE_CHECKING, Tuple, Set
+from typing import Dict, List, TYPE_CHECKING, Tuple, Set, Callable, Optional
 from collections import defaultdict
 import logging
 
@@ -533,6 +533,17 @@ class Synchronizer(SynchronizerBase):
                 and self.broadcast_status_queue.empty()
                 and self.qualifier_association_status_queue.empty())
 
+    # TODO: Find a more elegant way to do this...
+    async def _validate_maybe_sleep(self, is_bad_reason: Callable[[], Optional[str]]):
+        # If there is a reorg or something, we want to allow for the validated
+        # stuff to be removed before we quit the server
+        timeout_sec = 10
+        if (reason := is_bad_reason()) is not None:
+            self.logger.warning(f'{reason} (assuming reorg, checking again in {timeout_sec} seconds.)')
+            await asyncio.sleep(timeout_sec)
+            if (reason := is_bad_reason()) is not None:
+                raise SynchronizerFailure(reason)
+
     async def _on_restricted_for_freeze_update(self, asset, data):
         data_id = f'{data["frozen"]}:{data["tx_hash"]}:{data["height"]}' if data else ''
         try:
@@ -540,8 +551,12 @@ class Synchronizer(SynchronizerBase):
             if freeze_dict == data:
                 return
             if not data:
-                if freeze_dict:
-                    raise SynchronizerFailure(f'Server is not sending freeze for verified restricted asset {asset}')
+                def is_bad_reason():
+                    if self.adb.get_restricted_freeze_for_synchronizer(asset):
+                        return f'Server is not sending freeze for verified restricted asset {asset}'
+                    return None
+
+                await self._validate_maybe_sleep(is_bad_reason)
                 return
             if (asset, data_id) in self.requested_restricted_for_freeze_results:
                 return
@@ -549,9 +564,14 @@ class Synchronizer(SynchronizerBase):
         finally:
             self._handling_restricted_for_freeze.discard(asset)
         self.logger.info(f'receiving freeze for asset {asset}: {data["frozen"]}')
-        verified_data = self.adb.db.get_verified_restricted_freeze(asset)
-        if verified_data and verified_data['height'] > data['height'] > 0:
-            raise SynchronizerFailure(f'Server is trying to send old freeze for {asset}')            
+
+        def is_bad_reason():
+            verified_data = self.adb.db.get_verified_restricted_freeze(asset)
+            if verified_data and verified_data['height'] > data['height'] > 0:
+                return f'Server is trying to send old freeze for {asset}'
+            return None
+        
+        await self._validate_maybe_sleep(is_bad_reason)
         self.adb.add_unverified_or_unconfirmed_freeze_for_restricted(asset, data)
         self.requested_restricted_for_freeze_results.discard((asset, data_id))
 
@@ -562,8 +582,12 @@ class Synchronizer(SynchronizerBase):
             if verifier_dict == data:
                 return
             if not data:
-                if verifier_dict:
-                    raise SynchronizerFailure(f'Server is not sending verifier string for verified restricted asset {asset}')
+                def is_bad_reason():
+                    if self.adb.get_restricted_verifier_string_for_synchronizer(asset):
+                        return f'Server is not sending verifier string for verified restricted asset {asset}'
+                    return None
+
+                await self._validate_maybe_sleep(is_bad_reason)
                 return
             if (asset, data_id) in self.requested_restricted_for_verifier_results:
                 return
@@ -571,9 +595,14 @@ class Synchronizer(SynchronizerBase):
         finally:
             self._handling_restricted_for_verifier.discard(asset)
         self.logger.info(f'receiving verifier for asset {asset}: {data["string"]}')
-        verified_data = self.adb.db.get_verified_restricted_verifier(asset)
-        if verified_data and verified_data['height'] > data['height'] > 0:
-            raise SynchronizerFailure(f'Server is trying to send old tag verifier string for {asset}')            
+
+        def is_bad_reason():
+            verified_data = self.adb.db.get_verified_restricted_verifier(asset)
+            if verified_data and verified_data['height'] > data['height'] > 0:
+                return f'Server is trying to send old tag verifier string for {asset}'
+            return None
+
+        await self._validate_maybe_sleep(is_bad_reason)            
         self.adb.add_unverified_or_unconfirmed_verifier_string_for_restricted(asset, data)
         self.requested_restricted_for_verifier_results.discard((asset, data_id))
 
@@ -602,7 +631,17 @@ class Synchronizer(SynchronizerBase):
             self._stale_qualifier_associations[asset] = self.taskgroup.spawn(disconnect_if_still_stale)
         else:
             self._stale_qualifier_associations.pop(asset, asyncio.Future()).cancel()
-            # TODO: Incoming data checks
+
+            def is_bad_reason():
+                associations = self.adb.db.get_verified_associations(asset)
+                if associations:
+                    if any(res not in result.keys() for res in associations.keys()):
+                        return f'restricted assets are missing from associations for {asset}'
+                    for res, res_d in associations.items():
+                        if 0 < result[res]['height'] < res_d['height']:
+                            return f'Server is trying to send old associations for {asset} {res}'
+            
+            await self._validate_maybe_sleep(is_bad_reason)            
             self.adb.add_unverified_or_unconfirmed_associations(asset, result)
         self.requested_qualifier_associations_results.discard((asset, status))
 
@@ -661,14 +700,18 @@ class Synchronizer(SynchronizerBase):
             self._stale_h160s_for_tags[h160] = await self.taskgroup.spawn(disconnect_if_still_stale)
         else:
             self._stale_h160s_for_tags.pop(h160, asyncio.Future()).cancel()
-            verified_tags = self.adb.db.get_verified_h160_tags(h160)
-            if verified_tags:
-                if any(asset not in result.keys() for asset in verified_tags.keys()):
-                    raise SynchronizerFailure(f'verified assets are missing from tags for {h160}')
-                for asset, asset_d in verified_tags.items():
-                    if 0 < result[asset]['height'] < asset_d['height']:
-                        self.requested_h160s_for_tags_results.discard((h160, status))
-                        raise SynchronizerFailure(f'Server is trying to send old tag data for {h160} {asset}')            
+            
+            def is_bad_reason():
+                verified_tags = self.adb.db.get_verified_h160_tags(h160)
+                if verified_tags:
+                    if any(asset not in result.keys() for asset in verified_tags.keys()):
+                        return f'verified assets are missing from tags for {h160}'
+                    for asset, asset_d in verified_tags.items():
+                        if 0 < result[asset]['height'] < asset_d['height']:
+                            self.requested_h160s_for_tags_results.discard((h160, status))
+                            return f'Server is trying to send old tag data for {h160} {asset}'
+            
+            await self._validate_maybe_sleep(is_bad_reason)                       
             self.adb.add_unverified_or_unconfirmed_tags_for_h160(h160, result)
         self.requested_h160s_for_tags_results.discard((h160, status))
 
@@ -699,14 +742,18 @@ class Synchronizer(SynchronizerBase):
             self._stale_qualifiers_for_tags[asset] = await self.taskgroup.spawn(disconnect_if_still_stale)
         else:
             self._stale_qualifiers_for_tags.pop(asset, asyncio.Future()).cancel()
-            verified_tags = self.adb.db.get_verified_qualifier_tags(asset)
-            if verified_tags:
-                if any(h160 not in result.keys() for h160 in verified_tags.keys()):
-                    raise SynchronizerFailure(f'verified h160s are missing from tags for {asset}')
-                for h160, h160_d in verified_tags.items():
-                    if 0 < result[h160]['height'] < h160_d['height']:
-                        self.requested_qualifiers_for_tags_results.discard((asset, status))
-                        raise SynchronizerFailure(f'Server is trying to send old tag data for {asset} {h160}')            
+
+            def is_bad_reason():
+                verified_tags = self.adb.db.get_verified_qualifier_tags(asset)
+                if verified_tags:
+                    if any(h160 not in result.keys() for h160 in verified_tags.keys()):
+                        return f'verified h160s are missing from tags for {asset}'
+                    for h160, h160_d in verified_tags.items():
+                        if 0 < result[h160]['height'] < h160_d['height']:
+                            self.requested_qualifiers_for_tags_results.discard((asset, status))
+                            return f'Server is trying to send old tag data for {asset} {h160}'         
+                        
+            await self._validate_maybe_sleep(is_bad_reason)                       
             self.adb.add_unverified_or_unconfirmed_tags_for_qualifier(asset, result)
         self.requested_qualifiers_for_tags_results.discard((asset, status))
 
@@ -737,10 +784,13 @@ class Synchronizer(SynchronizerBase):
             self._stale_asset_metadatas[asset] = await self.taskgroup.spawn(disconnect_if_still_stale)
         else:
             self._stale_asset_metadatas.pop(asset, asyncio.Future()).cancel()
-            base_tup = self.adb.db.get_verified_asset_metadata_base_source(asset)
-            if base_tup is not None and 0 < result['source']['height'] < base_tup[1]:
-                self.requested_asset_metadata.discard((asset, status))
-                raise SynchronizerFailure(_('Server is trying to send old metadata for {}').format(asset), log_level=logging.ERROR)            
+
+            def is_bad_reason():
+                base_tup = self.adb.db.get_verified_asset_metadata_base_source(asset)
+                if base_tup is not None and 0 < result['source']['height'] < base_tup[1]:
+                    return f'server is trying to send old metadata for {asset}'            
+                                
+            await self._validate_maybe_sleep(is_bad_reason)
             self.adb.add_unverified_or_unconfirmed_asset_metadata(asset, result)
         self.requested_asset_metadata.discard((asset, status))
 

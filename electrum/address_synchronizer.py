@@ -116,6 +116,9 @@ class AddressSynchronizer(Logger, EventListener):
         self.unverified_broadcast = defaultdict(dict)
         self.unconfirmed_broadcast = defaultdict(dict)
 
+        self.unverified_association = defaultdict(dict)
+        self.unconfirmed_association = defaultdict(dict)
+
         self._get_balance_cache = {}
         self._get_asset_balance_cache = {}
         self._get_assets_in_mempool_cache = {}
@@ -457,6 +460,7 @@ class AddressSynchronizer(Logger, EventListener):
                     self.synchronizer.add_restricted_for_freeze(asset)
                 elif asset[0] == '#':
                     self.synchronizer.add_qualifier_for_tag(asset)
+                    self.synchronizer.add_associations_for_qualifier(asset)
             if asset[-1] == '!' and get_error_for_asset_typed(asset[:-1], AssetType.ROOT) is None:
                 # Check for any restricted assets
                 r_asset = f'${asset[:-1]}'
@@ -915,11 +919,58 @@ class AddressSynchronizer(Logger, EventListener):
         util.trigger_callback('adb_added_verified_restricted_verifier', self, asset, d['string'])
 
     def add_unverified_or_unconfirmed_associations(self, asset: str, data: Dict):
-        #print(f'{asset=} {data=}')
-        pass
+        with self.lock:
+            self.unconfirmed_association.pop(asset, None)
+            self.unverified_association.pop(asset, None)
+
+            verified = self.db.get_verified_associations(asset)
+
+            for res, d in data.items():
+                if d['height'] > 0:
+                    if d == verified.get(res, None): continue
+                    self.unverified_association[asset][res] = d
+                else:
+                    self.unconfirmed_association[asset][res] = d
+                    util.trigger_callback('adb_added_unconfirmed_association', self, asset, res)
 
     def get_associations_for_synchronizer(self, asset: str) -> Dict:
-        return dict()
+        with self.lock:
+            d = self.db.get_verified_associations(asset)
+            d.update(self.unverified_association.get(asset, dict()))
+            d.update(self.unconfirmed_association.get(asset, dict()))
+            return d
+
+
+    def get_associations(self, asset: str) -> Dict[str, object]:
+        with self.lock:
+            combined = {}
+            combined.update(self.db.get_verified_associations(asset))
+            combined.update(self.unverified_association.get(asset, dict()))
+            if self.config.HANDLE_UNCONFIRMED_METADATA:
+                combined.update(self.unconfirmed_association.get(asset, dict()))
+            return combined
+
+    def get_unverified_associations(self) -> Dict[str, Dict[str, object]]:
+        with self.lock:
+            return {k: dict(v) for k, v in self.unverified_association.items()}
+
+    def remove_unverified_association(self, asset: str, res: str, source_height: int):
+        with self.lock:
+            d1 = self.unverified_association.get(asset, dict())
+            d2 = d1.get(res, dict())
+            if d2 and d2['height'] == source_height:
+                self.unverified_association.get(asset, dict()).pop(res, None)
+                if not self.unverified_association.get(asset, None):
+                    self.unverified_association.pop(asset, None)
+
+    def add_verified_association(self, asset: str, res: str, data: Dict):
+        # Remove from the unverified map and add to the verified map
+        with self.lock:
+            self.unverified_association.get(asset, dict()).pop(res, None)
+            if not self.unverified_association.get(asset, None):
+                self.unverified_association.pop(asset, None)
+            self.db.add_verified_association(asset, res, data)
+        util.trigger_callback('adb_added_verified_association', self, asset, res)
 
     def add_unverified_or_unconfirmed_broadcasts(self, asset: str, tx_map: Dict):
         with self.lock:
@@ -1263,6 +1314,17 @@ class AddressSynchronizer(Logger, EventListener):
                 
                 self.db.remove_verified_restricted_freeze(asset)
                 txs.add(data['tx_hash'])
+            for asset, restricted_assets in self.db.get_verified_associations_after_height(above_height).items():
+                for restricted_asset in restricted_assets:
+                    association_data = self.db.get_verified_associations(asset)[restricted_asset]
+                    verified_info = self.db.get_verified_tx(association_data['tx_hash'])
+                    
+                    header = blockchain.read_header(association_data['height'])
+                    if header and verified_info and hash_header(header) == verified_info.header_hash: continue
+                    
+                    self.db.remove_verified_association(asset, restricted_asset)
+                    txs.add(tag_data['tx_hash'])
+            
             for asset, h160s in self.db.get_verified_qualifier_tags_after_height(above_height).items():
                 for h160 in h160s:
                     tag_data = self.db.get_verified_qualifier_tag(asset, h160)

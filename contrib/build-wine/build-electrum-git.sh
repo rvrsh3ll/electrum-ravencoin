@@ -57,7 +57,7 @@ verify_hash "$CACHEDIR/$X16R" "65510849dbcc7ae174de9cd33c3c25a02b6fa83a83cd1697b
 download_if_not_exist "$CACHEDIR/$X16RV2" "https://raw.githubusercontent.com/kralverde/electrum-ravencoin-wheels/master/$X16RV2"
 verify_hash "$CACHEDIR/$X16RV2" "190c8c914646045787e4e811ba9f75b6e948cc868d3b81dfab2b28ad12c94b44"
 download_if_not_exist "$CACHEDIR/$KAWPOW" "https://raw.githubusercontent.com/kralverde/electrum-ravencoin-wheels/master/$KAWPOW"
-verify_hash "$CACHEDIR/$KAWPOW" "9af4f718805628e35faeed815d07e23e8e9d54287f2e58227772ed7c8f5d0d2b"
+verify_hash "$CACHEDIR/$KAWPOW" "dfef28523674c3592df91eefecd7826e65c3bf90a95ec9e2fa4cb36027fa975a"
 
 $WINE_PYTHON -m pip install --no-warn-script-location --cache-dir "$WINE_PIP_CACHE_DIR" "$CACHEDIR/$X16R"
 $WINE_PYTHON -m pip install --no-warn-script-location --cache-dir "$WINE_PIP_CACHE_DIR" "$CACHEDIR/$X16RV2"
