@@ -35,6 +35,7 @@ from PyQt5.QtWidgets import (QComboBox,  QTabWidget, QDialog,
 from electrum.i18n import _, languages
 from electrum import util, coinchooser, paymentrequest
 from electrum.util import base_units_list, event_listener
+from electrum.ipfs_db import IPFSDB, human_readable_size
 
 from electrum.gui import messages
 
@@ -426,6 +427,29 @@ class SettingsDialog(QDialog, QtEventListener):
 
         asset_blacklist_edit.textChanged.connect(on_asset_blacklist_edit)
 
+        ipfs_cache_help = _('If viewing IPFS is enabled and IPFS data is of a in-app viewable type and its size is lower than this value, it is saved to disk.')
+        ipfs_cache_label = HelpLabel(_('IPFS Maximum Size (MB)') + ':', ipfs_cache_help)
+        ipfs_cache = QSpinBox()
+        ipfs_cache.setMinimum(0)
+        ipfs_cache.setMaximum(1000)  # 1GB
+        byte_scale = 1000 * 1000
+        ipfs_cache.setValue(self.config.MAX_IPFS_DOWNLOAD_SIZE // byte_scale)
+
+        def on_ipfs_cache():
+            value = ipfs_cache.value()
+            self.config.MAX_IPFS_DOWNLOAD_SIZE = value * byte_scale
+            print('set to ' + str(value))
+        ipfs_cache.valueChanged.connect(on_ipfs_cache)
+
+        clear_cache_help = _('If view IPFS is enabled, some IPFS data is saved to disk. Click this button to delete all cached data.')
+        clear_cache_label = HelpLabel(_('Cache') + f' ({human_readable_size(IPFSDB.get_instance().get_total_bytes_on_disk())})', clear_cache_help)
+        clear_cache_button = QPushButton(_('Clear Cache'))
+
+        def on_cache_clear_pressed():
+            IPFSDB.get_instance().clear_cache()
+            clear_cache_label.setText(_('Cache') + f' ({human_readable_size(IPFSDB.get_instance().get_total_bytes_on_disk())})')
+        clear_cache_button.pressed.connect(on_cache_clear_pressed)
+
         gui_widgets = []
         gui_widgets.append((lang_label, lang_combo))
         gui_widgets.append((colortheme_label, colortheme_combo))
@@ -455,6 +479,10 @@ class SettingsDialog(QDialog, QtEventListener):
         asset_widgets = []
         asset_widgets.append((asset_blacklist_label, asset_blacklist_edit))
 
+        ipfs_widgets = []
+        ipfs_widgets.append((ipfs_cache_label, ipfs_cache))
+        ipfs_widgets.append((clear_cache_label, clear_cache_button))
+
         tabs_info = [
             (gui_widgets, _('Appearance')),
             (units_widgets, _('Units')),
@@ -462,6 +490,7 @@ class SettingsDialog(QDialog, QtEventListener):
             #(lightning_widgets, _('Lightning')),
             (misc_widgets, _('Misc')),
             (asset_widgets, _('Asset')),
+            (ipfs_widgets, _('IPFS')),
         ]
         for widgets, name in tabs_info:
             tab = QWidget()

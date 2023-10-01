@@ -41,7 +41,6 @@ def is_mime_viewable(mime_type: str) -> bool:
     return False
 
 def human_readable_size(size, decimal_places=3, greater_than=False):
-    if not size: return None
     if not isinstance(size, int):
         return 'Unknown'
     for unit in ['Bytes','KiB','MiB','GiB','TiB']:
@@ -144,6 +143,7 @@ class IPFSDB(JsonDB, EventListener):
     
     def _convert_dict(self, path, key, v):
         v = IPFSMetadata(**v)
+        v.set_db(self)
         return v
     
     def _append_bytes_to_raw_ipfs_file(self, ipfs_hash: str, b: bytes):
@@ -162,6 +162,22 @@ class IPFSDB(JsonDB, EventListener):
     def remove_ipfs_info(self, ipfs_hash: str):
         self.data.pop(ipfs_hash)
         self.remove_ipfs_data(ipfs_hash)
+
+    @locked
+    def get_total_bytes_on_disk(self):
+        total_size = 0
+        for _, _, filenames in os.walk(self.raw_ipfs_path):
+            for file in filenames:
+                path = os.path.join(self.raw_ipfs_path, file)
+                if not os.path.islink(path):
+                    total_size += os.path.getsize(path)
+        return total_size
+
+    @modifier
+    def clear_cache(self):
+        for ipfs_hash, metadata in self.data.items():
+            metadata.is_client_side = False
+            self.remove_ipfs_data(ipfs_hash)
 
     def remove_ipfs_data(self, ipfs_hash: str):
         ipfs_file = self._local_path_for_ipfs_data(ipfs_hash)
@@ -365,7 +381,7 @@ class IPFSDB(JsonDB, EventListener):
                                                      m.known_size < network.config.MAX_IPFS_DOWNLOAD_SIZE):
                 
                 curr_time = int(time.time())
-                if m and m.last_attemped_data_download and (m.last_attemped_data_download + _LOOKUP_COOLDOWN_SEC) < curr_time:
+                if m and m.last_attemped_data_download and (m.last_attemped_data_download + _LOOKUP_COOLDOWN_SEC) > curr_time:
                     self.logger.info(f'Not downloading data for {ipfs_hash}: cooling down')
                     return
             
