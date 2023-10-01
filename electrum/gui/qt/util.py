@@ -1555,6 +1555,8 @@ class IPFSViewer(QWidget, QtEventListener):
 
         vbox.addLayout(associated_data_info_layout)
         vbox.addLayout(associated_data_view_layout)
+
+        self.associated_data = None
         self.clear()
         self.register_callbacks()
 
@@ -1563,21 +1565,26 @@ class IPFSViewer(QWidget, QtEventListener):
         self.update_associated_data_info(ipfs_hash)
 
     def _view_associated_data(self):
-        associated_data = self.associated_data
-        if len(associated_data) == 64:
+        if not self.associated_data: return
+        if len(self.associated_data) == 64:
             try:
-                _b = bytes.fromhex(associated_data)
-                self.window.do_process_from_txid(txid=associated_data)
+                _b = bytes.fromhex(self.associated_data)
+                self.window.do_process_from_txid(txid=self.associated_data)
                 return
             except Exception:
                 pass
-        ipfs_url = ipfs_explorer_URL(self.window.config, 'ipfs', associated_data)
+        ipfs_hash = self.associated_data
+        if self.window.config.SHOW_IPFS_AS_BASE32_CIDV1:
+            from electrum.ipfs_db import cidv0_to_base32_cidv1
+            ipfs_hash = cidv0_to_base32_cidv1(ipfs_hash)
+        ipfs_url = ipfs_explorer_URL(self.window.config, 'ipfs', ipfs_hash)
         webopen_safe(ipfs_url, self.window.config, self.window)
 
     def clear(self):
         for x in [self.predicted_mime_type_text, self.predicted_size_text, self.associated_data_type_text]:
             x.setText(_('N/A'))
 
+        self.associated_data = None
         self.associated_data_text.setText('')
 
         for x in [self.predicted_mime_type_label, self.predicted_mime_type_text,
@@ -1590,13 +1597,14 @@ class IPFSViewer(QWidget, QtEventListener):
             x.clear()
 
     def update_visibility(self):
-        associated_data_text = self.associated_data
-        if associated_data_text and associated_data_text.startswith('Qm'):
-            self.update_associated_data_info(associated_data_text)
+        if self.associated_data and self.associated_data.startswith('Qm'):
+            self.update_associated_data_info(self.associated_data)
 
-    @property
-    def associated_data(self) -> str:
-        return self.associated_data_text.toPlainText()
+            if self.window.config.SHOW_IPFS_AS_BASE32_CIDV1:
+                from electrum.ipfs_db import cidv0_to_base32_cidv1
+                self.associated_data_text.setText(cidv0_to_base32_cidv1(self.associated_data))
+            else:
+                self.associated_data_text.setText(self.associated_data)
 
     @lru_cache(50)
     def _get_viewable_from_resource_path(self, resource_path: str, resource_type: str):
@@ -1629,6 +1637,7 @@ class IPFSViewer(QWidget, QtEventListener):
             if associated_data[:2] == b'\x54\x20':
                 self.view_associated_data_button.setText(_('Search Blockchain Transactions'))
                 self.associated_data_type_text.setText('TXID')
+                self.associated_data = associated_data[2:].hex()
                 self.associated_data_text.setText(associated_data[2:].hex())
                 for x in [self.predicted_mime_type_label, self.predicted_size_label, 
                           self.predicted_mime_type_text, self.predicted_size_text,
@@ -1639,7 +1648,14 @@ class IPFSViewer(QWidget, QtEventListener):
             else:
                 ipfs_str = base_encode(associated_data, base=58)
                 self.associated_data_type_text.setText('IPFS')
-                self.associated_data_text.setText(ipfs_str)
+
+                ipfs_hash = ipfs_str
+                if self.window.config.SHOW_IPFS_AS_BASE32_CIDV1:
+                    from electrum.ipfs_db import cidv0_to_base32_cidv1
+                    ipfs_hash = cidv0_to_base32_cidv1(ipfs_hash)
+        
+                self.associated_data = ipfs_str
+                self.associated_data_text.setText(ipfs_hash)
                 self.view_associated_data_button.setText(_('View in Browser'))
 
                 resource_path, resource_type = IPFSDB.get_instance().get_resource_path_for_ipfs_str(ipfs_str)

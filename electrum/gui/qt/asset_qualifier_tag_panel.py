@@ -30,6 +30,13 @@ if TYPE_CHECKING:
     from aiohttp import ClientResponse
     from .asset_tab import AssetTab
 
+class AssociatedRestrictedAssetList(MyTreeView):
+    class Columns(MyTreeView.BaseColumnsEnum):
+        ASSET = enum.auto()
+        CURRENTLY_ASSOCIATED = enum.auto()
+
+    
+
 class TaggedAddressList(MyTreeView):
     class Columns(MyTreeView.BaseColumnsEnum):
         ADDRESS = enum.auto()

@@ -292,6 +292,9 @@ class TxInOutWidget(QWidget):
                                         associated_data_str = raw_associated_data[2:].hex()
                                     else:
                                         associated_data_str = base_encode(raw_associated_data, base=58)
+                                        if self.main_window.config.SHOW_IPFS_AS_BASE32_CIDV1:
+                                            from electrum.ipfs_db import cidv0_to_base32_cidv1
+                                            associated_data_str = cidv0_to_base32_cidv1(associated_data_str)
                                 cursor.insertText(_('\tAssociated Data: {}').format(associated_data_str), tcf_ext)
                             elif asset_vout_type == AssetVoutType.TRANSFER:
                                 if asset_info.asset_memo:

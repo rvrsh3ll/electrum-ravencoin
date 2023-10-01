@@ -1015,6 +1015,7 @@ class SimpleConfig(Logger):
     HANDLE_UNCONFIRMED_METADATA = ConfigVar('handle_unconfirmed_metadata', default=True, type_=bool)
     SHOW_METADATA_SOURCE = ConfigVar('show_metadata_source', default=False, type_=bool)
     ROUND_ROBIN_ALL_KNOWN_IPFS_GATEWAYS = ConfigVar('round_robin_ipfs', default=True, type_=bool)
+    SHOW_IPFS_AS_BASE32_CIDV1 = ConfigVar('show_ipfs_as_base32_cidv1', default=False, type_=bool)
 
 def read_user_config(path: Optional[str]) -> Dict[str, Any]:
     """Parse and store the user config settings in electrum.conf into user_config[]."""

@@ -2423,7 +2423,10 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
                     _("Not a valid asset") + ":\n" + error
                 )
             return
-        
+        self.show_asset_data(asset)
+
+    def show_asset_data(self, asset: str):
+        assert (error := get_error_for_asset_name(asset)), error
         from .asset_dialog import AssetDialog
         d = AssetDialog(self, asset)
         if d.valid:
