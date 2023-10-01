@@ -1008,6 +1008,7 @@ class SimpleConfig(Logger):
 
     DOWNLOAD_IPFS = ConfigVar('download_ipfs_preview', default=False, type_=bool)
     MAX_IPFS_DOWNLOAD_SIZE = ConfigVar('download_ipfs_max_size', default=10_000_000, type_=int)
+    MAX_IPFS_DOWNLOAD_WAIT = ConfigVar('download_ipfs_timeout_sec', default=60, type_=int)
     SHOW_IPFS = ConfigVar('show_ipfs_preview', default=False, type_=bool)
     SHOW_CREATE_ASSET_PAY_TO = ConfigVar('show_create_asset_pay_to', default=False, type_=bool)
     SHOW_REISSUABLE_WARNING = ConfigVar('show_reissuable_warning', default=True, type_=bool)

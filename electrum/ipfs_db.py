@@ -232,7 +232,7 @@ class IPFSDB(JsonDB, EventListener):
         async def lookup_data(ipfs_url: str):
             await asyncio.sleep(0.25)
             self.logger.info(f'attempting to download data from {ipfs_url}')
-            await Network.async_send_http_on_proxy('get', ipfs_url, on_finish=on_finish, timeout=60)
+            await Network.async_send_http_on_proxy('get', ipfs_url, on_finish=on_finish, timeout=network.config.MAX_IPFS_DOWNLOAD_WAIT)
 
         try:
             self.logger.info(f'downloading ipfs data for {ipfs_hash}')
@@ -314,7 +314,7 @@ class IPFSDB(JsonDB, EventListener):
         async def lookup_info(ipfs_url: str):
             await asyncio.sleep(0.25)
             self.logger.info(f'attempting to download info from {ipfs_url}')
-            await Network.async_send_http_on_proxy('head', ipfs_url, on_finish=on_finish, timeout=60)
+            await Network.async_send_http_on_proxy('head', ipfs_url, on_finish=on_finish, timeout=network.config.MAX_IPFS_DOWNLOAD_WAIT)
 
         try:
             self.logger.info(f'looking up ipfs info for {ipfs_hash}')

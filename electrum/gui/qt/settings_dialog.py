@@ -438,7 +438,6 @@ class SettingsDialog(QDialog, QtEventListener):
         def on_ipfs_cache():
             value = ipfs_cache.value()
             self.config.MAX_IPFS_DOWNLOAD_SIZE = value * byte_scale
-            print('set to ' + str(value))
         ipfs_cache.valueChanged.connect(on_ipfs_cache)
 
         clear_cache_help = _('If view IPFS is enabled, some IPFS data is saved to disk. Click this button to delete all cached data.')
@@ -449,6 +448,18 @@ class SettingsDialog(QDialog, QtEventListener):
             IPFSDB.get_instance().clear_cache()
             clear_cache_label.setText(_('Cache') + f' ({human_readable_size(IPFSDB.get_instance().get_total_bytes_on_disk())})')
         clear_cache_button.pressed.connect(on_cache_clear_pressed)
+
+        ipfs_timeout_help = _('How long to wait per endpoint when trying to download ipfs data.')
+        ipfs_timeout_label = HelpLabel(_('IPFS Maximum Wait (Seconds)') + ':', ipfs_timeout_help)
+        ipfs_timeout = QSpinBox()
+        ipfs_timeout.setMinimum(20)
+        ipfs_timeout.setMaximum(60 * 60)  # 1hr
+        ipfs_timeout.setValue(self.config.MAX_IPFS_DOWNLOAD_WAIT)
+
+        def on_ipfs_timeout():
+            value = ipfs_timeout.value()
+            self.config.MAX_IPFS_DOWNLOAD_WAIT = value
+        ipfs_timeout.valueChanged.connect(on_ipfs_timeout)
 
         gui_widgets = []
         gui_widgets.append((lang_label, lang_combo))
@@ -481,6 +492,7 @@ class SettingsDialog(QDialog, QtEventListener):
 
         ipfs_widgets = []
         ipfs_widgets.append((ipfs_cache_label, ipfs_cache))
+        ipfs_widgets.append((ipfs_timeout_label, ipfs_timeout))
         ipfs_widgets.append((clear_cache_label, clear_cache_button))
 
         tabs_info = [
