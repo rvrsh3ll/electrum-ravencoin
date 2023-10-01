@@ -50,7 +50,7 @@ def human_readable_size(size, decimal_places=3, greater_than=False):
         size /= 1024.0
     return f"{'>' if greater_than else ''}{size:.{decimal_places}g} {unit}"
 
-def _url_safe_ipfs_encoding(b58_ipfs_hash: str):
+def cidv0_to_base32_cidv1(b58_ipfs_hash: str):
     raw = base_decode(b58_ipfs_hash, base=58)
     # v0: multihash
 
@@ -120,9 +120,7 @@ class IPFSDB(JsonDB, EventListener):
         return False
 
     def _local_path_for_ipfs_data(self, ipfs_hash: str):
-        # Windows doesn't like uppercase; could use bech32 but just convert to hex instead
-        raw_hash = base_decode(ipfs_hash, base=58)
-        return standardize_path(os.path.join(self.raw_ipfs_path, raw_hash.hex()))
+        return standardize_path(os.path.join(self.raw_ipfs_path, f'{cidv0_to_base32_cidv1(ipfs_hash)}.dat'))
 
     @locked
     @profiler
@@ -168,6 +166,13 @@ class IPFSDB(JsonDB, EventListener):
 
     @locked
     def purge_stale_ipfs_data(self):
+        valid_files = {self._local_path_for_ipfs_data(ipfs_hash) for ipfs_hash in self.data.keys()}
+        for _, _, filenames in os.walk(self.raw_ipfs_path):
+            for file in filenames:
+                path = os.path.join(self.raw_ipfs_path, file)
+                if path not in valid_files:
+                    os.remove(path)
+        
         stale_hashes = {ipfs_hash for ipfs_hash in self.data.keys() if not self.data[ipfs_hash].associated_assets}
         for hash in stale_hashes:
             self.remove_ipfs_info(hash)
@@ -236,7 +241,7 @@ class IPFSDB(JsonDB, EventListener):
 
         try:
             self.logger.info(f'downloading ipfs data for {ipfs_hash}')
-            ipfs_url_safe = _url_safe_ipfs_encoding(ipfs_hash)
+            ipfs_url_safe = cidv0_to_base32_cidv1(ipfs_hash)
             if network.config.ROUND_ROBIN_ALL_KNOWN_IPFS_GATEWAYS:
                 ipfs_urls = {name: url for name, url in ipfs_explorer_round_robin(network.config, 'ipfs', ipfs_url_safe)}
                 tried_gateways = set()
@@ -318,7 +323,7 @@ class IPFSDB(JsonDB, EventListener):
 
         try:
             self.logger.info(f'looking up ipfs info for {ipfs_hash}')
-            ipfs_url_safe = _url_safe_ipfs_encoding(ipfs_hash)
+            ipfs_url_safe = cidv0_to_base32_cidv1(ipfs_hash)
             if network.config.ROUND_ROBIN_ALL_KNOWN_IPFS_GATEWAYS:
                 ipfs_urls = {name: url for name, url in ipfs_explorer_round_robin(network.config, 'ipfs', ipfs_url_safe)}
                 tried_gateways = set()
