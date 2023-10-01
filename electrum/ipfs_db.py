@@ -51,16 +51,20 @@ def human_readable_size(size, decimal_places=3, greater_than=False):
     return f"{'>' if greater_than else ''}{size:.{decimal_places}g} {unit}"
 
 def cidv0_to_base32_cidv1(b58_ipfs_hash: str):
-    raw = base_decode(b58_ipfs_hash, base=58)
+    multibase = base_decode(b58_ipfs_hash, base=58)
+
+    # https://github.com/multiformats/multibase
+    # https://github.com/multiformats/multicodec
+    # https://github.com/multiformats/multihash
+
     # v0: multihash
 
-    # v1: encoding (varint) + encoded(version (varint) + multicodec prefix (varint) + multhash)
-    # b: base32 encoding prefix
+    # v1: multiformat prefix (varint) + encoded(version (varint) + multicodec prefix (varint) + multhash)
+    # b: base32 (padding omitted) multiformat prefix
     # 1: version
-    # 0x70 is dag-pb; what is used for IPFS lookups
+    # 0x70 is dag-pb multicodec; what is used for IPFS lookups
 
-    # padding is omitted
-    result = (b'b' + b32encode(bytes([1, 0x70]) + raw)).decode('ascii').lower().replace('=', '')
+    result = 'b' + b32encode(bytes([1, 0x70]) + multibase).decode('ascii').lower().replace('=', '')
     assert result.isalnum(), result
     return result
 
