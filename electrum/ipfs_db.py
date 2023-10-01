@@ -7,6 +7,7 @@ import asyncio
 import time
 import itertools
 
+from base64 import b32encode
 from typing import TYPE_CHECKING, Set, Dict, Optional
 
 from aiohttp import ClientResponse
@@ -48,6 +49,20 @@ def human_readable_size(size, decimal_places=3, greater_than=False):
             break
         size /= 1024.0
     return f"{'>' if greater_than else ''}{size:.{decimal_places}g} {unit}"
+
+def _url_safe_ipfs_encoding(b58_ipfs_hash: str):
+    raw = base_decode(b58_ipfs_hash, base=58)
+    # v0: multihash
+
+    # v1: encoding (varint) + encoded(version (varint) + multicodec prefix (varint) + multhash)
+    # b: base32 encoding prefix
+    # 1: version
+    # 0x70 is dag-pb; what is used for IPFS lookups
+
+    # padding is omitted
+    result = (b'b' + b32encode(bytes([1, 0x70]) + raw)).decode('ascii').lower().replace('=', '')
+    assert result.isalnum(), result
+    return result
 
 @attr.s
 class IPFSMetadata(StoredObject):
@@ -221,8 +236,9 @@ class IPFSDB(JsonDB, EventListener):
 
         try:
             self.logger.info(f'downloading ipfs data for {ipfs_hash}')
+            ipfs_url_safe = _url_safe_ipfs_encoding(ipfs_hash)
             if network.config.ROUND_ROBIN_ALL_KNOWN_IPFS_GATEWAYS:
-                ipfs_urls = {name: url for name, url in ipfs_explorer_round_robin(network.config, 'ipfs', ipfs_hash)}
+                ipfs_urls = {name: url for name, url in ipfs_explorer_round_robin(network.config, 'ipfs', ipfs_url_safe)}
                 tried_gateways = set()
                 while tried_gateways != set(ipfs_urls.keys()):
                     async def get_gateway(gateway: str):
@@ -302,9 +318,9 @@ class IPFSDB(JsonDB, EventListener):
 
         try:
             self.logger.info(f'looking up ipfs info for {ipfs_hash}')
-
+            ipfs_url_safe = _url_safe_ipfs_encoding(ipfs_hash)
             if network.config.ROUND_ROBIN_ALL_KNOWN_IPFS_GATEWAYS:
-                ipfs_urls = {name: url for name, url in ipfs_explorer_round_robin(network.config, 'ipfs', ipfs_hash)}
+                ipfs_urls = {name: url for name, url in ipfs_explorer_round_robin(network.config, 'ipfs', ipfs_url_safe)}
                 tried_gateways = set()
                 while tried_gateways != set(ipfs_urls.keys()):
                     async def get_gateway(gateway: str):
