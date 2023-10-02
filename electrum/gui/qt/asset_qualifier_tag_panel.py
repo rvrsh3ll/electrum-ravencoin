@@ -27,7 +27,6 @@ from .confirm_tx_dialog import ConfirmTxDialog
 
 if TYPE_CHECKING:
     from .main_window import ElectrumWindow
-    from aiohttp import ClientResponse
     from .asset_tab import AssetTab
 
 class AssociatedRestrictedAssetList(MyTreeView):
@@ -35,7 +34,65 @@ class AssociatedRestrictedAssetList(MyTreeView):
         ASSET = enum.auto()
         CURRENTLY_ASSOCIATED = enum.auto()
 
-    
+    headers = {
+        Columns.ASSET: _('Restricted Asset'),
+        Columns.CURRENTLY_ASSOCIATED: _('In Verifier String'),
+    }
+
+    filter_columns = [Columns.ASSET]
+
+    ROLE_ASSET_STR = Qt.UserRole + 1000
+    ROLE_DATA_DICT = Qt.UserRole + 1001
+    key_role = ROLE_ASSET_STR
+
+    def __init__(self, window: 'ElectrumWindow'):
+        super().__init__(
+            main_window=window,
+            stretch_columns=[self.Columns.ASSET]
+        )
+        self.wallet = self.main_window.wallet
+        self.std_model = QStandardItemModel(self)
+        self.setModel(self.std_model)
+        self.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.setSortingEnabled(True)
+        self.qualifier = None
+        self.current_associations = []
+
+    @profiler(min_threshold=0.05)
+    def update(self, *, override_associations=None):
+        # not calling maybe_defer_update() as it interferes with coincontrol status bar
+        new_associations = override_associations or (self.wallet.adb.get_associations(self.qualifier) if self.qualifier else dict())
+        if self.current_associations == new_associations:
+            return
+        self.model().clear()
+        self.update_headers(self.__class__.headers)
+        for idx, (res, data) in enumerate(sorted(new_associations.items(), key=lambda x: x[0])):
+            labels = [""] * len(self.Columns)
+
+            labels[self.Columns.ASSET] = res
+            labels[self.Columns.CURRENTLY_ASSOCIATED] = str(data['associated'])
+            row_item = [QStandardItem(x) for x in labels]
+            icon = read_QIcon('unconfirmed.png') if data['height'] < 0 else read_QIcon('confirmed.png')
+            row_item[self.Columns.ASSET] = QStandardItem(icon, labels[self.Columns.ASSET])
+            self.set_editability(row_item)
+            row_item[self.Columns.ASSET].setData(res, self.ROLE_ASSET_STR)
+            row_item[self.Columns.ASSET].setData(data, self.ROLE_DATA_DICT)
+            row_item[self.Columns.ASSET].setFont(QFont(MONOSPACE_FONT))
+            self.model().insertRow(idx, row_item)
+            self.refresh_row(res, data, idx)
+        self.current_associations = new_associations
+        self.filter()
+
+    def refresh_row(self, key: str, data, row: int) -> None:
+        assert row is not None
+        asset_item = [self.std_model.item(row, col) for col in self.Columns]
+        tooltip = 'In the mempool' if data['height'] < 0 else 'Confirmed'
+        asset_item[self.Columns.ASSET].setToolTip(tooltip)
+        
+    def on_double_click(self, idx):
+        asset = self.get_role_data_for_current_item(col=self.Columns.ASSET, role=self.ROLE_ASSET_STR)
+        self.main_window.show_asset_data(asset)
+
 
 class TaggedAddressList(MyTreeView):
     class Columns(MyTreeView.BaseColumnsEnum):

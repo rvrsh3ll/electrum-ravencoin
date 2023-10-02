@@ -1221,9 +1221,9 @@ class Interface(Logger):
         res = await self.session.send_request('blockchain.asset.broadcasts', [asset])
         return res
 
-    async def get_associations_for_qualifier(self, asset: str) -> dict:
+    async def get_associations_for_qualifier(self, asset: str, *, include_mempool=True) -> dict:
         assert isinstance(asset, str)
-        res = await self.session.send_request('blockchain.asset.restricted_associations', [asset])
+        res = await self.session.send_request('blockchain.asset.restricted_associations', [asset, include_mempool])
         return res
 
     async def get_verifier_string_for_restricted_asset(self, asset: str) -> dict:

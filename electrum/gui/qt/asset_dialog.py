@@ -44,6 +44,7 @@ class AssetDialog(QDialog, MessageBoxMixin):
         freeze_data = None
         freeze_text = None
         tag_overrides = None
+        association_overrides = None
         if local_metadata is None:
             if not window.network:
                 self.window.show_message(_("You are offline."))
@@ -88,6 +89,13 @@ class AssetDialog(QDialog, MessageBoxMixin):
                     )
                     if d:
                         tag_overrides = d
+                
+                if asset[0] == '#':
+                    d = self.network.run_from_another_thread(
+                        self.network.get_associations_for_qualifier(asset)
+                    )
+                    if d:
+                        association_overrides = d
 
             except UntrustedServerReturnedError as e:
                 self.logger.info(f"Error getting info from network: {repr(e)}")
@@ -129,7 +137,7 @@ class AssetDialog(QDialog, MessageBoxMixin):
         self.m = MetadataInfo(self.window)
         self.m.update(asset, type_text, metadata, metadata_sources,
                     verifier_string_text, verifier_string_data, 
-                    freeze_text, freeze_data, tag_overrides=tag_overrides)
+                    freeze_text, freeze_data, tag_overrides=tag_overrides, association_overrides=association_overrides)
         
         scroll = QScrollArea()
         scroll.setWidget(self.m)

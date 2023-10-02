@@ -16,7 +16,7 @@ from electrum.logging import Logger
 from .util import HelpLabel, ColorScheme, HelpButton, AutoResizingTextEdit
 from .util import QHSeperationLine, read_QIcon, MONOSPACE_FONT, IPFSViewer, EnterButton
 from .my_treeview import MyTreeView
-from .asset_qualifier_tag_panel import TaggedAddressList
+from .asset_qualifier_tag_panel import TaggedAddressList, AssociatedRestrictedAssetList
 
 if TYPE_CHECKING:
     from .main_window import ElectrumWindow
@@ -300,10 +300,13 @@ class MetadataInfo(QWidget):
         self.address_list = TaggedAddressList(self.window)
         self.address_list.update()
 
+        self.association_list = AssociatedRestrictedAssetList(self.window)
+        self.association_list.update()
+
         self.tabs = tabs = QTabWidget(self)
         tabs.addTab(metadata_widget, read_QIcon("copy.png"), _('Metadata'))
         tabs.addTab(self.address_list, read_QIcon("tag.png"), _('Tags'))
-        #tabs.addTab()
+        tabs.addTab(self.association_list, read_QIcon("freeze.png"), _('Associations'))
         vbox.addWidget(tabs)
 
         self.clear()
@@ -317,7 +320,7 @@ class MetadataInfo(QWidget):
                metadata_sources: Optional[Tuple[bytes, Optional[bytes], Optional[bytes]]],
                verifier_text, verifier_string_data,
                freeze_text, freeze_data,
-               *, tag_overrides=None):
+               *, tag_overrides=None, association_overrides=None):
         self.current_asset = asset
         if type_text:
             header_text = '<h3>{} ({})</h3>'.format(_('Asset Metadata'), type_text)
@@ -435,6 +438,13 @@ class MetadataInfo(QWidget):
                         self.verifier_source_label, self.freeze_source_txid,
                         self.freeze_source_button, self.freeze_source_label]:
                 x.setVisible(False)
+
+        if asset[0] == '#':
+            self.association_list.qualifier = asset
+            self.association_list.update(override_associations=association_overrides)
+            self.tabs.setTabVisible(2, True)
+        else:
+            self.tabs.setTabVisible(2, False)
 
         if asset[0] in ('#', "$"):
             self.address_list.tagger = asset
@@ -572,7 +582,8 @@ class ViewAssetPanel(QSplitter, Logger):
         self.update_asset_trigger.connect(lambda asset: self.metadata_viewer.update_info(asset))
         self.searchable_list_grouping = SearchableListGrouping(
             self.asset_list,
-            self.metadata_viewer.metadata_info.address_list
+            self.metadata_viewer.metadata_info.address_list,
+            self.metadata_viewer.metadata_info.association_list,
         )
 
     def update(self):

@@ -1215,6 +1215,13 @@ class Network(Logger, NetworkRetryManager[ServerAddr]):
             raise RequestTimedOut()
         return await self.interface.get_tags_for_qualifier(asset, include_mempool=include_mempool)
 
+    @best_effort_reliable
+    @catch_server_exceptions
+    async def get_associations_for_qualifier(self, asset: str, *, include_mempool=False) -> Dict[str, Dict]:
+        if self.interface is None:
+            raise RequestTimedOut()
+        return await self.interface.get_associations_for_qualifier(asset, include_mempool=include_mempool)
+
 
     def blockchain(self) -> Blockchain:
         interface = self.interface
