@@ -116,7 +116,7 @@ class AssetDialog(QDialog, MessageBoxMixin):
                         if association_overrides:
                             tx_to_wait_for.extend((item['tx_hash'], item['height']) for item in association_overrides.values())
 
-                        await self.wallet.adb.verifier.wait_until_transactions_can_be_verified(tx_to_wait_for)
+                        await self.wallet.adb.verifier.wait_and_verify_transitory_transactions(tx_to_wait_for)
                         await self.wallet.adb.verifier._internal_verify_unverified_asset_metadata(
                             asset,
                             metadata,

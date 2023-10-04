@@ -76,7 +76,7 @@ class SPV(NetworkJobOnDefaultServer):
             await self._request_proofs()
             await asyncio.sleep(0.1)
 
-    async def wait_until_transactions_can_be_verified(self, txs: Sequence[Tuple[str, int]]):
+    async def wait_and_verify_transitory_transactions(self, txs: Sequence[Tuple[str, int]]):
         txids_needed_to_verify = set()
         defering = True
         while defering:
@@ -414,18 +414,20 @@ class SPV(NetworkJobOnDefaultServer):
             metadata: AssetMetadata, 
             source: Tuple[TxOutpoint, int],
             divisions_source: Tuple[TxOutpoint, int] | None, 
-            associated_data_source: Tuple[TxOutpoint, int] | None):
+            associated_data_source: Tuple[TxOutpoint, int] | None,
+            *, validate_against_verified=True):
         
-        verified_metadata = self.wallet.db.get_verified_asset_metadata(asset)
-        if verified_metadata:
-            if metadata.sats_in_circulation < verified_metadata.sats_in_circulation:
-                raise Exception('Sats are less than verified sats')
-        
-        verified_metadata_source = self.wallet.db.get_verified_asset_metadata_base_source(asset)
-        if verified_metadata_source:
-            _, verified_height = verified_metadata_source
-            if source[1] < verified_height:
-                raise Exception('New base height is less than verified base height')
+        if validate_against_verified:
+            verified_metadata = self.wallet.db.get_verified_asset_metadata(asset)
+            if verified_metadata:
+                if metadata.sats_in_circulation < verified_metadata.sats_in_circulation:
+                    raise Exception('Sats are less than verified sats')
+            
+            verified_metadata_source = self.wallet.db.get_verified_asset_metadata_base_source(asset)
+            if verified_metadata_source:
+                _, verified_height = verified_metadata_source
+                if source[1] < verified_height:
+                    raise Exception('New base height is less than verified base height')
 
         if divisions_source:
             if divisions_source[1] > source[1]:

@@ -4,14 +4,17 @@ from typing import TYPE_CHECKING
 
 from PyQt5.QtGui import QFont, QStandardItemModel, QStandardItem
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QVBoxLayout, QScrollArea, QLineEdit, QDialog, QWidget, QAbstractItemView
+from PyQt5.QtWidgets import QVBoxLayout, QScrollArea, QLineEdit, QDialog, QWidget, QAbstractItemView, QMenu
 
+from electrum.asset import AssetMetadata
+from electrum.bitcoin import base_decode
 from electrum.i18n import _
 from electrum.network import UntrustedServerReturnedError
-from electrum.util import profiler
+from electrum.util import profiler, ipfs_explorer_URL 
+from electrum.transaction import TxOutpoint
 
 from .my_treeview import MyTreeView
-from .util import Buttons, CloseButton, MessageBoxMixin, read_QIcon, MONOSPACE_FONT, BlockingWaitingDialog
+from .util import Buttons, CloseButton, MessageBoxMixin, read_QIcon, MONOSPACE_FONT, BlockingWaitingDialog, webopen_safe
 
 if TYPE_CHECKING:
     from .main_window import ElectrumWindow
@@ -104,11 +107,16 @@ class _AssociatedRestrictedAssetList(MyTreeView):
 
             ipfs_str = _('Unchanged')
             if history_item['has_ipfs']:
-                if self.config.SHOW_IPFS_AS_BASE32_CIDV1:
-                    from electrum.ipfs_db import cidv0_to_base32_cidv1
-                    ipfs_str = cidv0_to_base32_cidv1(history_item['ipfs'])
+                if history_item['ipfs'][:2] == 'Qm':
+                    if self.config.SHOW_IPFS_AS_BASE32_CIDV1:
+                        from electrum.ipfs_db import cidv0_to_base32_cidv1
+                        ipfs_str = cidv0_to_base32_cidv1(history_item['ipfs'])
+                    else:
+                        ipfs_str = history_item['ipfs']
                 else:
-                    ipfs_str = history_item['ipfs']
+                    raw = base_decode(history_item['ipfs'], base=58)
+                    assert raw[:2] == b'\x54\x20'
+                    ipfs_str = raw[2:].hex()
 
             labels[self.Columns.HEIGHT] = str(history_item['height']) if history_item['height'] >= 0 else _('N/A')
             labels[self.Columns.SATS_ADDED] = self.config.format_amount(history_item['sats'], add_thousands_sep=True)
@@ -136,6 +144,28 @@ class _AssociatedRestrictedAssetList(MyTreeView):
         tx_hash = data['tx_hash']
         self.main_window.do_process_from_txid(txid=tx_hash)
 
+    def create_menu(self, position):
+        selected = self.selected_in_column(self.Columns.HEIGHT)
+        if not selected:
+            return
+        if len(selected) > 1: return
+
+        menu = QMenu()
+        data = self.item_from_index(selected[0]).data(self.ROLE_DATA_DICT)
+        menu.addAction(_('View Transaction'), lambda: self.main_window.do_process_from_txid(txid=data['tx_hash']))
+
+        if data['has_ipfs']:
+            data_str = self.item_from_index(selected[0]).data(self.ROLE_IPFS_STR)
+            if data['ipfs'][:2] == 'Qm':
+                def open_ipfs():
+                    ipfs_url = ipfs_explorer_URL(self.main_window.config, 'ipfs', data_str)
+                    webopen_safe(ipfs_url, self.main_window.config, self.main_window)
+                menu.addAction(_('View IPFS'), open_ipfs)
+            else:
+                menu.addAction(_('View Associated Transaction'), lambda: self.main_window.do_process_from_txid(txid=data_str))
+
+        menu.exec_(self.viewport().mapToGlobal(position))
+
 
 class AssetMetadataHistory(AbstractAssetDialog):
     def _internal_widget(self):
@@ -148,14 +178,46 @@ class AssetMetadataHistory(AbstractAssetDialog):
                 self.network.get_metadata_history(self.asset)
             )
 
-            async def verify_all_txids():
-                if not self.window.config.VERIFY_TRANSITORY_ASSET_DATA:
-                    return
-                await self.wallet.adb.verifier.wait_until_transactions_can_be_verified([(item['tx_hash'], item['height']) for item in d])
+            if not d:
+                self.window.show_message(_("This asset does not exist."))
+                return None
 
-            BlockingWaitingDialog(self.window, _("Validating Transactions..."), 
-                                    lambda: self.network.run_from_another_thread(
-                                    verify_all_txids()))
+            if self.window.config.VERIFY_TRANSITORY_ASSET_DATA:
+                async def verify_all_txids():
+                    await self.wallet.adb.verifier.wait_and_verify_transitory_transactions([(item['tx_hash'], item['height']) for item in d])
+                    for i, item in enumerate(d):
+                        faux_data = AssetMetadata(
+                            sats_in_circulation=item['sats'],
+                            divisions=item['divisions'],
+                            reissuable=True,
+                            associated_data=item['ipfs'] if item['has_ipfs'] else None
+                        )
+                        try:                        
+                            await self.wallet.adb.verifier._internal_verify_unverified_asset_metadata(
+                                self.asset, 
+                                faux_data,
+                                (TxOutpoint(bytes.fromhex(item['tx_hash']), item['tx_pos']), item['height']),
+                                None,
+                                None,
+                                validate_against_verified=False
+                            )
+                        except Exception as e:
+                            if i == len(d) - 1:
+                                faux_data.reissuable = False
+                                self.window.logger.info(f'Got error... assuming reason was asset is now non-reissuable... retrying with relevant info...')
+                                await self.wallet.adb.verifier._internal_verify_unverified_asset_metadata(
+                                    self.asset, 
+                                    faux_data,
+                                    (TxOutpoint(bytes.fromhex(item['tx_hash']), item['tx_pos']), item['height']),
+                                    None,
+                                    None
+                                )
+                            else:
+                                raise e
+
+                BlockingWaitingDialog(self.window, _("Validating Transactions..."), 
+                                        lambda: self.network.run_from_another_thread(
+                                        verify_all_txids()))
 
             widget = _AssociatedRestrictedAssetList(self.window)
             widget.update(d)
