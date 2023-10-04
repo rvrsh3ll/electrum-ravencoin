@@ -13,14 +13,14 @@ from electrum.util import profiler, ipfs_explorer_URL
 from electrum.transaction import TxOutpoint
 
 from .my_treeview import MyTreeView
-from .util import Buttons, CloseButton, MessageBoxMixin, read_QIcon, MONOSPACE_FONT, BlockingWaitingDialog, webopen_safe
+from .util import Buttons, CloseButton, MessageBoxMixin, read_QIcon, MONOSPACE_FONT, BlockingWaitingDialog, webopen_safe, WindowModalDialog
 
 if TYPE_CHECKING:
     from .main_window import ElectrumWindow
 
-class AbstractAssetDialog(QDialog, MessageBoxMixin):
+class AbstractAssetDialog(WindowModalDialog):
     def __init__(self, window: 'ElectrumWindow', asset: str):
-        QDialog.__init__(self, parent=window)
+        WindowModalDialog.__init__(self, window, _('Asset'))
         self.asset = asset
         self.window = window
         self.wallet = window.wallet

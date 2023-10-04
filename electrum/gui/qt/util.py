@@ -382,8 +382,12 @@ class BlockingWaitingDialog(WindowModalDialog):
         # show popup
         self.show()
         # refresh GUI; needed for popup to appear and for message_label to get drawn
-        QCoreApplication.processEvents()
-        QCoreApplication.processEvents()
+
+        # Yeah.... this is exactly what it looks like...
+        # Only way I could get it to not show a black box when its not on the history tab
+        for x in range(10_000):
+            QCoreApplication.processEvents()
+        #QCoreApplication.processEvents()
         try:
             # block and run given task
             task()

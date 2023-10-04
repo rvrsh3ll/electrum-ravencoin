@@ -140,10 +140,9 @@ class AssetDialog(WindowModalDialog):
                                     asset, h160, item
                                 ) for h160, item in tag_overrides.items()])
                         if association_overrides:
-                            for res, item in association_overrides.items():
-                                await self.wallet.adb.verifier._internal_verify_unverified_association(
+                            await asyncio.gather(*[self.wallet.adb.verifier._internal_verify_unverified_association(
                                     asset, res, item
-                                )
+                                ) for res, item in association_overrides.items()])
 
                     BlockingWaitingDialog(
                         self.window, 
