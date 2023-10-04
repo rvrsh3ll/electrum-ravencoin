@@ -1,3 +1,5 @@
+import asyncio
+
 from typing import TYPE_CHECKING
 
 from PyQt5.QtCore import Qt
@@ -11,15 +13,14 @@ from electrum.transaction import TxOutpoint
 from electrum.util import trigger_callback
 
 from .asset_view_panel import MetadataInfo
-from .util import Buttons, CloseButton, MessageBoxMixin, BlockingWaitingDialog
+from .util import Buttons, CloseButton, MessageBoxMixin, BlockingWaitingDialog, WindowModalDialog
 
 if TYPE_CHECKING:
     from .main_window import ElectrumWindow
 
-class AssetDialog(QDialog, MessageBoxMixin):
+class AssetDialog(WindowModalDialog):
     def __init__(self, window: 'ElectrumWindow', asset: str):
-        QDialog.__init__(self, parent=window)
-        self.setWindowTitle(asset)
+        WindowModalDialog.__init__(self, window, asset)
 
         #self.setWindowModality(Qt.NonModal)
         self.asset = asset
@@ -135,10 +136,9 @@ class AssetDialog(QDialog, MessageBoxMixin):
                                 freeze_data
                             )
                         if tag_overrides:
-                            for h160, item in tag_overrides.items():
-                                await self.wallet.adb.verifier._internal_verify_unverified_tag_for_qualifier(
+                            await asyncio.gather(*[self.wallet.adb.verifier._internal_verify_unverified_tag_for_qualifier(
                                     asset, h160, item
-                                )
+                                ) for h160, item in tag_overrides.items()])
                         if association_overrides:
                             for res, item in association_overrides.items():
                                 await self.wallet.adb.verifier._internal_verify_unverified_association(

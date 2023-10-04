@@ -92,8 +92,7 @@ class SPV(NetworkJobOnDefaultServer):
                     #print(f'{defering=} for {tx_hash=}')
             await asyncio.sleep(0.1)
         try:
-            for tx_hash, height in txids_needed_to_verify:
-                await self._request_and_verify_single_proof(tx_hash, height, quick_return=True)
+            await asyncio.gather(*[self._request_and_verify_single_proof(tx_hash, height, quick_return=True) for tx_hash, height in txids_needed_to_verify])
         finally:
             for tx_hash, _ in txids_needed_to_verify:
                 self.requested_merkle.discard(tx_hash)

@@ -116,10 +116,12 @@ class TaggedQualifierList(MyTreeView):
     def refresh_row(self, data, row: int) -> None:
         assert row is not None
         asset_item = [self.std_model.item(row, col) for col in self.Columns]
-        
         tooltip = 'In the mempool' if data['height'] < 0 else 'Confirmed'
-
         asset_item[self.Columns.ASSET].setToolTip(tooltip)
+
+    def on_double_click(self, idx):
+        asset = self.get_role_data_for_current_item(col=self.Columns.ASSET, role=self.ROLE_ASSET_STR)
+        self.main_window.show_asset_data(asset)
 
 
 class AddressDialog(WindowModalDialog):
