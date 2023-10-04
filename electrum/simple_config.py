@@ -1017,6 +1017,8 @@ class SimpleConfig(Logger):
     ROUND_ROBIN_ALL_KNOWN_IPFS_GATEWAYS = ConfigVar('round_robin_ipfs', default=True, type_=bool)
     SHOW_IPFS_AS_BASE32_CIDV1 = ConfigVar('show_ipfs_as_base32_cidv1', default=False, type_=bool)
 
+    VERIFY_TRANSITORY_ASSET_DATA = ConfigVar('verify_transitory_asset_data', default=True, type_=bool)
+
 def read_user_config(path: Optional[str]) -> Dict[str, Any]:
     """Parse and store the user config settings in electrum.conf into user_config[]."""
     if not path:

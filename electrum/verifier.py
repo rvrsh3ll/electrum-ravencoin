@@ -76,6 +76,28 @@ class SPV(NetworkJobOnDefaultServer):
             await self._request_proofs()
             await asyncio.sleep(0.1)
 
+    async def wait_until_transactions_can_be_verified(self, txs: Sequence[Tuple[str, int]]):
+        txids_needed_to_verify = set()
+        defering = True
+        while defering:
+            defering = False
+            for tx_hash, height in (tx for tx in txs if tx):
+                if tx_hash in self.requested_merkle:
+                    continue
+                if tx_hash in self.merkle_roots:
+                    continue
+                txids_needed_to_verify.add((tx_hash, height))
+                if not defering:
+                    defering = await self._maybe_defer(tx_hash, height, for_tx=False)
+                    #print(f'{defering=} for {tx_hash=}')
+            await asyncio.sleep(0.1)
+        try:
+            for tx_hash, height in txids_needed_to_verify:
+                await self._request_and_verify_single_proof(tx_hash, height, quick_return=True)
+        finally:
+            for tx_hash, _ in txids_needed_to_verify:
+                self.requested_merkle.discard(tx_hash)
+
     async def _maybe_defer(self, tx_hash: str, tx_height: int, *, for_tx=False, add_to_requested_set=True, alt_id=None) -> bool:
         local_height = self.blockchain.height()
         if alt_id and alt_id in self.verifying:
@@ -83,9 +105,8 @@ class SPV(NetworkJobOnDefaultServer):
         # do not request merkle branch if we already requested it
         if tx_hash in self.requested_merkle:
             return True
-        if tx_hash in self.merkle_roots:
-            if for_tx and self.wallet.db.get_verified_tx(tx_hash): 
-                return True
+        if tx_hash in self.merkle_roots and for_tx:
+            return True
         # or before headers are available
         if not (0 < tx_height <= local_height):
             return True
@@ -194,7 +215,8 @@ class SPV(NetworkJobOnDefaultServer):
                 self.verifying.add(verifying_id)
                 await self.taskgroup.spawn(self._verify_unverified_association(asset, res, d2, verifying_id))
 
-    async def _verify_unverified_association(self, asset: str, res: str, d, verifying_id):
+
+    async def _internal_verify_unverified_association(self, asset, res, d):
         height = d['height']
         tx_hash = d['tx_hash']
 
@@ -229,15 +251,21 @@ class SPV(NetworkJobOnDefaultServer):
                 raise AssetException(f'restricted asset does not match for {asset} {res} ({asset_info.asset})')
 
         except (aiorpcx.jsonrpc.RPCError, RequestCorrupted, AssetException, IndexError) as e:
-            import traceback
-            traceback.print_exc()
             self.logger.info(f'bad association {asset} for {res}: {repr(e)}')
+            raise e
+        self.logger.info(f'verified association for {asset} {res}')
+
+
+    async def _verify_unverified_association(self, asset: str, res: str, d, verifying_id):
+        height = d['height']
+
+        try:
+            await self._internal_verify_unverified_association(asset, res, d)
+        except Exception as e:
             self.wallet.remove_unverified_association(asset, res, height)
             raise GracefulDisconnect(e) from e
         finally:
             self.verifying.discard(verifying_id)
-
-        self.logger.info(f'verified association for {asset} {res}')
         self.wallet.add_verified_association(asset, res, d)
 
     async def _verify_unverified_broadcast(self, asset: str, tx_hash: str, d, verifying_id):
@@ -283,8 +311,6 @@ class SPV(NetworkJobOnDefaultServer):
             else:
                 raise AssetException(f'no same vin address found')
         except (aiorpcx.jsonrpc.RPCError, RequestCorrupted, AssetException, IndexError) as e:
-            import traceback
-            traceback.print_exc()
             self.logger.info(f'bad broadcast {asset} {d["data"]}: {repr(e)}')
             self.wallet.remove_unverified_broadcast(asset, tx_hash, height)
             raise GracefulDisconnect(e) from e
@@ -294,7 +320,8 @@ class SPV(NetworkJobOnDefaultServer):
         self.logger.info(f'verified broadcast for {asset} {d["data"]}')
         self.wallet.add_verified_broadcast(asset, tx_hash, d)
 
-    async def _verify_unverified_restricted_freeze(self, asset: str, d, verifying_id):
+
+    async def _internal_verify_unverified_restricted_freeze(self, asset: str, d):
         txid = d['tx_hash']
         height = d['height']
 
@@ -319,15 +346,23 @@ class SPV(NetworkJobOnDefaultServer):
                 raise AssetException(f'bad flag: {d["frozen"]}')
         except (aiorpcx.jsonrpc.RPCError, RequestCorrupted, AssetException, IndexError) as e:
             self.logger.info(f'bad freeze {asset} {d["frozen"]}: {repr(e)}')
+            raise e
+        self.logger.info(f'verified freeze for {asset} {d["frozen"]}')
+
+
+    async def _verify_unverified_restricted_freeze(self, asset: str, d, verifying_id):
+        height = d['height']
+        try:
+            await self._internal_verify_unverified_restricted_freeze(asset, d)
+        except Exception as e:
             self.wallet.remove_unverified_restricted_freeze(asset, height)
             raise GracefulDisconnect(e) from e
         finally:
             self.verifying.discard(verifying_id)
-
-        self.logger.info(f'verified freeze for {asset} {d["frozen"]}')
         self.wallet.add_verified_restricted_freeze(asset, d)
 
-    async def _verify_unverified_restricted_verifier(self, asset: str, d, verifying_id):
+
+    async def _internal_verify_unverified_restricted_verifier(self, asset: str, d):
         txid = d['tx_hash']
         height = d['height']
 
@@ -356,45 +391,49 @@ class SPV(NetworkJobOnDefaultServer):
                 raise AssetException(f'bad asset: {asset}')
         except (aiorpcx.jsonrpc.RPCError, RequestCorrupted, AssetException, IndexError) as e:
             self.logger.info(f'bad verifier tag {asset} {d["string"]}: {repr(e)}')
+            raise e
+        self.logger.info(f'verified verifier for {asset} {d["string"]}')
+
+
+    async def _verify_unverified_restricted_verifier(self, asset: str, d, verifying_id):
+        height = d['height']
+
+        try:
+            await self._internal_verify_unverified_restricted_verifier(asset, d)
+        except Exception as e:
             self.wallet.remove_unverified_restricted_verifier_string(asset, height)
             raise GracefulDisconnect(e) from e
         finally:
-            self.verifying.discard(verifying_id)
-            
-        self.logger.info(f'verified verifier for {asset} {d["string"]}')
+            self.verifying.discard(verifying_id)            
         self.wallet.add_verified_restricted_verifier_string(asset, d)
 
-    async def _verify_unverified_asset_metadata(
+
+    async def _internal_verify_unverified_asset_metadata(
             self, 
             asset: str, 
             metadata: AssetMetadata, 
             source: Tuple[TxOutpoint, int],
             divisions_source: Tuple[TxOutpoint, int] | None, 
-            associated_data_source: Tuple[TxOutpoint, int] | None,
-            verifying_id):
+            associated_data_source: Tuple[TxOutpoint, int] | None):
         
         verified_metadata = self.wallet.db.get_verified_asset_metadata(asset)
         if verified_metadata:
             if metadata.sats_in_circulation < verified_metadata.sats_in_circulation:
-                self.wallet.remove_unverified_asset_metadata(asset, source[1])
-                raise GracefulDisconnect('Sats are less than verified sats')
+                raise Exception('Sats are less than verified sats')
         
         verified_metadata_source = self.wallet.db.get_verified_asset_metadata_base_source(asset)
         if verified_metadata_source:
             _, verified_height = verified_metadata_source
             if source[1] < verified_height:
-                self.wallet.remove_unverified_asset_metadata(asset, source[1])
-                raise GracefulDisconnect('New base height is less than verified base height')
+                raise Exception('New base height is less than verified base height')
 
         if divisions_source:
             if divisions_source[1] > source[1]:
-                self.wallet.remove_unverified_asset_metadata(asset, source[1])
-                raise GracefulDisconnect('Divisions source is over base source')
+                raise Exception('Divisions source is over base source')
             
         if associated_data_source:
             if associated_data_source[1] > source[1]:
-                self.wallet.remove_unverified_asset_metadata(asset, source[1])
-                raise GracefulDisconnect('Associated data source is over base source')
+                raise Exception('Associated data source is over base source')
 
         if divisions_source:
             source_txid = divisions_source[0].txid.hex()
@@ -420,8 +459,7 @@ class SPV(NetworkJobOnDefaultServer):
                     raise AssetException('Bad division amount!')
             except (aiorpcx.jsonrpc.RPCError, RequestCorrupted, AssetException, IndexError) as e:
                 self.logger.info(f'bad asset metadata for {asset} (1): {repr(e)}')
-                self.wallet.remove_unverified_asset_metadata(asset, source[1])
-                raise GracefulDisconnect(e) from e
+                raise e
             
         if associated_data_source:
             source_txid = associated_data_source[0].txid.hex()
@@ -447,8 +485,7 @@ class SPV(NetworkJobOnDefaultServer):
                     raise AssetException('Bad associated data!')
             except (aiorpcx.jsonrpc.RPCError, RequestCorrupted, AssetException, IndexError) as e:
                 self.logger.info(f'bad asset metadata for {asset} (2): {repr(e)}')
-                self.wallet.remove_unverified_asset_metadata(asset, source[1])
-                raise GracefulDisconnect(e) from e
+                raise e
             
         source_txid = source[0].txid.hex()
         source_idx = source[0].out_idx
@@ -464,6 +501,7 @@ class SPV(NetworkJobOnDefaultServer):
                     tx = Transaction(raw_tx)
                 finally:
                     self._requests_answered += 1
+
             asset_info = get_asset_info_from_script(tx.outputs()[source_idx].scriptpubkey)
             if not isinstance(asset_info, MetadataAssetVoutInformation):
                 if not isinstance(asset_info, OwnerAssetVoutInformation):
@@ -487,15 +525,35 @@ class SPV(NetworkJobOnDefaultServer):
                     raise AssetException('Bad reissuable')
         except (aiorpcx.jsonrpc.RPCError, RequestCorrupted, AssetException, IndexError) as e:
             self.logger.info(f'bad asset metadata for {asset} (3): {repr(e)}')
+            raise e
+        self.logger.info(f'verified metadata for {asset}')
+
+
+    async def _verify_unverified_asset_metadata(
+            self, 
+            asset: str, 
+            metadata: AssetMetadata, 
+            source: Tuple[TxOutpoint, int],
+            divisions_source: Tuple[TxOutpoint, int] | None, 
+            associated_data_source: Tuple[TxOutpoint, int] | None,
+            verifying_id):
+        
+        try:
+            await self._internal_verify_unverified_asset_metadata(
+                asset,
+                metadata,
+                source,
+                divisions_source,
+                associated_data_source)
+        except Exception as e:
             self.wallet.remove_unverified_asset_metadata(asset, source[1])
             raise GracefulDisconnect(e) from e
         finally:
             self.verifying.discard(verifying_id)
-
-        self.logger.info(f'verified metadata for {asset}')
         self.wallet.add_verified_asset_metadata(asset, metadata, source, divisions_source, associated_data_source)
 
-    async def _verify_unverified_tags_for_qualifier(self, asset, h160, d, verifying_id):
+        
+    async def _internal_verify_unverified_tag_for_qualifier(self, asset, h160, d):
         txid = d['tx_hash']
         height = d['height']
 
@@ -521,13 +579,20 @@ class SPV(NetworkJobOnDefaultServer):
             if d['flag'] != asset_info.flag:
                 raise AssetException(f'bad flag: {asset_info.flag}')
         except (aiorpcx.jsonrpc.RPCError, RequestCorrupted, AssetException, IndexError) as e:
-                self.logger.info(f'bad qualifier tag {asset} {h160}: {repr(e)}')
-                self.wallet.remove_unverified_tag_for_qualifier(asset, h160, height)
-                raise GracefulDisconnect(e) from e
+            self.logger.info(f'bad qualifier tag {asset} {h160}: {repr(e)}')
+            raise e
+        self.logger.info(f'verified tag for {asset} {h160}')
+
+
+    async def _verify_unverified_tags_for_qualifier(self, asset, h160, d, verifying_id):
+        height = d['height']
+        try:
+            await self._internal_verify_unverified_tag_for_qualifier(asset, h160, d)
+        except Exception as e:
+            self.wallet.remove_unverified_tag_for_qualifier(asset, h160, height)
+            raise GracefulDisconnect(e) from e
         finally:
             self.verifying.discard(verifying_id)
-            
-        self.logger.info(f'verified tag for {asset} {h160}')
         self.wallet.add_verified_tag_for_qualifier(asset, h160, d)
 
 

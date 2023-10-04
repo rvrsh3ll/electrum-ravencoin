@@ -7,10 +7,11 @@ from electrum.address_synchronizer import METADATA_UNCONFIRMED, METADATA_UNVERIF
 from electrum.asset import AssetMetadata
 from electrum.i18n import _
 from electrum.network import UntrustedServerReturnedError
+from electrum.transaction import TxOutpoint
 from electrum.util import trigger_callback
 
 from .asset_view_panel import MetadataInfo
-from .util import Buttons, CloseButton, MessageBoxMixin
+from .util import Buttons, CloseButton, MessageBoxMixin, BlockingWaitingDialog
 
 if TYPE_CHECKING:
     from .main_window import ElectrumWindow
@@ -26,7 +27,6 @@ class AssetDialog(QDialog, MessageBoxMixin):
         self.window = window
         self.wallet = window.wallet
         self.network = window.network
-        self.saved = True
         self.valid = False
 
         self.setMinimumWidth(700)
@@ -50,25 +50,26 @@ class AssetDialog(QDialog, MessageBoxMixin):
                 self.window.show_message(_("You are offline."))
                 return
             try:
-                d = self.network.run_from_another_thread(
+                metadata_data = self.network.run_from_another_thread(
                     self.network.get_asset_metadata(asset))
                 
-                if not d:
+                if not metadata_data:
                     self.window.show_message(_("This asset does not exist."))
                     return
-                
+                                
                 metadata = AssetMetadata(
-                    sats_in_circulation=d['sats_in_circulation'],
-                    divisions = d['divisions'],
-                    reissuable = d['reissuable'],
-                    associated_data = d['ipfs'] if d['has_ipfs'] else None
+                    sats_in_circulation=metadata_data['sats_in_circulation'],
+                    divisions = metadata_data['divisions'],
+                    reissuable = metadata_data['reissuable'],
+                    associated_data = metadata_data['ipfs'] if metadata_data['has_ipfs'] else None
                 )
+
                 if metadata.is_associated_data_ipfs:
                     self.ipfs = metadata.associated_data_as_ipfs()
                 metadata_sources = (
-                    bytes.fromhex(d['source']['tx_hash']), 
-                    bytes.fromhex(d['source_divisions']['tx_hash']) if 'source_divisions' in d else None,
-                    bytes.fromhex(d['source_ipfs']['tx_hash']) if 'source_ipfs' in d else None)
+                    bytes.fromhex(metadata_data['source']['tx_hash']), 
+                    bytes.fromhex(metadata_data['source_divisions']['tx_hash']) if 'source_divisions' in metadata_data else None,
+                    bytes.fromhex(metadata_data['source_ipfs']['tx_hash']) if 'source_ipfs' in metadata_data else None)
                 
                 if asset[0] == '$':
                     d = self.network.run_from_another_thread(
@@ -97,13 +98,66 @@ class AssetDialog(QDialog, MessageBoxMixin):
                     if d:
                         association_overrides = d
 
+                if self.window.config.VERIFY_TRANSITORY_ASSET_DATA:
+                    async def verify_metadata():
+                        tx_to_wait_for = [
+                            (metadata_data['source']['tx_hash'], metadata_data['source']['height'])
+                        ]
+                        if 'source_divisions' in metadata_data:
+                            tx_to_wait_for.append((metadata_data['source_divisions']['tx_hash'], metadata_data['source_divisions']['height']))
+                        if 'source_ipfs' in metadata_data:
+                            tx_to_wait_for.append((metadata_data['source_ipfs']['tx_hash'], metadata_data['source_ipfs']['height']))
+                        if verifier_string_data:
+                            tx_to_wait_for.append((verifier_string_data['tx_hash'], verifier_string_data['height']))
+                        if freeze_data:
+                            tx_to_wait_for.append((freeze_data['tx_hash'], freeze_data['height']))
+                        if tag_overrides:
+                            tx_to_wait_for.extend((item['tx_hash'], item['height']) for item in tag_overrides.values())
+                        if association_overrides:
+                            tx_to_wait_for.extend((item['tx_hash'], item['height']) for item in association_overrides.values())
+
+                        await self.wallet.adb.verifier.wait_until_transactions_can_be_verified(tx_to_wait_for)
+                        await self.wallet.adb.verifier._internal_verify_unverified_asset_metadata(
+                            asset,
+                            metadata,
+                            (TxOutpoint(bytes.fromhex(metadata_data['source']['tx_hash']), metadata_data['source']['tx_pos']), metadata_data['source']['height']),
+                            (TxOutpoint(bytes.fromhex(metadata_data['source_divisions']['tx_hash']), metadata_data['source_divisions']['tx_pos']), metadata_data['source_divisions']['height']) if 'source_divisions' in metadata_data else None,
+                            (TxOutpoint(bytes.fromhex(metadata_data['source_ipfs']['tx_hash']), metadata_data['source_ipfs']['tx_pos']), metadata_data['source_ipfs']['height']) if 'source_ipfs' in metadata_data else None,
+                        )
+                        if verifier_string_data:
+                            await self.wallet.adb.verifier._internal_verify_unverified_restricted_verifier(
+                                asset,
+                                verifier_string_data
+                            )
+                        if freeze_data:
+                            await self.wallet.adb.verifier._internal_verify_unverified_restricted_freeze(
+                                asset,
+                                freeze_data
+                            )
+                        if tag_overrides:
+                            for h160, item in tag_overrides.items():
+                                await self.wallet.adb.verifier._internal_verify_unverified_tag_for_qualifier(
+                                    asset, h160, item
+                                )
+                        if association_overrides:
+                            for res, item in association_overrides.items():
+                                await self.wallet.adb.verifier._internal_verify_unverified_association(
+                                    asset, res, item
+                                )
+
+                    BlockingWaitingDialog(self.window, _('Verifying Asset Information...'), lambda: self.network.run_from_another_thread(
+                        verify_metadata()
+                    ))
+
+
             except UntrustedServerReturnedError as e:
-                self.logger.info(f"Error getting info from network: {repr(e)}")
+                self.window.logger.info(f"Error getting info from network: {repr(e)}")
                 self.window.show_message(
                     _("Error getting info from network") + ":\n" + e.get_message_for_gui()
                 )
                 return
             except Exception as e:
+                self.window.logger.info(f"Error getting info from network (2): {repr(e)}")
                 self.window.show_message(
                     _("Error getting info from network") + ":\n" + repr(e)
                 )
@@ -149,7 +203,6 @@ class AssetDialog(QDialog, MessageBoxMixin):
         vbox.addLayout(Buttons(CloseButton(self)))
         self.valid = True
 
-
     def closeEvent(self, event):
         self.m.ipfs_viewer.unregister_callbacks()
         if self.ipfs:
@@ -159,7 +212,6 @@ class AssetDialog(QDialog, MessageBoxMixin):
 
     def do_search(self, text):
         self.m.address_list.filter(text)
-
 
     def keyPressEvent(self, event):
         if event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_F:

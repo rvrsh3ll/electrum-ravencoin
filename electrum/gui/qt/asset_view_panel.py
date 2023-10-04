@@ -97,23 +97,24 @@ class AssetList(MyTreeView):
         
         color = self._default_bg_brush
 
+        tooltip = ''
         if data is None:
             tooltip = _('No asset metadata avaliable')
             color = ColorScheme.RED.as_color(True)
         else:
             total_sats, kind = data
-            tooltip = _('{} total coins of {} exist').format(format_satoshis_plain(total_sats, decimal_point=8), key)
             if kind == METADATA_UNCONFIRMED:
-                tooltip += ' ' + _('(this metadata is not yet confirmed)')
+                tooltip = _('(this metadata is not yet confirmed)')
             elif kind == METADATA_UNVERIFIED:
-                tooltip += ' ' + _('(this metadata was not able to be verified)')
+                tooltip = _('(this metadata was not able to be verified)')
 
         if not self.wallet.do_we_own_this_asset(key):
             tooltip += ' ' + _('(This is a watch-only asset)')            
 
         for col in asset_item:
             col.setBackground(color)
-            col.setToolTip(tooltip)
+            if tooltip:
+                col.setToolTip(tooltip)
 
     def create_menu(self, position):
         selected = self.selected_in_column(self.Columns.ASSET)
