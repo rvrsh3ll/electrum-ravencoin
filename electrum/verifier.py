@@ -29,7 +29,7 @@ import aiorpcx
 
 from .util import TxMinedInfo, NetworkJobOnDefaultServer
 from .crypto import sha256d
-from .asset import (get_asset_info_from_script, AssetMetadata, AssetException, MetadataAssetVoutInformation, OwnerAssetVoutInformation,
+from .asset import (get_asset_info_from_script, StrictAssetMetadata, AssetException, MetadataAssetVoutInformation, OwnerAssetVoutInformation,
                     AssetVoutType)
 from .bitcoin import hash_decode, hash_encode, base_decode
 from .transaction import Transaction, TxOutpoint
@@ -411,7 +411,7 @@ class SPV(NetworkJobOnDefaultServer):
     async def _internal_verify_unverified_asset_metadata(
             self, 
             asset: str, 
-            metadata: AssetMetadata, 
+            metadata: StrictAssetMetadata, 
             source: Tuple[TxOutpoint, int],
             divisions_source: Tuple[TxOutpoint, int] | None, 
             associated_data_source: Tuple[TxOutpoint, int] | None,
@@ -534,7 +534,7 @@ class SPV(NetworkJobOnDefaultServer):
     async def _verify_unverified_asset_metadata(
             self, 
             asset: str, 
-            metadata: AssetMetadata, 
+            metadata: StrictAssetMetadata, 
             source: Tuple[TxOutpoint, int],
             divisions_source: Tuple[TxOutpoint, int] | None, 
             associated_data_source: Tuple[TxOutpoint, int] | None,

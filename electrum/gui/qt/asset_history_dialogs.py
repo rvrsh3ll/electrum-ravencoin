@@ -6,7 +6,6 @@ from PyQt5.QtGui import QFont, QStandardItemModel, QStandardItem
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QVBoxLayout, QScrollArea, QLineEdit, QDialog, QWidget, QAbstractItemView, QMenu
 
-from electrum.asset import AssetMetadata
 from electrum.bitcoin import base_decode
 from electrum.i18n import _
 from electrum.network import UntrustedServerReturnedError
@@ -162,10 +161,32 @@ class _AssociatedRestrictedAssetList(MyTreeView):
                     webopen_safe(ipfs_url, self.main_window.config, self.main_window)
                 menu.addAction(_('View IPFS'), open_ipfs)
             else:
-                menu.addAction(_('View Associated Transaction'), lambda: self.main_window.do_process_from_txid(txid=data_str))
+                menu.addAction(_('Search Associated Transaction'), lambda: self.main_window.do_process_from_txid(txid=data_str))
 
         menu.exec_(self.viewport().mapToGlobal(position))
 
+
+class LooseAssetMetadata:
+    def __init__(self, sats_in_circulation, divisions, reissuable, associated_data):
+        self.sats_in_circulation = sats_in_circulation
+        self.divisions = divisions
+        self.reissuable = reissuable
+        self.associated_data = None
+
+        if not associated_data:
+            return
+        if isinstance(associated_data, str) and len(associated_data) == 68:
+            associated_data = bytes.fromhex(associated_data)
+        if isinstance(associated_data, bytes):
+            if len(associated_data) != 34:
+                raise ValueError(f'{associated_data=} is not 34 bytes')
+            self.associated_data = associated_data
+        else:
+            associated_data = base_decode(associated_data, base=58)
+            if len(associated_data) != 34:
+                raise ValueError(f'{associated_data=} decoded is not 34 bytes')
+            self.associated_data = associated_data
+        
 
 class AssetMetadataHistory(AbstractAssetDialog):
     def _internal_widget(self):
@@ -186,7 +207,7 @@ class AssetMetadataHistory(AbstractAssetDialog):
                 async def verify_all_txids():
                     await self.wallet.adb.verifier.wait_and_verify_transitory_transactions([(item['tx_hash'], item['height']) for item in d])
                     for i, item in enumerate(d):
-                        faux_data = AssetMetadata(
+                        faux_data = LooseAssetMetadata(
                             sats_in_circulation=item['sats'],
                             divisions=item['divisions'],
                             reissuable=True,
@@ -210,14 +231,17 @@ class AssetMetadataHistory(AbstractAssetDialog):
                                     faux_data,
                                     (TxOutpoint(bytes.fromhex(item['tx_hash']), item['tx_pos']), item['height']),
                                     None,
-                                    None
+                                    None,
+                                    validate_against_verified=False
                                 )
                             else:
                                 raise e
 
-                BlockingWaitingDialog(self.window, _("Validating Transactions..."), 
-                                        lambda: self.network.run_from_another_thread(
-                                        verify_all_txids()))
+                BlockingWaitingDialog(
+                    self.window, 
+                    _("Validating Transactions..."), 
+                    lambda: self.network.run_from_another_thread(
+                            verify_all_txids()))
 
             widget = _AssociatedRestrictedAssetList(self.window)
             widget.update(d)

@@ -4,7 +4,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QVBoxLayout, QScrollArea, QLineEdit, QDialog
 
 from electrum.address_synchronizer import METADATA_UNCONFIRMED, METADATA_UNVERIFIED
-from electrum.asset import AssetMetadata
+from electrum.asset import StrictAssetMetadata
 from electrum.i18n import _
 from electrum.network import UntrustedServerReturnedError
 from electrum.transaction import TxOutpoint
@@ -57,7 +57,7 @@ class AssetDialog(QDialog, MessageBoxMixin):
                     self.window.show_message(_("This asset does not exist."))
                     return
                                 
-                metadata = AssetMetadata(
+                metadata = StrictAssetMetadata(
                     sats_in_circulation=metadata_data['sats_in_circulation'],
                     divisions = metadata_data['divisions'],
                     reissuable = metadata_data['reissuable'],
@@ -145,10 +145,11 @@ class AssetDialog(QDialog, MessageBoxMixin):
                                     asset, res, item
                                 )
 
-                    BlockingWaitingDialog(self.window, _('Verifying Asset Information...'), lambda: self.network.run_from_another_thread(
-                        verify_metadata()
-                    ))
-
+                    BlockingWaitingDialog(
+                        self.window, 
+                        _('Verifying Asset Information...'), 
+                        lambda: self.network.run_from_another_thread(verify_metadata())
+                        )
 
             except UntrustedServerReturnedError as e:
                 self.window.logger.info(f"Error getting info from network: {repr(e)}")

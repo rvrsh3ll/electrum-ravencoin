@@ -788,7 +788,6 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         tools_menu.addSeparator()
         tools_menu.addAction(_('&Get Asset Data'), self.lookup_asset_data)
         tools_menu.addAction(_("&Identify My Qualified Addresses"), self.find_qualified_address)
-        #tools_menu.addAction('TEST', lambda: self.show_asset_metadata_history('BGR'))
         tools_menu.addSeparator()
 
         raw_transaction_menu = tools_menu.addMenu(_("&Load transaction"))
@@ -2436,6 +2435,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
     def show_asset_metadata_history(self, asset: str):
         assert (error := get_error_for_asset_name(asset)) is None, error
         from .asset_history_dialogs import AssetMetadataHistory
+
         d = AssetMetadataHistory(self, asset)
         if d.valid:
             d.show()

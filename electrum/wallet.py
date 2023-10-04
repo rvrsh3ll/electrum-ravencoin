@@ -1461,7 +1461,7 @@ class Abstract_Wallet(ABC, Logger, EventListener):
             item['value'] = item.get('bc_value', Satoshis(0)) + item.get('ln_value', Satoshis(0))
             for child in item.get('children', []):
                 child['value'] = child.get('bc_value', Satoshis(0)) + child.get('ln_value', Satoshis(0))
-            if include_fiat:
+            if include_fiat and item.get('asset') is None:
                 value = item['value'].value
                 txid = item.get('txid')
                 if not item.get('lightning') and txid:

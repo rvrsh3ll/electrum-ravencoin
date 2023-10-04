@@ -301,7 +301,7 @@ class FxThread(ThreadJob, EventListener, NetworkRetryManager[str]):
         return text.replace(util.THOUSANDS_SEP, "")
 
     def ccy_amount_str(self, amount, *, add_thousands_sep: bool = False, ccy=None) -> str:
-        prec = CCY_PRECISIONS.get(self.ccy if ccy is None else ccy, 2)
+        prec = CCY_PRECISIONS.get(self.ccy if ccy is None else ccy, 2) + 2
         fmt_str = "{:%s.%df}" % ("," if add_thousands_sep else "", max(0, prec))
         try:
             rounded_amount = round(amount, prec)

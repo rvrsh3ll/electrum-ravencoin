@@ -34,7 +34,7 @@ from . import util, constants
 from .transaction import Transaction, PartialTransaction
 from .util import make_aiohttp_session, NetworkJobOnDefaultServer, random_shuffled_copy, OldTaskGroup
 from .bitcoin import address_to_scripthash, is_address, is_b58_address, b58_address_to_hash160
-from .asset import AssetMetadata, get_error_for_asset_name, get_error_for_asset_typed, AssetType
+from .asset import StrictAssetMetadata, get_error_for_asset_name, get_error_for_asset_typed, AssetType
 from .logging import Logger
 from .interface import GracefulDisconnect, NetworkTimeout
 from .i18n import _
@@ -59,7 +59,7 @@ def history_status(h):
 def asset_status(asset_data):
     if not asset_data:
         return None
-    if isinstance(asset_data, AssetMetadata):
+    if isinstance(asset_data, StrictAssetMetadata):
         return asset_data.status()
 
     sat_amount = asset_data['sats_in_circulation']

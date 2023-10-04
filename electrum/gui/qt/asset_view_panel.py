@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (QLabel, QVBoxLayout, QSplitter, QScrollArea,
                              QHBoxLayout, QWidget, QFrame, QAbstractItemView,
                              QCheckBox, QMenu, QTabWidget)
 
-from electrum.asset import AssetMetadata
+from electrum.asset import StrictAssetMetadata
 from electrum.i18n import _
 from electrum.util import format_satoshis_plain, profiler, SearchableListGrouping
 from electrum.address_synchronizer import METADATA_UNCONFIRMED, METADATA_UNVERIFIED
@@ -213,6 +213,10 @@ class MetadataInfo(QWidget):
         self.source_seperator = QHSeperationLine()
         self.source_seperator.setVisible(False)
 
+        self.metadata_history_button = EnterButton(_('View Metadata History'), lambda: self.window.show_asset_metadata_history(self.current_asset))
+        self.history_layout = QHBoxLayout()
+        self.history_layout.addWidget(self.metadata_history_button)
+
         self.associated_data_source_label = QLabel(_('Associated Data Last Changed') + ':')
         self.associated_data_source_label.setVisible(False)
         self.associated_data_source_txid = AutoResizingTextEdit()
@@ -265,6 +269,7 @@ class MetadataInfo(QWidget):
 
         source_layout = QVBoxLayout()
         source_layout.addWidget(self.source_seperator)
+        source_layout.addLayout(self.history_layout)
         source_layout.addWidget(self.associated_data_source_label)
         source_layout.addWidget(self.associated_data_source_txid)
         source_layout.addWidget(self.associated_data_source_button)
@@ -317,7 +322,7 @@ class MetadataInfo(QWidget):
         txid = txid_widget.toPlainText()
         self.window.do_process_from_txid(txid=txid)
 
-    def update(self, asset: str, type_text: Optional[str], metadata: AssetMetadata,
+    def update(self, asset: str, type_text: Optional[str], metadata: StrictAssetMetadata,
                metadata_sources: Optional[Tuple[bytes, Optional[bytes], Optional[bytes]]],
                verifier_text, verifier_string_data,
                freeze_text, freeze_data,
@@ -377,7 +382,8 @@ class MetadataInfo(QWidget):
 
         if metadata_sources:
             for x in [self.source_seperator, self.main_source_txid,
-                      self.main_source_label, self.main_source_button]:
+                      self.main_source_label, self.main_source_button,
+                      self.metadata_history_button]:
                 x.setVisible(self.window.config.SHOW_METADATA_SOURCE)
             self.main_source_txid.setText(metadata_sources[0].hex())
             if metadata_sources[1] or metadata_sources[2]:
@@ -431,6 +437,7 @@ class MetadataInfo(QWidget):
             for x in [self.main_source_txid, self.divisions_source_txid, self.associated_data_source_txid]:
                 x.clear()
             for x in [self.source_seperator, self.associated_data_source_txid,
+                        self.metadata_history_button,
                         self.associated_data_source_label, self.associated_data_source_button,
                         self.divisions_source_txid, self.divisions_source_label,
                         self.divisions_source_button, self.main_source_txid,
@@ -463,6 +470,7 @@ class MetadataInfo(QWidget):
         for x in [self.verifier_string_label, 
                   self.verifier_string_seperator, self.verifier_string_text,
                   self.source_seperator, self.associated_data_source_txid,
+                  self.metadata_history_button,
                   self.associated_data_source_label, self.associated_data_source_button,
                   self.divisions_source_txid, self.divisions_source_label,
                   self.divisions_source_button, self.main_source_txid,
@@ -535,7 +543,8 @@ class MetadataViewer(QFrame):
         self.metadata_info.ipfs_viewer.update_visibility()
         if self.metadata_info.main_source_txid.toPlainText():
             for x in [self.metadata_info.source_seperator, self.metadata_info.main_source_txid,
-                      self.metadata_info.main_source_label, self.metadata_info.main_source_button]:
+                      self.metadata_info.main_source_label, self.metadata_info.main_source_button,
+                      self.metadata_info.metadata_history_button]:
                 x.setVisible(self.parent.parent.window.config.SHOW_METADATA_SOURCE)
             if self.metadata_info.divisions_source_txid.toPlainText():
                 for x in [self.metadata_info.divisions_source_txid, self.metadata_info.divisions_source_label,

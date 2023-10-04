@@ -34,7 +34,7 @@ from .util import profiler, bfh, TxMinedInfo, UnrelatedTransactionException, wit
 from .transaction import Transaction, TxOutput, TxInput, PartialTxInput, TxOutpoint
 from .synchronizer import Synchronizer
 from .verifier import SPV
-from .asset import get_asset_info_from_script, AssetMetadata, get_error_for_asset_typed, AssetType
+from .asset import get_asset_info_from_script, StrictAssetMetadata, get_error_for_asset_typed, AssetType
 from .blockchain import hash_header, Blockchain
 from .i18n import _
 from .logging import Logger
@@ -98,8 +98,8 @@ class AddressSynchronizer(Logger, EventListener):
         # thread local storage for caching stuff
         self.threadlocal_cache = threading.local()
 
-        self.unverified_asset_metadata = {}  # type: Dict[str, Tuple[AssetMetadata, Tuple[TxOutpoint, int], Optional[Tuple[TxOutpoint, int]], Optional[Tuple[TxOutpoint, int]]]]
-        self.unconfirmed_asset_metadata = {}  # type: Dict[str, Tuple[AssetMetadata, Tuple[TxOutpoint, int], Optional[Tuple[TxOutpoint, int]], Optional[Tuple[TxOutpoint, int]]]]
+        self.unverified_asset_metadata = {}  # type: Dict[str, Tuple[StrictAssetMetadata, Tuple[TxOutpoint, int], Optional[Tuple[TxOutpoint, int]], Optional[Tuple[TxOutpoint, int]]]]
+        self.unconfirmed_asset_metadata = {}  # type: Dict[str, Tuple[StrictAssetMetadata, Tuple[TxOutpoint, int], Optional[Tuple[TxOutpoint, int]], Optional[Tuple[TxOutpoint, int]]]]
 
         self.unverified_tags_for_qualifier = defaultdict(dict)
         self.unconfirmed_tags_for_qualifier = defaultdict(dict)
@@ -748,7 +748,7 @@ class AddressSynchronizer(Logger, EventListener):
                     self.unconfirmed_tx[tx_hash] = tx_height
 
     def add_unverified_or_unconfirmed_asset_metadata(self, asset, d):
-        metadata = AssetMetadata(
+        metadata = StrictAssetMetadata(
             sats_in_circulation=d['sats_in_circulation'],
             divisions = d['divisions'],
             reissuable = d['reissuable'],
@@ -796,7 +796,7 @@ class AddressSynchronizer(Logger, EventListener):
                 if current_height == source_height:
                     self.unverified_asset_metadata.pop(asset, None)
 
-    def add_verified_asset_metadata(self, asset: str, metadata: AssetMetadata, source_tup, source_divisions_tup, source_associated_data_tup):
+    def add_verified_asset_metadata(self, asset: str, metadata: StrictAssetMetadata, source_tup, source_divisions_tup, source_associated_data_tup):
         # Remove from the unverified map and add to the verified map
         with self.lock:
             self.unverified_asset_metadata.pop(asset, None)
@@ -808,7 +808,7 @@ class AddressSynchronizer(Logger, EventListener):
             self.db.add_verified_asset_metadata(asset, metadata, source_tup, source_divisions_tup, source_associated_data_tup)
         util.trigger_callback('adb_added_verified_asset_metadata', self, asset)
 
-    def get_metadata_for_synchronizer(self, asset: str) -> Optional[AssetMetadata]:
+    def get_metadata_for_synchronizer(self, asset: str) -> Optional[StrictAssetMetadata]:
         with self.lock:
             unconfirmed = self.unconfirmed_asset_metadata.get(asset, None)
             if unconfirmed:
@@ -821,7 +821,7 @@ class AddressSynchronizer(Logger, EventListener):
                 return verified
             return None
     
-    def get_asset_metadata(self, asset: str) -> Optional[Tuple[AssetMetadata, int]]:
+    def get_asset_metadata(self, asset: str) -> Optional[Tuple[StrictAssetMetadata, int]]:
         with self.lock:
             unconfirmed = self.unconfirmed_asset_metadata.get(asset, None)
             if unconfirmed and self.config.HANDLE_UNCONFIRMED_METADATA:

@@ -36,7 +36,7 @@ import time
 import attr
 
 from . import util, bitcoin, constants
-from .asset import AssetMetadata, get_error_for_asset_name
+from .asset import StrictAssetMetadata, get_error_for_asset_name
 from .util import profiler, WalletFileException, multisig_type, TxMinedInfo, bfh
 from .invoices import Invoice, Request
 from .keystore import bip44_derivation
@@ -88,7 +88,7 @@ json_db.register_dict('transactions', lambda x: tx_from_any(x, deserialize=False
 json_db.register_dict('prevouts_by_scripthash', lambda x: set(tuple(k) for k in x), None)
 json_db.register_dict('data_loss_protect_remote_pcp', lambda x: bytes.fromhex(x), None)
 json_db.register_dict('verified_asset_metadata', lambda metadata, tup1, tup2, tup3: (
-                AssetMetadata(**metadata),
+                StrictAssetMetadata(**metadata),
                 (TxOutpoint.from_json(tup1[0]), tup1[1]),
                 (TxOutpoint.from_json(tup2[0]), tup2[1]) if tup2 else None,
                 (TxOutpoint.from_json(tup3[0]), tup3[1]) if tup3 else None,
@@ -619,7 +619,7 @@ class WalletDB(JsonDB):
             self.data['non_deterministic_txo_scriptpubkey'] = set()
         self.assets_to_watch = self.get('assets_to_watch')  # type: Set[str]
         self.broadcasts_to_watch = self.get('broadcasts_to_watch')  # type: Set[str]
-        self.verified_asset_metadata = self.get_dict('verified_asset_metadata')  # type: Dict[str, Tuple[AssetMetadata, Tuple[TxOutpoint, int], Tuple[TxOutpoint, int] | None, Tuple[TxOutpoint, int] | None]]       
+        self.verified_asset_metadata = self.get_dict('verified_asset_metadata')  # type: Dict[str, Tuple[StrictAssetMetadata, Tuple[TxOutpoint, int], Tuple[TxOutpoint, int] | None, Tuple[TxOutpoint, int] | None]]       
         self.non_deterministic_vouts = self.get('non_deterministic_txo_scriptpubkey')  # type: Set[str]
         self.verified_tags_for_qualifiers = self.get_dict('verified_qualifier_tags')
         self.verified_tags_for_h160s = self.get_dict('verified_h160_tags')
@@ -721,9 +721,9 @@ class WalletDB(JsonDB):
         self.assets_to_watch.add(asset)
 
     @modifier
-    def add_verified_asset_metadata(self, asset: str, metadata: AssetMetadata, source_tup: Tuple[TxOutpoint, int], source_divisions_tup: Tuple[TxOutpoint, int] | None, source_associated_data_tup: Tuple[TxOutpoint, int] | None):
+    def add_verified_asset_metadata(self, asset: str, metadata: StrictAssetMetadata, source_tup: Tuple[TxOutpoint, int], source_divisions_tup: Tuple[TxOutpoint, int] | None, source_associated_data_tup: Tuple[TxOutpoint, int] | None):
         assert isinstance(asset, str)
-        assert isinstance(metadata, AssetMetadata)
+        assert isinstance(metadata, StrictAssetMetadata)
         assert isinstance(source_tup, Tuple)
         assert len(source_tup) == 2
         assert isinstance(source_tup[0], TxOutpoint)
@@ -742,7 +742,7 @@ class WalletDB(JsonDB):
         self.verified_asset_metadata[asset] = metadata, source_tup, source_divisions_tup, source_associated_data_tup
 
     @locked
-    def get_verified_asset_metadata(self, asset: str) -> Optional[AssetMetadata]:
+    def get_verified_asset_metadata(self, asset: str) -> Optional[StrictAssetMetadata]:
         assert isinstance(asset, str)
         result = self.verified_asset_metadata.get(asset, None)
         if not result: return None

@@ -325,7 +325,7 @@ def _validate_divisions(instance, attribute, value):
         raise ValueError('divisions must be 0-8!')
 
 @attr.s
-class AssetMetadata(StoredObject):
+class StrictAssetMetadata(StoredObject):
     sats_in_circulation = attr.ib(type=int, validator=_validate_sats)
     divisions = attr.ib(type=int, validator=_validate_divisions)
     reissuable = attr.ib(type=bool)
