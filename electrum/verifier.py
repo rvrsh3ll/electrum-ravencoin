@@ -82,6 +82,8 @@ class SPV(NetworkJobOnDefaultServer):
         while defering:
             defering = False
             for tx_hash, height in (tx for tx in txs if tx):
+                if self.wallet.db.get_verified_tx(tx_hash):
+                    continue
                 if tx_hash in self.requested_merkle:
                     continue
                 if tx_hash in self.merkle_roots:
@@ -650,7 +652,7 @@ class SPV(NetworkJobOnDefaultServer):
 
 
     async def _request_and_verify_single_proof(self, tx_hash, tx_height, *, quick_return=False):
-        if quick_return and tx_hash in self.merkle_roots:
+        if quick_return and (tx_hash in self.merkle_roots or self.wallet.db.get_verified_tx(tx_hash)):
             return
         self.logger.info(f'requesting merkle {tx_hash}')
         try:

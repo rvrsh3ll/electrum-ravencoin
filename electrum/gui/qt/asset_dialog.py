@@ -19,8 +19,8 @@ if TYPE_CHECKING:
     from .main_window import ElectrumWindow
 
 class AssetDialog(WindowModalDialog):
-    def __init__(self, window: 'ElectrumWindow', asset: str):
-        WindowModalDialog.__init__(self, window, asset)
+    def __init__(self, window: 'ElectrumWindow', asset: str, *, parent=None):
+        WindowModalDialog.__init__(self, parent or window, asset)
 
         #self.setWindowModality(Qt.NonModal)
         self.asset = asset

@@ -213,7 +213,7 @@ class MetadataInfo(QWidget):
         self.source_seperator = QHSeperationLine()
         self.source_seperator.setVisible(False)
 
-        self.metadata_history_button = EnterButton(_('View Metadata History'), lambda: self.window.show_asset_metadata_history(self.current_asset))
+        self.metadata_history_button = EnterButton(_('View Metadata History'), lambda: self.window.show_asset_metadata_history(self.current_asset, parent=self))
         self.history_layout = QHBoxLayout()
         self.history_layout.addWidget(self.metadata_history_button)
 

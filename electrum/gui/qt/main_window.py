@@ -2425,18 +2425,18 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
             return
         self.show_asset_data(asset)
 
-    def show_asset_data(self, asset: str):
+    def show_asset_data(self, asset: str, *, parent=None):
         assert (error := get_error_for_asset_name(asset)) is None, error
         from .asset_dialog import AssetDialog
-        d = AssetDialog(self, asset)
+        d = AssetDialog(self, asset, parent=parent)
         if d.valid:
             d.show()
 
-    def show_asset_metadata_history(self, asset: str):
+    def show_asset_metadata_history(self, asset: str, *, parent=None):
         assert (error := get_error_for_asset_name(asset)) is None, error
         from .asset_history_dialogs import AssetMetadataHistory
 
-        d = AssetMetadataHistory(self, asset)
+        d = AssetMetadataHistory(self, asset, parent=parent)
         if d.valid:
             d.show()
 

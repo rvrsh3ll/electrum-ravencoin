@@ -91,7 +91,7 @@ class AssociatedRestrictedAssetList(MyTreeView):
         
     def on_double_click(self, idx):
         asset = self.get_role_data_for_current_item(col=self.Columns.ASSET, role=self.ROLE_ASSET_STR)
-        self.main_window.show_asset_data(asset)
+        self.main_window.show_asset_data(asset, parent=self)
 
 
 class TaggedAddressList(MyTreeView):

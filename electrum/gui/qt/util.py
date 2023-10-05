@@ -385,6 +385,8 @@ class BlockingWaitingDialog(WindowModalDialog):
 
         # Yeah.... this is exactly what it looks like...
         # Only way I could get it to not show a black box when its not on the history tab
+        # Unfortunately, I dont have the time to properly treat this, so will need to wait
+        # for an upstream fix.
         for x in range(10_000):
             QCoreApplication.processEvents()
         #QCoreApplication.processEvents()

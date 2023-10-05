@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 from PyQt5.QtGui import QFont, QStandardItemModel, QStandardItem
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QVBoxLayout, QScrollArea, QLineEdit, QDialog, QWidget, QAbstractItemView, QMenu
+from PyQt5.QtWidgets import QVBoxLayout, QScrollArea, QLineEdit, QAbstractItemView, QMenu
 
 from electrum.bitcoin import base_decode
 from electrum.i18n import _
@@ -13,14 +13,14 @@ from electrum.util import profiler, ipfs_explorer_URL
 from electrum.transaction import TxOutpoint
 
 from .my_treeview import MyTreeView
-from .util import Buttons, CloseButton, MessageBoxMixin, read_QIcon, MONOSPACE_FONT, BlockingWaitingDialog, webopen_safe, WindowModalDialog
+from .util import Buttons, CloseButton, read_QIcon, MONOSPACE_FONT, BlockingWaitingDialog, webopen_safe, WindowModalDialog
 
 if TYPE_CHECKING:
     from .main_window import ElectrumWindow
 
 class AbstractAssetDialog(WindowModalDialog):
-    def __init__(self, window: 'ElectrumWindow', asset: str):
-        WindowModalDialog.__init__(self, window, _('Asset'))
+    def __init__(self, window: 'ElectrumWindow', asset: str, *, parent=None):
+        WindowModalDialog.__init__(self, parent or window, _('Asset'))
         self.asset = asset
         self.window = window
         self.wallet = window.wallet
