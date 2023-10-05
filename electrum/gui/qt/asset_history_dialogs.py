@@ -1,6 +1,7 @@
 from abc import abstractmethod
+import asyncio
 import enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, List
 
 from PyQt5.QtGui import QFont, QStandardItemModel, QStandardItem
 from PyQt5.QtCore import Qt
@@ -17,6 +18,27 @@ from .util import Buttons, CloseButton, read_QIcon, MONOSPACE_FONT, BlockingWait
 
 if TYPE_CHECKING:
     from .main_window import ElectrumWindow
+
+
+class HeightKey:
+    # Makes negative numbers greater than all positive ones so that mempools come after them
+    def __init__(self, height):
+        self.height = height
+
+    def __lt__(self, other):
+        if isinstance(other, HeightKey):
+            if self.height < 0:
+                if other.height < 0:
+                    return self.height < other.height
+                else:
+                    return False
+            else:
+                if other.height < 0:
+                    return True
+                else:
+                    return self.height < other.height
+        return self.height < other
+
 
 class AbstractAssetDialog(WindowModalDialog):
     def __init__(self, window: 'ElectrumWindow', asset: str, *, parent=None):
@@ -65,7 +87,7 @@ class AbstractAssetDialog(WindowModalDialog):
         super().keyPressEvent(event)
 
 
-class _AssociatedRestrictedAssetList(MyTreeView):
+class _MetadataHistoryList(MyTreeView):
     class Columns(MyTreeView.BaseColumnsEnum):
         HEIGHT = enum.auto()
         SATS_ADDED = enum.auto()
@@ -101,7 +123,7 @@ class _AssociatedRestrictedAssetList(MyTreeView):
     def update(self, history):
         self.model().clear()
         self.update_headers(self.__class__.headers)
-        for idx, history_item in enumerate(sorted(history, key=lambda x: (x['height'], x['tx_hash']), reverse=True)):
+        for idx, history_item in enumerate(sorted(history, key=lambda x: (HeightKey(x['height']), x['tx_hash']), reverse=True)):
             labels = [""] * len(self.Columns)
 
             ipfs_str = _('Unchanged') if idx < (len(history) - 1) else _('None')
@@ -195,7 +217,7 @@ class AssetMetadataHistory(AbstractAssetDialog):
             self.window.show_message(_("You are offline."))
             return None
         try:
-            d = self.network.run_from_another_thread(
+            d: List = self.network.run_from_another_thread(
                 self.network.get_metadata_history(self.asset)
             )
 
@@ -206,36 +228,49 @@ class AssetMetadataHistory(AbstractAssetDialog):
             if self.window.config.VERIFY_TRANSITORY_ASSET_DATA:
                 async def verify_all_txids():
                     await self.wallet.adb.verifier.wait_and_verify_transitory_transactions([(item['tx_hash'], item['height']) for item in d])
-                    for i, item in enumerate(d):
+                    d.sort(key=lambda x: HeightKey(x['height']))
+                    await asyncio.gather(*[
+                        self.wallet.adb.verifier._internal_verify_unverified_asset_metadata(
+                                self.asset, 
+                                LooseAssetMetadata(
+                                    sats_in_circulation=item['sats'],
+                                    divisions=item['divisions'],
+                                    reissuable=True,
+                                    associated_data=item['ipfs'] if item['has_ipfs'] else None
+                                ),
+                                (TxOutpoint(bytes.fromhex(item['tx_hash']), item['tx_pos']), item['height']),
+                                None,
+                                None,
+                                validate_against_verified=False
+                            ) for item in d[:-1]])
+                    
+                    try:
+                        item = d[-1]
                         faux_data = LooseAssetMetadata(
                             sats_in_circulation=item['sats'],
                             divisions=item['divisions'],
                             reissuable=True,
                             associated_data=item['ipfs'] if item['has_ipfs'] else None
+                        )                
+                        await self.wallet.adb.verifier._internal_verify_unverified_asset_metadata(
+                            self.asset, 
+                            faux_data,
+                            (TxOutpoint(bytes.fromhex(item['tx_hash']), item['tx_pos']), item['height']),
+                            None,
+                            None,
+                            validate_against_verified=False
+                        ) 
+                    except Exception:
+                        faux_data.reissuable = False
+                        self.window.logger.info(f'Got error... assuming reason was asset is now non-reissuable... retrying with relevant info...')
+                        await self.wallet.adb.verifier._internal_verify_unverified_asset_metadata(
+                            self.asset, 
+                            faux_data,
+                            (TxOutpoint(bytes.fromhex(item['tx_hash']), item['tx_pos']), item['height']),
+                            None,
+                            None,
+                            validate_against_verified=False
                         )
-                        try:                        
-                            await self.wallet.adb.verifier._internal_verify_unverified_asset_metadata(
-                                self.asset, 
-                                faux_data,
-                                (TxOutpoint(bytes.fromhex(item['tx_hash']), item['tx_pos']), item['height']),
-                                None,
-                                None,
-                                validate_against_verified=False
-                            )
-                        except Exception as e:
-                            if i == len(d) - 1:
-                                faux_data.reissuable = False
-                                self.window.logger.info(f'Got error... assuming reason was asset is now non-reissuable... retrying with relevant info...')
-                                await self.wallet.adb.verifier._internal_verify_unverified_asset_metadata(
-                                    self.asset, 
-                                    faux_data,
-                                    (TxOutpoint(bytes.fromhex(item['tx_hash']), item['tx_pos']), item['height']),
-                                    None,
-                                    None,
-                                    validate_against_verified=False
-                                )
-                            else:
-                                raise e
 
                 BlockingWaitingDialog(
                     self.window, 
@@ -243,7 +278,113 @@ class AssetMetadataHistory(AbstractAssetDialog):
                     lambda: self.network.run_from_another_thread(
                             verify_all_txids()))
 
-            widget = _AssociatedRestrictedAssetList(self.window)
+            widget = _MetadataHistoryList(self.window)
+            widget.update(d)
+            return widget
+        except UntrustedServerReturnedError as e:
+            self.window.logger.info(f"Error getting info from network: {repr(e)}")
+            self.window.show_message(
+                _("Error getting info from network") + ":\n" + e.get_message_for_gui()
+            )
+        except Exception as e:
+            self.window.show_message(
+                _("Error getting info from network") + ":\n" + repr(e)
+            )            
+        return None
+
+    def do_search(self, text):
+        pass
+
+
+class _VerifierHistoryList(MyTreeView):
+    class Columns(MyTreeView.BaseColumnsEnum):
+        HEIGHT = enum.auto()
+        VERIFIER = enum.auto()
+
+    headers = {
+        Columns.HEIGHT: _('Height'),
+        Columns.VERIFIER: _('Verifier String'),
+    }
+
+    filter_columns = [Columns.HEIGHT]
+
+    ROLE_KEY_STR = Qt.UserRole + 1000
+    ROLE_DATA_DICT = Qt.UserRole + 1001
+    key_role = ROLE_KEY_STR
+
+    def __init__(self, window: 'ElectrumWindow'):
+        super().__init__(
+            main_window=window,
+            stretch_columns=[self.Columns.VERIFIER]
+        )
+        self.wallet = self.main_window.wallet
+        self.std_model = QStandardItemModel(self)
+        self.setModel(self.std_model)
+        self.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.setSortingEnabled(True)
+
+    @profiler(min_threshold=0.05)
+    def update(self, history):
+        self.model().clear()
+        self.update_headers(self.__class__.headers)
+        for idx, history_item in enumerate(sorted(history, key=lambda x: (HeightKey(x['height']), x['tx_hash']), reverse=True)):
+            labels = [""] * len(self.Columns)
+
+            labels[self.Columns.HEIGHT] = str(history_item['height']) if history_item['height'] >= 0 else _('N/A')
+            labels[self.Columns.VERIFIER] = history_item['string']
+            row_item = [QStandardItem(x) for x in labels]
+            icon = read_QIcon('unconfirmed.png') if history_item['height'] < 0 else read_QIcon('confirmed.png')
+            row_item[self.Columns.HEIGHT] = QStandardItem(icon, labels[self.Columns.HEIGHT])
+            self.set_editability(row_item)
+            row_item[self.Columns.HEIGHT].setData(history_item['tx_hash'], self.ROLE_KEY_STR)
+            row_item[self.Columns.HEIGHT].setData(history_item, self.ROLE_DATA_DICT)
+            row_item[self.Columns.VERIFIER].setFont(QFont(MONOSPACE_FONT))
+            self.model().insertRow(idx, row_item)
+            self.refresh_row(history_item['tx_hash'], history_item, idx)
+        self.filter()
+
+    def refresh_row(self, key: str, data, row: int) -> None:
+        assert row is not None
+        asset_item = [self.std_model.item(row, col) for col in self.Columns]
+        asset_item[self.Columns.VERIFIER].setToolTip(asset_item[self.Columns.HEIGHT].data(self.ROLE_DATA_DICT)['string'])
+        
+    def on_double_click(self, idx):
+        data = self.get_role_data_for_current_item(col=self.Columns.HEIGHT, role=self.ROLE_DATA_DICT)
+        tx_hash = data['tx_hash']
+        self.main_window.do_process_from_txid(txid=tx_hash)
+
+
+class AssetVerifierHistory(AbstractAssetDialog):
+    def _internal_widget(self):
+        self.setWindowTitle(_('Verifier History For {}').format(self.asset))
+        if not self.window.network:
+            self.window.show_message(_("You are offline."))
+            return None
+        try:
+            d = self.network.run_from_another_thread(
+                self.network.get_verifier_history(self.asset)
+            )
+
+            if not d:
+                self.window.show_message(_("This asset does not exist."))
+                return None
+
+            if self.window.config.VERIFY_TRANSITORY_ASSET_DATA:
+                async def verify_all_txids():
+                    await self.wallet.adb.verifier.wait_and_verify_transitory_transactions([(item['tx_hash'], item['height']) for item in d])
+                    await asyncio.gather(*[
+                        self.wallet.adb.verifier._internal_verify_unverified_restricted_verifier(
+                                self.asset, 
+                                item
+                            ) for item in d])
+
+                BlockingWaitingDialog(
+                    self.window, 
+                    _("Validating Transactions..."), 
+                    lambda: self.network.run_from_another_thread(
+                            verify_all_txids()))
+
+            widget = _VerifierHistoryList(self.window)
             widget.update(d)
             return widget
         except UntrustedServerReturnedError as e:

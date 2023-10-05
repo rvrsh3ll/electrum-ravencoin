@@ -143,13 +143,13 @@ class MetadataInfo(QWidget):
 
         self.header = QLabel()
         self.header.setAlignment(Qt.AlignCenter)
-        header_help = HelpButton(_('Asset metadata is validated client-side, however, servers may broadcast old data or make-up data in the mempool.' +
+        header_help = HelpButton(_('Note: asset metadata on the blockchain is validated client-side; however, servers may maliciously not send new information or make-up data in the mempool.' +
                                    ' Additionally, the total created supply cannot be completely validated client-side.'))
 
         self.metadata_history_button = StatusBarButton(read_QIcon('history.png'), _('View all metadata changes for this asset'), lambda: self.window.show_asset_metadata_history(self.current_asset, parent=self), 0.25)
         self.metadata_history_button.setMaximumWidth(20)
 
-        self.verifier_history_button = StatusBarButton(read_QIcon('confirmed.png'), _('View all verifier string changes for this asset'), lambda: self.window.show_asset_metadata_history(self.current_asset, parent=self), 0.25)
+        self.verifier_history_button = StatusBarButton(read_QIcon('confirmed.png'), _('View all verifier string changes for this asset'), lambda: self.window.show_asset_verifier_history(self.current_asset, parent=self), 0.25)
         self.verifier_history_button.setMaximumWidth(20)
 
         self.freeze_history_button = StatusBarButton(read_QIcon('freeze.png'), _('View all freeze status changes for this asset'), lambda: self.window.show_asset_metadata_history(self.current_asset, parent=self), 0.25)

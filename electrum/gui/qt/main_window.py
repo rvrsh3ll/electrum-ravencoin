@@ -2435,8 +2435,14 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
     def show_asset_metadata_history(self, asset: str, *, parent=None):
         assert (error := get_error_for_asset_name(asset)) is None, error
         from .asset_history_dialogs import AssetMetadataHistory
-
         d = AssetMetadataHistory(self, asset, parent=parent)
+        if d.valid:
+            d.show()
+
+    def show_asset_verifier_history(self, asset: str, *, parent=None):
+        assert (error := get_error_for_asset_name(asset)) is None, error
+        from .asset_history_dialogs import AssetVerifierHistory
+        d = AssetVerifierHistory(self, asset, parent=parent)
         if d.valid:
             d.show()
 
