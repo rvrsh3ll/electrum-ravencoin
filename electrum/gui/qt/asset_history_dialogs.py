@@ -104,7 +104,7 @@ class _AssociatedRestrictedAssetList(MyTreeView):
         for idx, history_item in enumerate(sorted(history, key=lambda x: (x['height'], x['tx_hash']), reverse=True)):
             labels = [""] * len(self.Columns)
 
-            ipfs_str = _('Unchanged')
+            ipfs_str = _('Unchanged') if idx < (len(history) - 1) else _('None')
             if history_item['has_ipfs']:
                 if history_item['ipfs'][:2] == 'Qm':
                     if self.config.SHOW_IPFS_AS_BASE32_CIDV1:

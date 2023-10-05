@@ -1,7 +1,7 @@
 import enum
 from typing import Optional, TYPE_CHECKING, Tuple
 
-from PyQt5.QtGui import QFont, QStandardItemModel, QStandardItem
+from PyQt5.QtGui import QFont, QStandardItemModel, QStandardItem, QFontMetrics
 from PyQt5.QtCore import pyqtSignal, Qt, QItemSelectionModel
 from PyQt5.QtWidgets import (QLabel, QVBoxLayout, QSplitter, QScrollArea,
                              QHBoxLayout, QWidget, QFrame, QAbstractItemView,
@@ -17,6 +17,7 @@ from .util import HelpLabel, ColorScheme, HelpButton, AutoResizingTextEdit
 from .util import QHSeperationLine, read_QIcon, MONOSPACE_FONT, IPFSViewer, EnterButton
 from .my_treeview import MyTreeView
 from .asset_qualifier_tag_panel import TaggedAddressList, AssociatedRestrictedAssetList
+from .main_window import StatusBarButton
 
 if TYPE_CHECKING:
     from .main_window import ElectrumWindow
@@ -145,8 +146,29 @@ class MetadataInfo(QWidget):
         header_help = HelpButton(_('Asset metadata is validated client-side, however, servers may broadcast old data or make-up data in the mempool.' +
                                    ' Additionally, the total created supply cannot be completely validated client-side.'))
 
+        self.metadata_history_button = StatusBarButton(read_QIcon('history.png'), _('View all metadata changes for this asset'), lambda: self.window.show_asset_metadata_history(self.current_asset, parent=self), 0.25)
+        self.metadata_history_button.setMaximumWidth(20)
+
+        self.verifier_history_button = StatusBarButton(read_QIcon('confirmed.png'), _('View all verifier string changes for this asset'), lambda: self.window.show_asset_metadata_history(self.current_asset, parent=self), 0.25)
+        self.verifier_history_button.setMaximumWidth(20)
+
+        self.freeze_history_button = StatusBarButton(read_QIcon('freeze.png'), _('View all freeze status changes for this asset'), lambda: self.window.show_asset_metadata_history(self.current_asset, parent=self), 0.25)
+        self.freeze_history_button.setMaximumWidth(20)
+
+        self.tag_history_button = StatusBarButton(read_QIcon('tag.png'), _('View address tag changes for this asset'), lambda: self.window.show_asset_metadata_history(self.current_asset, parent=self), 0.25)
+        self.tag_history_button.setMaximumWidth(20)
+
+        self.association_history_button = StatusBarButton(read_QIcon('restricted.png'), _('View history of what restricted asset\'s verifier strings this asset appeared in'), lambda: self.window.show_asset_metadata_history(self.current_asset, parent=self), 0.25)
+        self.association_history_button.setMaximumWidth(20)
+
         header_layout = QHBoxLayout()
         header_layout.addWidget(self.header)
+        header_layout.addWidget(self.metadata_history_button)
+        header_layout.addWidget(self.verifier_history_button)
+        header_layout.addWidget(self.freeze_history_button)
+        header_layout.addWidget(self.tag_history_button)
+        header_layout.addWidget(self.association_history_button)
+        header_layout.addStretch()
         header_layout.addWidget(header_help)
 
         asset_label = QLabel(_('Asset: '))
@@ -212,11 +234,7 @@ class MetadataInfo(QWidget):
         
         self.source_seperator = QHSeperationLine()
         self.source_seperator.setVisible(False)
-
-        self.metadata_history_button = EnterButton(_('View Metadata History'), lambda: self.window.show_asset_metadata_history(self.current_asset, parent=self))
-        self.history_layout = QHBoxLayout()
-        self.history_layout.addWidget(self.metadata_history_button)
-
+        
         self.associated_data_source_label = QLabel(_('Associated Data Last Changed') + ':')
         self.associated_data_source_label.setVisible(False)
         self.associated_data_source_txid = AutoResizingTextEdit()
@@ -269,7 +287,6 @@ class MetadataInfo(QWidget):
 
         source_layout = QVBoxLayout()
         source_layout.addWidget(self.source_seperator)
-        source_layout.addLayout(self.history_layout)
         source_layout.addWidget(self.associated_data_source_label)
         source_layout.addWidget(self.associated_data_source_txid)
         source_layout.addWidget(self.associated_data_source_button)
@@ -312,7 +329,7 @@ class MetadataInfo(QWidget):
         self.tabs = tabs = QTabWidget(self)
         tabs.addTab(metadata_widget, read_QIcon("copy.png"), _('Metadata'))
         tabs.addTab(self.address_list, read_QIcon("tag.png"), _('Tags'))
-        tabs.addTab(self.association_list, read_QIcon("freeze.png"), _('Associations'))
+        tabs.addTab(self.association_list, read_QIcon("restricted.png"), _('Associations'))
         vbox.addWidget(tabs)
 
         self.clear()
@@ -354,8 +371,10 @@ class MetadataInfo(QWidget):
         self.sats_text.setText(self.window.config.format_amount(metadata.sats_in_circulation, add_thousands_sep=True))
         self.ipfs_viewer.update(asset, metadata.associated_data)
         
+        self.metadata_history_button.setVisible(True)
+
         if verifier_string_data:
-            for x in [self.verifier_string_label, self.verifier_string_text]:
+            for x in [self.verifier_string_label, self.verifier_string_text, self.verifier_history_button]:
                 x.setVisible(True)
             label = _('Verifier String')
             if verifier_text:
@@ -364,10 +383,10 @@ class MetadataInfo(QWidget):
             self.verifier_string_label.setText(label)
             self.verifier_string_text.setText(verifier_string_data['string'])
         else:
-            for x in [self.verifier_string_label, self.verifier_string_text]:
+            for x in [self.verifier_string_label, self.verifier_string_text, self.verifier_history_button]:
                 x.setVisible(False)
 
-        for x in [self.global_freeze_label, self.global_freeze_cb]:
+        for x in [self.global_freeze_label, self.global_freeze_cb, self.freeze_history_button]:
             x.setVisible(bool(freeze_data))
 
         self.verifier_string_seperator.setVisible(bool(freeze_data) or bool(verifier_string_data))
@@ -382,8 +401,7 @@ class MetadataInfo(QWidget):
 
         if metadata_sources:
             for x in [self.source_seperator, self.main_source_txid,
-                      self.main_source_label, self.main_source_button,
-                      self.metadata_history_button]:
+                      self.main_source_label, self.main_source_button]:
                 x.setVisible(self.window.config.SHOW_METADATA_SOURCE)
             self.main_source_txid.setText(metadata_sources[0].hex())
             if metadata_sources[1] or metadata_sources[2]:
@@ -437,7 +455,6 @@ class MetadataInfo(QWidget):
             for x in [self.main_source_txid, self.divisions_source_txid, self.associated_data_source_txid]:
                 x.clear()
             for x in [self.source_seperator, self.associated_data_source_txid,
-                        self.metadata_history_button,
                         self.associated_data_source_label, self.associated_data_source_button,
                         self.divisions_source_txid, self.divisions_source_label,
                         self.divisions_source_button, self.main_source_txid,
@@ -450,17 +467,21 @@ class MetadataInfo(QWidget):
         if asset[0] == '#':
             self.association_list.qualifier = asset
             self.association_list.update(override_associations=association_overrides)
+            self.association_history_button.setVisible(True)
             self.tabs.setTabVisible(2, True)
         else:
             self.tabs.setTabVisible(2, False)
+            self.association_history_button.setVisible(False)
 
         if asset[0] in ('#', "$"):
             self.address_list.tagger = asset
             self.address_list.update(override_tags=tag_overrides)
+            self.tag_history_button.setVisible(True)
             self.tabs.tabBar().show()
         else:
             self.tabs.setCurrentIndex(0)
             self.tabs.tabBar().hide()
+            self.tag_history_button.setVisible(False)
 
     def clear(self):
         self.header.setText('<h3>{}</h3>'.format(_('Asset Metadata')))
@@ -470,14 +491,16 @@ class MetadataInfo(QWidget):
         for x in [self.verifier_string_label, 
                   self.verifier_string_seperator, self.verifier_string_text,
                   self.source_seperator, self.associated_data_source_txid,
-                  self.metadata_history_button,
                   self.associated_data_source_label, self.associated_data_source_button,
                   self.divisions_source_txid, self.divisions_source_label,
                   self.divisions_source_button, self.main_source_txid,
                   self.main_source_label, self.main_source_button,
                   self.verifier_source_label, self.verifier_source_txid,
                   self.verifier_source_button, self.freeze_source_label,
-                  self.freeze_source_txid, self.freeze_source_button]:
+                  self.freeze_source_txid, self.freeze_source_button,
+                  self.metadata_history_button, self.verifier_history_button,
+                  self.tag_history_button, self.freeze_history_button,
+                  self.association_history_button]:
             x.setVisible(False)
 
         self.ipfs_viewer.clear()
@@ -543,8 +566,7 @@ class MetadataViewer(QFrame):
         self.metadata_info.ipfs_viewer.update_visibility()
         if self.metadata_info.main_source_txid.toPlainText():
             for x in [self.metadata_info.source_seperator, self.metadata_info.main_source_txid,
-                      self.metadata_info.main_source_label, self.metadata_info.main_source_button,
-                      self.metadata_info.metadata_history_button]:
+                      self.metadata_info.main_source_label, self.metadata_info.main_source_button]:
                 x.setVisible(self.parent.parent.window.config.SHOW_METADATA_SOURCE)
             if self.metadata_info.divisions_source_txid.toPlainText():
                 for x in [self.metadata_info.divisions_source_txid, self.metadata_info.divisions_source_label,
