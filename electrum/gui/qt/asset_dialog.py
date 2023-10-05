@@ -209,7 +209,6 @@ class AssetDialog(WindowModalDialog):
             trigger_callback('ipfs_hash_dissociate_asset', self.ipfs, self.asset)
         event.accept()
 
-
     def do_search(self, text):
         self.m.address_list.filter(text)
 

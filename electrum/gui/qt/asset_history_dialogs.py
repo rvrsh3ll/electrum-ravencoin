@@ -400,3 +400,107 @@ class AssetVerifierHistory(AbstractAssetDialog):
 
     def do_search(self, text):
         pass
+
+
+class _FreezeHistoryList(MyTreeView):
+    class Columns(MyTreeView.BaseColumnsEnum):
+        HEIGHT = enum.auto()
+        FROZEN = enum.auto()
+
+    headers = {
+        Columns.HEIGHT: _('Height'),
+        Columns.FROZEN: _('Is Frozen'),
+    }
+
+    filter_columns = [Columns.HEIGHT]
+
+    ROLE_KEY_STR = Qt.UserRole + 1000
+    ROLE_DATA_DICT = Qt.UserRole + 1001
+    key_role = ROLE_KEY_STR
+
+    def __init__(self, window: 'ElectrumWindow'):
+        super().__init__(
+            main_window=window,
+            stretch_columns=[self.Columns.FROZEN]
+        )
+        self.wallet = self.main_window.wallet
+        self.std_model = QStandardItemModel(self)
+        self.setModel(self.std_model)
+        self.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.setSortingEnabled(True)
+
+    @profiler(min_threshold=0.05)
+    def update(self, history):
+        self.model().clear()
+        self.update_headers(self.__class__.headers)
+        for idx, history_item in enumerate(sorted(history, key=lambda x: (HeightKey(x['height']), x['tx_hash']), reverse=True)):
+            labels = [""] * len(self.Columns)
+
+            labels[self.Columns.HEIGHT] = str(history_item['height']) if history_item['height'] >= 0 else _('N/A')
+            labels[self.Columns.FROZEN] = str(history_item['frozen'])
+            row_item = [QStandardItem(x) for x in labels]
+            icon = read_QIcon('unconfirmed.png') if history_item['height'] < 0 else read_QIcon('confirmed.png')
+            row_item[self.Columns.HEIGHT] = QStandardItem(icon, labels[self.Columns.HEIGHT])
+            self.set_editability(row_item)
+            row_item[self.Columns.HEIGHT].setData(history_item['tx_hash'], self.ROLE_KEY_STR)
+            row_item[self.Columns.HEIGHT].setData(history_item, self.ROLE_DATA_DICT)
+            row_item[self.Columns.FROZEN].setFont(QFont(MONOSPACE_FONT))
+            self.model().insertRow(idx, row_item)
+            self.refresh_row(history_item['tx_hash'], history_item, idx)
+        self.filter()
+
+    def refresh_row(self, key: str, data, row: int) -> None:
+        assert row is not None
+        
+    def on_double_click(self, idx):
+        data = self.get_role_data_for_current_item(col=self.Columns.HEIGHT, role=self.ROLE_DATA_DICT)
+        tx_hash = data['tx_hash']
+        self.main_window.do_process_from_txid(txid=tx_hash)
+
+
+class AssetFreezeHistory(AbstractAssetDialog):
+    def _internal_widget(self):
+        self.setWindowTitle(_('Verifier History For {}').format(self.asset))
+        if not self.window.network:
+            self.window.show_message(_("You are offline."))
+            return None
+        try:
+            d = self.network.run_from_another_thread(
+                self.network.get_freeze_history(self.asset)
+            )
+
+            if not d:
+                self.window.show_message(_("This asset does not exist."))
+                return None
+
+            if self.window.config.VERIFY_TRANSITORY_ASSET_DATA:
+                async def verify_all_txids():
+                    await self.wallet.adb.verifier.wait_and_verify_transitory_transactions([(item['tx_hash'], item['height']) for item in d])
+                    await asyncio.gather(*[
+                        self.wallet.adb.verifier._internal_verify_unverified_restricted_freeze(
+                                self.asset, 
+                                item
+                            ) for item in d])
+
+                BlockingWaitingDialog(
+                    self.window, 
+                    _("Validating Transactions..."), 
+                    lambda: self.network.run_from_another_thread(
+                            verify_all_txids()))
+
+            widget = _FreezeHistoryList(self.window)
+            widget.update(d)
+            return widget
+        except UntrustedServerReturnedError as e:
+            self.window.logger.info(f"Error getting info from network: {repr(e)}")
+            self.window.show_message(
+                _("Error getting info from network") + ":\n" + e.get_message_for_gui()
+            )
+        except Exception as e:
+            self.window.show_message(
+                _("Error getting info from network") + ":\n" + repr(e)
+            )            
+        return None
+
+    def do_search(self, text):
+        pass

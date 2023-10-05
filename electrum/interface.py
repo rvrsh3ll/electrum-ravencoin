@@ -1236,6 +1236,11 @@ class Interface(Logger):
         res = await self.session.send_request('blockchain.asset.verifier_string_history', [asset, include_mempool])
         return res
 
+    async def get_freeze_history(self, asset: str, *, include_mempool=True) -> dict:
+        assert isinstance(asset, str)
+        res = await self.session.send_request('blockchain.asset.frozen_history', [asset, include_mempool])
+        return res
+
     async def get_verifier_string_for_restricted_asset(self, asset: str) -> dict:
         assert isinstance(asset, str)
         res = await self.session.send_request('blockchain.asset.verifier_string', [asset])

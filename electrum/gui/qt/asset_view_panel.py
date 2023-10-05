@@ -152,7 +152,7 @@ class MetadataInfo(QWidget):
         self.verifier_history_button = StatusBarButton(read_QIcon('confirmed.png'), _('View all verifier string changes for this asset'), lambda: self.window.show_asset_verifier_history(self.current_asset, parent=self), 0.25)
         self.verifier_history_button.setMaximumWidth(20)
 
-        self.freeze_history_button = StatusBarButton(read_QIcon('freeze.png'), _('View all freeze status changes for this asset'), lambda: self.window.show_asset_metadata_history(self.current_asset, parent=self), 0.25)
+        self.freeze_history_button = StatusBarButton(read_QIcon('freeze.png'), _('View all freeze status changes for this asset'), lambda: self.window.show_asset_freeze_history(self.current_asset, parent=self), 0.25)
         self.freeze_history_button.setMaximumWidth(20)
 
         self.tag_history_button = StatusBarButton(read_QIcon('tag.png'), _('View address tag changes for this asset'), lambda: self.window.show_asset_metadata_history(self.current_asset, parent=self), 0.25)
