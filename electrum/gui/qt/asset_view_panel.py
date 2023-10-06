@@ -155,7 +155,7 @@ class MetadataInfo(QWidget):
         self.freeze_history_button = StatusBarButton(read_QIcon('freeze.png'), _('View all freeze status changes for this asset'), lambda: self.window.show_asset_freeze_history(self.current_asset, parent=self), 0.25)
         self.freeze_history_button.setMaximumWidth(20)
 
-        self.tag_history_button = StatusBarButton(read_QIcon('tag.png'), _('View address tag changes for this asset'), lambda: self.window.show_asset_metadata_history(self.current_asset, parent=self), 0.25)
+        self.tag_history_button = StatusBarButton(read_QIcon('tag.png'), _('View address tag changes for this asset'), lambda: self.window.show_asset_tag_history(self.current_asset, parent=self), 0.25)
         self.tag_history_button.setMaximumWidth(20)
 
         self.association_history_button = StatusBarButton(read_QIcon('restricted.png'), _('View history of what restricted assets\' verifier strings this asset appeared in'), lambda: self.window.show_asset_metadata_history(self.current_asset, parent=self), 0.25)
@@ -386,7 +386,7 @@ class MetadataInfo(QWidget):
             for x in [self.verifier_string_label, self.verifier_string_text, self.verifier_history_button]:
                 x.setVisible(False)
 
-        for x in [self.global_freeze_label, self.global_freeze_cb, self.freeze_history_button]:
+        for x in [self.global_freeze_label, self.global_freeze_cb]:
             x.setVisible(bool(freeze_data))
 
         self.verifier_string_seperator.setVisible(bool(freeze_data) or bool(verifier_string_data))
@@ -482,6 +482,12 @@ class MetadataInfo(QWidget):
             self.tabs.setCurrentIndex(0)
             self.tabs.tabBar().hide()
             self.tag_history_button.setVisible(False)
+
+        if asset[0] == '$':
+            self.freeze_history_button.setVisible(True)
+        else:
+            self.freeze_history_button.setVisible(False)
+
 
     def clear(self):
         self.header.setText('<h3>{}</h3>'.format(_('Asset Metadata')))

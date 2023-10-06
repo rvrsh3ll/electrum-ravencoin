@@ -1240,6 +1240,11 @@ class Interface(Logger):
         assert isinstance(asset, str)
         res = await self.session.send_request('blockchain.asset.frozen_history', [asset, include_mempool])
         return res
+    
+    async def get_tag_history(self, asset: str, *, include_mempool=True) -> dict:
+        assert isinstance(asset, str)
+        res = await self.session.send_request('blockchain.tag.qualifier.history', [asset, include_mempool])
+        return res
 
     async def get_verifier_string_for_restricted_asset(self, asset: str) -> dict:
         assert isinstance(asset, str)

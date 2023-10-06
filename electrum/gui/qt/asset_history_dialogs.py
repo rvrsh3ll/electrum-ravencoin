@@ -3,18 +3,20 @@ import asyncio
 import enum
 from typing import TYPE_CHECKING, List
 
-from PyQt5.QtGui import QFont, QStandardItemModel, QStandardItem
+from PyQt5.QtGui import QFont, QStandardItemModel, QStandardItem, QBrush
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QVBoxLayout, QScrollArea, QLineEdit, QAbstractItemView, QMenu
 
-from electrum.bitcoin import base_decode
+from electrum import constants
+from electrum.bitcoin import base_decode, hash160_to_b58_address
 from electrum.i18n import _
 from electrum.network import UntrustedServerReturnedError
 from electrum.util import profiler, ipfs_explorer_URL 
 from electrum.transaction import TxOutpoint
 
 from .my_treeview import MyTreeView
-from .util import Buttons, CloseButton, read_QIcon, MONOSPACE_FONT, BlockingWaitingDialog, webopen_safe, WindowModalDialog
+from .util import (Buttons, CloseButton, read_QIcon, MONOSPACE_FONT, BlockingWaitingDialog, 
+                   webopen_safe, WindowModalDialog, ColorScheme)
 
 if TYPE_CHECKING:
     from .main_window import ElectrumWindow
@@ -356,7 +358,7 @@ class _VerifierHistoryList(MyTreeView):
 
 class AssetVerifierHistory(AbstractAssetDialog):
     def _internal_widget(self):
-        self.setWindowTitle(_('Verifier History For {}').format(self.asset))
+        self.setWindowTitle(_('Verifier String History For {}').format(self.asset))
         if not self.window.network:
             self.window.show_message(_("You are offline."))
             return None
@@ -460,7 +462,7 @@ class _FreezeHistoryList(MyTreeView):
 
 class AssetFreezeHistory(AbstractAssetDialog):
     def _internal_widget(self):
-        self.setWindowTitle(_('Verifier History For {}').format(self.asset))
+        self.setWindowTitle(_('Freeze History For {}').format(self.asset))
         if not self.window.network:
             self.window.show_message(_("You are offline."))
             return None
@@ -470,7 +472,7 @@ class AssetFreezeHistory(AbstractAssetDialog):
             )
 
             if not d:
-                self.window.show_message(_("This asset does not exist."))
+                self.window.show_message(_("This asset has never been frozen."))
                 return None
 
             if self.window.config.VERIFY_TRANSITORY_ASSET_DATA:
@@ -489,6 +491,126 @@ class AssetFreezeHistory(AbstractAssetDialog):
                             verify_all_txids()))
 
             widget = _FreezeHistoryList(self.window)
+            widget.update(d)
+            return widget
+        except UntrustedServerReturnedError as e:
+            self.window.logger.info(f"Error getting info from network: {repr(e)}")
+            self.window.show_message(
+                _("Error getting info from network") + ":\n" + e.get_message_for_gui()
+            )
+        except Exception as e:
+            self.window.show_message(
+                _("Error getting info from network") + ":\n" + repr(e)
+            )            
+        return None
+
+    def do_search(self, text):
+        pass
+
+
+class _TagHistoryList(MyTreeView):
+    class Columns(MyTreeView.BaseColumnsEnum):
+        HEIGHT = enum.auto()
+        ADDRESS = enum.auto()
+        TAGGED = enum.auto()
+
+    headers = {
+        Columns.HEIGHT: _('Height'),
+        Columns.ADDRESS: _('Address'),
+        Columns.TAGGED: _('Flag')
+    }
+
+    filter_columns = [Columns.HEIGHT]
+
+    ROLE_KEY_STR = Qt.UserRole + 1000
+    ROLE_DATA_DICT = Qt.UserRole + 1001
+    ROLE_ADDRESS_STR = Qt.UserRole + 1002
+    key_role = ROLE_KEY_STR
+
+    def __init__(self, window: 'ElectrumWindow'):
+        super().__init__(
+            main_window=window,
+            stretch_columns=[self.Columns.ADDRESS]
+        )
+        self.wallet = self.main_window.wallet
+        self.std_model = QStandardItemModel(self)
+        self.setModel(self.std_model)
+        self.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.setSortingEnabled(True)
+
+    @profiler(min_threshold=0.05)
+    def update(self, history):
+        self.model().clear()
+        self.update_headers(self.__class__.headers)
+        for idx, history_item in enumerate(sorted(history, key=lambda x: (HeightKey(x['height']), x['tx_hash']), reverse=True)):
+            addr = hash160_to_b58_address(bytes.fromhex(history_item['h160']), constants.net.ADDRTYPE_P2PKH)
+            labels = [""] * len(self.Columns)
+            labels[self.Columns.HEIGHT] = str(history_item['height']) if history_item['height'] >= 0 else _('N/A')
+            labels[self.Columns.ADDRESS] = addr
+            labels[self.Columns.TAGGED] = str(history_item['flag'])
+            row_item = [QStandardItem(x) for x in labels]
+            icon = read_QIcon('unconfirmed.png') if history_item['height'] < 0 else read_QIcon('confirmed.png')
+            row_item[self.Columns.HEIGHT] = QStandardItem(icon, labels[self.Columns.HEIGHT])
+            self.set_editability(row_item)
+            row_item[self.Columns.HEIGHT].setData(history_item['tx_hash'], self.ROLE_KEY_STR)
+            row_item[self.Columns.HEIGHT].setData(history_item, self.ROLE_DATA_DICT)
+            row_item[self.Columns.HEIGHT].setData(addr, self.ROLE_ADDRESS_STR)
+            row_item[self.Columns.ADDRESS].setFont(QFont(MONOSPACE_FONT))
+            self.model().insertRow(idx, row_item)
+            self.refresh_row(history_item['tx_hash'], history_item, idx)
+        self.filter()
+
+    def refresh_row(self, key: str, data, row: int) -> None:
+        assert row is not None
+        asset_item = [self.std_model.item(row, col) for col in self.Columns]
+        address = asset_item[self.Columns.HEIGHT].data(self.ROLE_ADDRESS_STR)
+
+        asset_item[self.Columns.ADDRESS].setToolTip(address)
+        if self.wallet.is_mine(address):
+            if self.wallet.is_change(address):
+                asset_item[self.Columns.ADDRESS].setBackground(QBrush(ColorScheme.YELLOW.as_color(True)))
+            else:
+                asset_item[self.Columns.ADDRESS].setBackground(QBrush(ColorScheme.GREEN.as_color(True)))
+
+        
+    def on_double_click(self, idx):
+        data = self.get_role_data_for_current_item(col=self.Columns.HEIGHT, role=self.ROLE_DATA_DICT)
+        tx_hash = data['tx_hash']
+        self.main_window.do_process_from_txid(txid=tx_hash)
+
+
+class AssetTagHistory(AbstractAssetDialog):
+    def _internal_widget(self):
+        self.setWindowTitle(_('Address Tag History For {}').format(self.asset))
+        if not self.window.network:
+            self.window.show_message(_("You are offline."))
+            return None
+        try:
+            d = self.network.run_from_another_thread(
+                self.network.get_tag_history(self.asset)
+            )
+
+            if not d:
+                self.window.show_message(_("No tags associated with this asset."))
+                return None
+
+            if self.window.config.VERIFY_TRANSITORY_ASSET_DATA:
+                async def verify_all_txids():
+                    await self.wallet.adb.verifier.wait_and_verify_transitory_transactions([(item['tx_hash'], item['height']) for item in d])
+                    await asyncio.gather(*[
+                        self.wallet.adb.verifier._internal_verify_unverified_tag_for_qualifier(
+                                self.asset, 
+                                item['h160'],
+                                item
+                            ) for item in d])
+
+                BlockingWaitingDialog(
+                    self.window, 
+                    _("Validating Transactions..."), 
+                    lambda: self.network.run_from_another_thread(
+                            verify_all_txids()))
+
+            widget = _TagHistoryList(self.window)
             widget.update(d)
             return widget
         except UntrustedServerReturnedError as e:
