@@ -158,7 +158,7 @@ class MetadataInfo(QWidget):
         self.tag_history_button = StatusBarButton(read_QIcon('tag.png'), _('View address tag changes for this asset'), lambda: self.window.show_asset_tag_history(self.current_asset, parent=self), 0.25)
         self.tag_history_button.setMaximumWidth(20)
 
-        self.association_history_button = StatusBarButton(read_QIcon('restricted.png'), _('View history of what restricted assets\' verifier strings this asset appeared in'), lambda: self.window.show_asset_metadata_history(self.current_asset, parent=self), 0.25)
+        self.association_history_button = StatusBarButton(read_QIcon('restricted.png'), _('View history of what restricted assets\' verifier strings this asset appeared in'), lambda: self.window.show_asset_association_history(self.current_asset, parent=self), 0.25)
         self.association_history_button.setMaximumWidth(20)
 
         header_layout = QHBoxLayout()

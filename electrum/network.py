@@ -1250,6 +1250,13 @@ class Network(Logger, NetworkRetryManager[ServerAddr]):
             raise RequestTimedOut()
         return await self.interface.get_tag_history(asset, include_mempool=include_mempool)
 
+    @best_effort_reliable
+    @catch_server_exceptions
+    async def get_association_history(self, asset: str, *, include_mempool=False) -> Dict[str, Dict]:
+        if self.interface is None:
+            raise RequestTimedOut()
+        return await self.interface.get_association_history(asset, include_mempool=include_mempool)
+
 
     def blockchain(self) -> Blockchain:
         interface = self.interface

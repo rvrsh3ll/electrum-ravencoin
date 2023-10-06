@@ -2460,6 +2460,13 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         if d.valid:
             d.show()
 
+    def show_asset_association_history(self, asset: str, *, parent=None):
+        assert (error := get_error_for_asset_name(asset)) is None, error
+        from .asset_history_dialogs import AssetAssociationHistory
+        d = AssetAssociationHistory(self, asset, parent=parent)
+        if d.valid:
+            d.show()
+
     def find_qualified_address(self):
         asset, ok = QInputDialog.getText(self, _('Search addresses'), _('Restricted Asset') + ':')
         if not ok:
