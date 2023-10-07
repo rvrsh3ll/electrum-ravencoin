@@ -52,6 +52,7 @@ def human_readable_size(size, decimal_places=3, greater_than=False):
 
 def cidv0_to_base32_cidv1(b58_ipfs_hash: str):
     multibase = base_decode(b58_ipfs_hash, base=58)
+    assert len(multibase) == 34
 
     # https://github.com/multiformats/multibase
     # https://github.com/multiformats/multicodec

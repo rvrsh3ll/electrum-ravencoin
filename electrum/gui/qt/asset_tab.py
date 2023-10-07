@@ -75,8 +75,12 @@ class AssetTab(QWidget, MessageBoxMixin, Logger):
         menu.addConfig(_('Display Unconfirmed Information'), window.config.cv.HANDLE_UNCONFIRMED_METADATA, callback=self.update)
         menu.addConfig(_('Show Metadata Sources'), window.config.cv.SHOW_METADATA_SOURCE, callback=self.view_asset_tab.update)
         menu.addConfig(_('Lookup IPFS using all gateways'), window.config.cv.ROUND_ROBIN_ALL_KNOWN_IPFS_GATEWAYS)
-        menu.addConfig(_('Display IPFS as base32 CIDv1'), window.config.cv.SHOW_IPFS_AS_BASE32_CIDV1, callback=self.view_asset_tab.update)
 
+        def update_this_and_broadcast_tab():
+            self.view_asset_tab.update()
+            window.broadcast_view_tab.update()
+
+        menu.addConfig(_('Display IPFS as base32 CIDv1'), window.config.cv.SHOW_IPFS_AS_BASE32_CIDV1, callback=update_this_and_broadcast_tab)
         menu.addConfig(_('Verify Transitory Asset Data'), window.config.cv.VERIFY_TRANSITORY_ASSET_DATA)
 
         is_hardware = self.wallet.keystore and self.wallet.keystore.get_type_text()[:2] == 'hw'

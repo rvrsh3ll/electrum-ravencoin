@@ -134,6 +134,7 @@ class BroadcastList(MyTreeView):
     ROLE_ID_STR = Qt.UserRole + 1001
     ROLE_ASSOCIATED_DATA_STR = Qt.UserRole + 1002
     ROLE_TXID_STR = Qt.UserRole + 1003
+    ROLE_CONVERTED_ASSOCIATED_DATA_STR = Qt.UserRole + 1004
     key_role = ROLE_ID_STR
 
     def __init__(self, parent: 'ViewBroadcastTab', main_window: 'ElectrumWindow'):
@@ -149,6 +150,8 @@ class BroadcastList(MyTreeView):
         self.current_asset = None
         self.current_broadcasts = None
         self.last_selected_broadcast_id = None
+
+        self.old_show_cidv1_bool = main_window.config.SHOW_IPFS_AS_BASE32_CIDV1
 
         def selectionChange(new, old):
             rows = [x.row() for x in new.indexes()]
@@ -168,15 +171,20 @@ class BroadcastList(MyTreeView):
     @profiler(min_threshold=0.05)
     def update(self):
         broadcasts = self.wallet.adb.get_broadcasts(self.current_asset) if self.current_asset else []
-        if broadcasts == self.current_broadcasts:
+        if broadcasts == self.current_broadcasts and self.old_show_cidv1_bool == self.main_window.config.SHOW_IPFS_AS_BASE32_CIDV1:
             return
+        self.old_show_cidv1_bool = self.main_window.config.SHOW_IPFS_AS_BASE32_CIDV1
         self.model().clear()
         self.update_headers(self.__class__.headers)
         for idx, (associated_data, timestamp, height, tx_hash, tx_pos) in enumerate(broadcasts):
             labels = [""] * len(self.Columns)
             labels[self.Columns.HEIGHT] = str(height)
             if associated_data[:2] == 'Qm':
-                converted_message = associated_data
+                if self.config.SHOW_IPFS_AS_BASE32_CIDV1:
+                    from electrum.ipfs_db import cidv0_to_base32_cidv1
+                    converted_message = cidv0_to_base32_cidv1(associated_data)
+                else:
+                    converted_message = associated_data
             else:
                 converted_message = base_decode(associated_data, base=58)[2:].hex()
             labels[self.Columns.DATA] = converted_message
@@ -186,8 +194,9 @@ class BroadcastList(MyTreeView):
             row_item[self.Columns.HEIGHT].setData(id, self.ROLE_ID_STR)
             row_item[self.Columns.HEIGHT].setData(tx_hash, self.ROLE_TXID_STR)
             row_item[self.Columns.DATA].setData(associated_data, self.ROLE_ASSOCIATED_DATA_STR)
+            row_item[self.Columns.DATA].setData(converted_message, self.ROLE_CONVERTED_ASSOCIATED_DATA_STR)
             self.model().insertRow(idx, row_item)
-            self.refresh_row(converted_message, idx)
+            self.refresh_row(id, idx)
             if id == self.last_selected_broadcast_id:
                 self.selectionModel().select(self.model().createIndex(idx, 0), QItemSelectionModel.Rows | QItemSelectionModel.SelectCurrent)
         self.current_broadcasts = broadcasts
@@ -196,7 +205,7 @@ class BroadcastList(MyTreeView):
     def refresh_row(self, key: str, row: int) -> None:
         assert row is not None
         row_item = [self.std_model.item(row, col) for col in self.Columns]
-        row_item[self.Columns.DATA].setToolTip(key)
+        row_item[self.Columns.DATA].setToolTip(row_item[self.Columns.DATA].data(self.ROLE_CONVERTED_ASSOCIATED_DATA_STR))
 
 
 class ViewBroadcastTab(QWidget, Logger, MessageBoxMixin):
@@ -252,6 +261,12 @@ class ViewBroadcastTab(QWidget, Logger, MessageBoxMixin):
         menu.addConfig(_('Display Downloaded IPFS'), window.config.cv.SHOW_IPFS, callback=self.ipfs_viewer.update_visibility)
         menu.addConfig(_('Show Metadata Sources'), window.config.cv.SHOW_METADATA_SOURCE, callback=self.update_visibility)
         menu.addConfig(_('Lookup IPFS using all gateways'), window.config.cv.ROUND_ROBIN_ALL_KNOWN_IPFS_GATEWAYS)
+
+        def update_this_and_asset_tab():
+            self.update()
+            window.asset_tab.view_asset_tab.update()
+
+        menu.addConfig(_('Display IPFS as base32 CIDv1'), window.config.cv.SHOW_IPFS_AS_BASE32_CIDV1, callback=update_this_and_asset_tab)
 
         toolbar_button = QToolButton()
         toolbar_button.setIcon(read_QIcon("preferences.png"))
