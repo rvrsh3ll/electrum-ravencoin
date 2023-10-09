@@ -86,7 +86,7 @@ info "building NSIS installer"
 # $VERSION could be passed to the electrum.nsi script, but this would require some rewriting in the script itself.
 
 # Chop off 'v'
-$NSI_VERSION = `python3 -c "print('$VERSION'[1:])"`
+NSI_VERSION=$(python3 -c "print('$VERSION'[1:])")
 makensis -DPRODUCT_VERSION=$NSI_VERSION electrum.nsi
 
 cd dist
