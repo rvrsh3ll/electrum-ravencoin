@@ -1619,8 +1619,12 @@ class IPFSViewer(QWidget, QtEventListener):
         elif resource_type.startswith('image/'):
             return QPixmap(resource_path)
         elif resource_type in ('text/plain', 'application/json'):
-            with open(resource_path, 'r') as f:
-                return f.read()
+            with open(resource_path, 'rb') as f:
+                try:
+                    result = f.read().decode()
+                except Exception:
+                    result = 'ERROR: ' + _('Failed to decode IPFS data text')
+                return result
 
     def update(self, asset: str, associated_data: Optional[bytes]):
         for x in [self.associated_data_view_image, self.associated_data_view_text]:
