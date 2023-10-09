@@ -14,10 +14,6 @@ Homepage: https://electrum.org/
 _(If you've come here looking to simply run Electrum,
 [you may download it here](https://github.com/Electrum-RVN-SIG/electrum-ravencoin/releases/latest).)_
 
-## Binary not opening on windows?
-
-You may need to install https://aka.ms/vs/17/release/vc_redist.x86.exe
-
 ## Run your own server!
 
 https://github.com/Electrum-RVN-SIG/electrumx-ravencoin
