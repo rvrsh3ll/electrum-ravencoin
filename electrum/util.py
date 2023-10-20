@@ -996,8 +996,6 @@ def block_explorer_URL(config: 'SimpleConfig', kind: str, item: str) -> Optional
 ipfs_explorers = {
     'cloudflare-ipfs.com': ('https://cloudflare-ipfs.com/',
                 {'ipfs': 'ipfs/'}),
-    'gateway.pinata.cloud': ('https://gateway.pinata.cloud/',
-                {'ipfs': 'ipfs/'}),
     'ipfs.io': ('https://ipfs.io/',
                 {'ipfs': 'ipfs/'}),
     'ipfs.chaintek.net': ('https://ipfs.chaintek.net/',
@@ -1007,6 +1005,10 @@ ipfs_explorers = {
     'cf-ipfs.com': ('https://cf-ipfs.com/',
                 {'ipfs': 'ipfs/'}),
     'nftstorage.link': ('https://nftstorage.link/',
+                {'ipfs': 'ipfs/'}),
+    'dweb.link': ('https://dweb.link',
+                {'ipfs': 'ipfs/'}),
+    'nftstorage.link': ('https://nftstorage.link',
                 {'ipfs': 'ipfs/'})
 }
 

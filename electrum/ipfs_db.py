@@ -8,11 +8,13 @@ import time
 import itertools
 
 from base64 import b32encode
+from collections import defaultdict
 from typing import TYPE_CHECKING, Set, Dict, Optional
 
 from aiohttp import ClientResponse
 from aiorpcx import run_in_thread
-from collections import defaultdict
+from multiformats import CID
+from ipfs_car_decoder import stream_bytes, FileByteStream
 
 from .bitcoin import base_decode
 from .json_db import JsonDB, locked, modifier, StoredObject, StoredDict
@@ -51,23 +53,8 @@ def human_readable_size(size, decimal_places=3, greater_than=False):
     return f"{'>' if greater_than else ''}{size:.{decimal_places}g} {unit}"
 
 def cidv0_to_base32_cidv1(b58_ipfs_hash: str):
-    multibase = base_decode(b58_ipfs_hash, base=58)
-    assert len(multibase) == 34
-
-    # https://github.com/multiformats/multibase
-    # https://github.com/multiformats/multicodec
-    # https://github.com/multiformats/multihash
-
-    # v0: multihash
-
-    # v1: multiformat prefix (varint) + encoded(version (varint) + multicodec prefix (varint) + multhash)
-    # b: base32 (padding omitted) multiformat prefix
-    # 1: version
-    # 0x70 is dag-pb multicodec; what is used for IPFS lookups
-
-    result = 'b' + b32encode(bytes([1, 0x70]) + multibase).decode('ascii').lower().replace('=', '')
-    assert result.isalnum(), result
-    return result
+    v0_cid = CID.decode(b58_ipfs_hash)
+    return CID('base32', 1, 'dag-pb', v0_cid.digest).encode()
 
 @attr.s
 class IPFSMetadata(StoredObject):
@@ -113,7 +100,7 @@ class IPFSDB(JsonDB, EventListener):
 
         self.raw_ipfs_path = standardize_path(raw_path)
         make_dir(self.raw_ipfs_path, False)
-
+        
         self._ipfs_single_gateway_semaphore = asyncio.Semaphore(5)
         self._ipfs_gateway_locks = defaultdict(asyncio.Lock)
         self._ipfs_lookup_current = set()
@@ -211,38 +198,66 @@ class IPFSDB(JsonDB, EventListener):
         except (FileNotFoundError, OSError):
             pass
 
+
+    class _DownloadException(Exception): pass
+
     async def _download_ipfs_data(self, network: Network, ipfs_hash: str):        
         async def on_finish(resp: ClientResponse):
             m = self.get_metadata(ipfs_hash)
+            v1_cid = cidv0_to_base32_cidv1(ipfs_hash)
+            car_block = os.path.join(network.config.path, 'cache', f'{v1_cid}.car')
             try:
                 resp.raise_for_status()
+                if resp.content_type != 'application/vnd.ipld.car':
+                    raise Exception('not a car block')
+
                 # Ensure we aren't appending to something thats already there
                 self.remove_ipfs_data(ipfs_hash)
+
                 downloaded_length = 0
-                async for chunk, _ in resp.content.iter_chunks():
-                    downloaded_length += len(chunk)
-                    if downloaded_length > network.config.MAX_IPFS_DOWNLOAD_SIZE:
-                        self.logger.warning(f'oversized ipfs data for {ipfs_hash}')
-                        m.over_sized = True
-                        m.known_size = downloaded_length
-                        self.remove_ipfs_data(ipfs_hash)
-                        break
-                    await run_in_thread(
-                        self._append_bytes_to_raw_ipfs_file,
-                        ipfs_hash,
-                        chunk
-                    )
-                else:
-                    self.logger.info(f'successfully downloaded ipfs data for {ipfs_hash}')
-                    m.known_size = downloaded_length
-                    m.is_client_side = True
+                with open(car_block, 'wb') as f:
+                    async for chunk, _ in resp.content.iter_chunks():
+                        downloaded_length += len(chunk)
+                        if downloaded_length > network.config.MAX_IPFS_DOWNLOAD_SIZE:
+                            self.logger.warning(f'oversized ipfs data for {ipfs_hash}')
+                            m.over_sized = True
+                            m.known_size = downloaded_length
+                            raise self._DownloadException()
+                        f.write(chunk)
+                self.logger.info(f'successfully downloaded car block for {ipfs_hash}')
+
+                try:
+                    async with FileByteStream(car_block) as stream:
+                        async for chunk in stream_bytes(v1_cid, stream):
+                            await run_in_thread(
+                                self._append_bytes_to_raw_ipfs_file,
+                                ipfs_hash,
+                                chunk)
+                except Exception as e:
+                    self.logger.warning(f'failed to decode car block for {ipfs_hash}')
+                    raise e
+
+                self.logger.info(f'successfully decoded car block for {ipfs_hash}')
+                m.known_size = downloaded_length
+                m.is_client_side = True
+            except Exception as e:
+                self.remove_ipfs_data(ipfs_hash)
+                # Move on to next url
+                if not isinstance(e, self._DownloadException):
+                    raise e
             finally:
+                if os.path.exists(car_block):
+                    os.unlink(car_block)
                 resp.close()
 
         async def lookup_data(ipfs_url: str):
             await asyncio.sleep(0.25)
             self.logger.info(f'attempting to download data from {ipfs_url}')
-            await Network.async_send_http_on_proxy('get', ipfs_url, on_finish=on_finish, timeout=network.config.MAX_IPFS_DOWNLOAD_WAIT)
+            await Network.async_send_http_on_proxy('get', 
+                                                   ipfs_url, 
+                                                   on_finish=on_finish, 
+                                                   timeout=network.config.MAX_IPFS_DOWNLOAD_WAIT,
+                                                   headers={'Accept': 'application/vnd.ipld.car'})
 
         try:
             self.logger.info(f'downloading ipfs data for {ipfs_hash}')

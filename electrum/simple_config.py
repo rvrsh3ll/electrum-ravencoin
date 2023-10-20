@@ -962,7 +962,7 @@ class SimpleConfig(Logger):
 
     BLOCK_EXPLORER = ConfigVar('block_explorer', default='rvn.cryptoscope.io', type_=str)
     BLOCK_EXPLORER_CUSTOM = ConfigVar('block_explorer_custom', default=None)
-    IPFS_EXPLORER = ConfigVar('ipfs_explorer', default='ipfs.chaintek.net', type_=str)
+    IPFS_EXPLORER = ConfigVar('ipfs_explorer', default='ipfs.io', type_=str)
     IPFS_EXPLORER_CUSTOM = ConfigVar('ipfs_explorer_custom', default=None)
     VIDEO_DEVICE_PATH = ConfigVar('video_device', default='default', type_=str)
     OPENALIAS_ID = ConfigVar('alias', default="", type_=str)
