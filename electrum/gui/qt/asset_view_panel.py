@@ -171,9 +171,9 @@ class MetadataInfo(QWidget):
         header_layout.addStretch()
         header_layout.addWidget(header_help)
 
-        asset_label = QLabel(_('Asset: '))
+        asset_label = QLabel(_('Asset') + ': ')
         self.asset_text = QLabel()
-        type_label = QLabel(_('Type: '))
+        type_label = QLabel(_('Type') + ': ')
         self.type_text = QLabel()
         
         asset_layout = QHBoxLayout()
@@ -185,13 +185,13 @@ class MetadataInfo(QWidget):
 
         divisions_message = _('Asset Divisions') + '\n\n' \
                             + _('Asset divisions are a number from 0 to 8 and denote how many digits past the decimal point can be used. Once an asset is issued, you cannot decrease this number.')
-        divisions_label = HelpLabel(_('Divisions: '), divisions_message)
+        divisions_label = HelpLabel(_('Divisions') + ': ', divisions_message)
 
         self.divisions_text = QLabel()
 
-        reissuable_message = _('Asset Divisions') + '\n\n' \
-                            + _('Asset divisions are a number from 0 to 8 and denote how many digits past the decimal point can be used. Once an asset is issued, you cannot decrease this number.')
-        reissuable_label = HelpLabel(_('Reissuable: '), reissuable_message)
+        reissuable_message = _('Reissuability') + '\n\n' \
+                            + _('If an asset is not reissuable, its amount, divisions, and associated data cannot change.')
+        reissuable_label = HelpLabel(_('Reissuable') + ': ', reissuable_message)
         self.reissuable_text = QLabel()
 
         basic_info_layout = QHBoxLayout()
@@ -202,12 +202,12 @@ class MetadataInfo(QWidget):
         basic_info_layout.setSpacing(5)
 
         circulation_layout = QHBoxLayout()
-        sats_label = QLabel(_('Total Created: '))
+        sats_label = QLabel(_('Total Created') + ': ')
         self.sats_text = QLabel()
         circulation_layout.addWidget(sats_label)
         circulation_layout.addWidget(self.sats_text, 1, Qt.AlignLeft)
 
-        self.verifier_string_label = QLabel(_('Verifier String:'))
+        self.verifier_string_label = QLabel(_('Verifier String') + ':')
         self.verifier_string_label.setVisible(False)
         self.verifier_string_text = AutoResizingTextEdit()
         self.verifier_string_text.setReadOnly(True)
@@ -216,7 +216,7 @@ class MetadataInfo(QWidget):
         self.verifier_string_text.setVisible(False)
 
         verifier_freeze_layout = QHBoxLayout()
-        self.global_freeze_label = QLabel(_('Globally Frozen: '))
+        self.global_freeze_label = QLabel(_('Globally Frozen') + ':')
         self.global_freeze_label.setVisible(False)
         self.global_freeze_cb = QCheckBox()
         self.global_freeze_cb.setEnabled(False)
