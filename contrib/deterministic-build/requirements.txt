@@ -58,6 +58,12 @@ QtPy==2.3.0 \
     --hash=sha256:0603c9c83ccc035a4717a12908bf6bc6cb22509827ea2ec0e94c2da7c9ed57c5
 setuptools==65.5.1 \
     --hash=sha256:e197a19aa8ec9722928f2206f8de752def0e4c9fc6953527360d1c36d94ddb2f
+typing-validation==1.0.0.post2 \
+    --hash=sha256:6a30dec74373f9dca29db6f79ef65eb765a6934c09d87639cf422288933b2aa4
+typing-extensions==4.8.0 \
+    --hash=sha256:df8e4339e9cb77357558cbdbceca33c303714cf861d1eef15e1070055ae8b7ef
+unix-fs-exporter==0.2.0 \
+    --hash=sha256:4e7dbbefefd07e77d04ebfd7969dc53732d28ef67f1c0ca7231be9b5053be970
 wheel==0.38.4 \
     --hash=sha256:965f5259b566725405b05e7cf774052044b1ed30119b5d586b2703aafe8719ac
 yarl==1.8.1 \
