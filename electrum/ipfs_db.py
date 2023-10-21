@@ -193,7 +193,6 @@ class IPFSDB(JsonDB, EventListener):
         except (FileNotFoundError, OSError):
             pass
 
-
     class _DownloadException(Exception): pass
 
     async def _download_ipfs_data(self, network: Network, ipfs_hash: str):        
