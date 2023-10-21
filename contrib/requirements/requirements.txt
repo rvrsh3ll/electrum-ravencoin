@@ -18,4 +18,4 @@ kawpow==0.9.4.4
 
 ipfs-car-decoder==0.1.1 
 multiformats==0.2.1
-mmh3==4.0.1
+aiofiles>=23.0.0,<24.0.0
