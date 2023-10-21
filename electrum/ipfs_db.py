@@ -7,7 +7,7 @@ import asyncio
 import time
 import itertools
 
-from base64 import b32encode
+import aiofiles
 from collections import defaultdict
 from typing import TYPE_CHECKING, Set, Dict, Optional
 
@@ -150,12 +150,7 @@ class IPFSDB(JsonDB, EventListener):
         v = IPFSMetadata(**v)
         v.set_db(self)
         return v
-    
-    def _append_bytes_to_raw_ipfs_file(self, ipfs_hash: str, b: bytes):
-        ipfs_file = self._local_path_for_ipfs_data(ipfs_hash)
-        with open(ipfs_file, 'ab') as f:
-            f.write(b)
-
+            
     @locked
     def purge_stale_ipfs_data(self):
         valid_files = {self._local_path_for_ipfs_data(ipfs_hash) for ipfs_hash in self.data.keys()}
@@ -215,7 +210,7 @@ class IPFSDB(JsonDB, EventListener):
                 self.remove_ipfs_data(ipfs_hash)
 
                 downloaded_length = 0
-                with open(car_block, 'wb') as f:
+                async with aiofiles.open(car_block, 'wb') as f:
                     async for chunk, _ in resp.content.iter_chunks():
                         downloaded_length += len(chunk)
                         if downloaded_length > network.config.MAX_IPFS_DOWNLOAD_SIZE:
@@ -223,16 +218,15 @@ class IPFSDB(JsonDB, EventListener):
                             m.over_sized = True
                             m.known_size = downloaded_length
                             raise self._DownloadException()
-                        f.write(chunk)
+                        await f.write(chunk)
                 self.logger.info(f'successfully downloaded car block for {ipfs_hash}')
 
                 try:
+                    ipfs_file = self._local_path_for_ipfs_data(ipfs_hash)
                     async with FileByteStream(car_block) as stream:
-                        async for chunk in stream_bytes(v1_cid, stream):
-                            await run_in_thread(
-                                self._append_bytes_to_raw_ipfs_file,
-                                ipfs_hash,
-                                chunk)
+                        async with aiofiles.open(ipfs_file, 'wb') as f:
+                            async for chunk in stream_bytes(v1_cid, stream):
+                                await f.write(chunk)
                 except Exception as e:
                     self.logger.warning(f'failed to decode car block for {ipfs_hash}')
                     raise e
