@@ -46,6 +46,7 @@ datas += collect_data_files('btchip')
 datas += collect_data_files('keepkeylib')
 datas += collect_data_files('ckcc')
 datas += collect_data_files('bitbox02')
+datas += collect_data_files('multiformats_config')
 
 # Add libusb so Trezor and Safe-T mini will work
 binaries = [(electrum + "electrum/libusb-1.0.dylib", ".")]
