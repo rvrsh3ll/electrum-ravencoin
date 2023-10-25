@@ -1,3 +1,10 @@
+_(If you've come here looking to simply run Electrum Ravencoin, you may download a prebuilt binary for
+[windows](https://github.com/Electrum-RVN-SIG/electrum-ravencoin/releases/download/v1.2.0/electrum-ravencoin-v1.2.0-setup.exe),
+[linux](https://github.com/Electrum-RVN-SIG/electrum-ravencoin/releases/download/v1.2.0/electrum-ravencoin-v1.2.0-x86_64.AppImage), and
+[mac](https://github.com/Electrum-RVN-SIG/electrum-ravencoin/releases/download/v1.2.0/electrum-ravencoin-v1.2.0.dmg)
+[or see other options](https://github.com/Electrum-RVN-SIG/electrum-ravencoin/releases/latest).)_
+
+
 # Electrum Ravencoin - Lightweight Ravencoin client
 
 ```
@@ -10,12 +17,6 @@ Homepage: https://electrum.org/
 [![Build Status](https://api.cirrus-ci.com/github/spesmilo/electrum.svg?branch=master)](https://cirrus-ci.com/github/spesmilo/electrum)
 [![Test coverage statistics](https://coveralls.io/repos/github/spesmilo/electrum/badge.svg?branch=master)](https://coveralls.io/github/spesmilo/electrum?branch=master)
 [![Help translate Electrum online](https://d322cqt584bo4o.cloudfront.net/electrum/localized.svg)](https://crowdin.com/project/electrum)
-
-_(If you've come here looking to simply run Electrum Ravencoin, you may download a prebuilt binary for
-[windows](https://github.com/Electrum-RVN-SIG/electrum-ravencoin/releases/download/v1.2.0/electrum-ravencoin-v1.2.0-setup.exe),
-[linux](https://github.com/Electrum-RVN-SIG/electrum-ravencoin/releases/download/v1.2.0/electrum-ravencoin-v1.2.0-x86_64.AppImage), and
-[mac](https://github.com/Electrum-RVN-SIG/electrum-ravencoin/releases/download/v1.2.0/electrum-ravencoin-v1.2.0.dmg)
-[or see other options](https://github.com/Electrum-RVN-SIG/electrum-ravencoin/releases/latest).)_
 
 ## Run your own server!
 
