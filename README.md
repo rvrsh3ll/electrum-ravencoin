@@ -11,7 +11,7 @@ Migrating from versions earlier than v1.0.0? Read the release notes for [that ve
 ```
 Licence: MIT Licence
 Author: Thomas Voegtlin
-Language: Python (>= 3.8)
+Language: Python (>= 3.10)
 Homepage: https://electrum.org/
 ```
 
