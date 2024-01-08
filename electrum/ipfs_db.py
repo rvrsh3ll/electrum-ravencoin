@@ -27,6 +27,8 @@ from electrum import util
 if TYPE_CHECKING:
     from .address_synchronizer import AddressSynchronizer
 
+class CheckNextGateway(Exception): pass
+
 _VIEWABLE_MIMES = ('image/*', 'text/plain', 'application/json')
 
 _LOOKUP_COOLDOWN_SEC = 60
@@ -185,6 +187,8 @@ class IPFSDB(JsonDB, EventListener):
         for ipfs_hash, metadata in self.data.items():
             metadata.is_client_side = False
             self.remove_ipfs_data(ipfs_hash)
+        self.data.clear()
+        self.set_modified(True)
 
     def remove_ipfs_data(self, ipfs_hash: str):
         ipfs_file = self._local_path_for_ipfs_data(ipfs_hash)
@@ -292,7 +296,7 @@ class IPFSDB(JsonDB, EventListener):
                     finally:
                         tried_gateways.add(gateway)
                         self._ipfs_gateway_locks[gateway].release()
-
+                self.logger.warning(f'tried all gateways trying to download ipfs data for {ipfs_hash}')
             else:
                 url = ipfs_explorer_URL(network.config, 'ipfs', ipfs_hash)
                 try:
@@ -311,16 +315,23 @@ class IPFSDB(JsonDB, EventListener):
             util.trigger_callback('ipfs_download', ipfs_hash)
 
     async def _download_ipfs_information(self, network: Network, ipfs_hash: str):
+        seen_types = set()
+
         async def on_finish(resp: ClientResponse):
             m = self.get_metadata(ipfs_hash)
             try:
                 resp.raise_for_status()
                 if resp.content_type == 'application/octet-stream' and not resp.content_length:
                     raise Exception('HEAD response returned default data')
+                
+                self.logger.info(f'downloaded information for ipfs {ipfs_hash}: {resp.content_type} {resp.content_length}')
+                if network.config.ROUND_ROBIN_ALL_KNOWN_IPFS_GATEWAYS and resp.content_type not in seen_types:
+                    seen_types.add(resp.content_type)
+                    raise CheckNextGateway()
+
                 m.known_mime = resp.content_type
                 m.known_size = resp.content_length
                 m.info_lookup_successful = True
-                self.logger.info(f'downloaded information for ipfs {ipfs_hash}: {resp.content_type} {resp.content_length}')
                                 
                 # Lookup current needs to be cleared here because
                 # its checked in download data
@@ -367,6 +378,8 @@ class IPFSDB(JsonDB, EventListener):
                     try:
                         await lookup_info(url)
                         return
+                    except CheckNextGateway:
+                        pass
                     except asyncio.TimeoutError:
                         self.logger.warning(f'timeout trying to download ipfs info from {url}')
                     except Exception as e:
@@ -374,7 +387,7 @@ class IPFSDB(JsonDB, EventListener):
                     finally:
                         tried_gateways.add(gateway)
                         self._ipfs_gateway_locks[gateway].release()
-
+                self.logger.warning(f'tried all gateways trying to download ipfs info for {ipfs_hash}')
             else:
                 url = ipfs_explorer_URL(network.config, 'ipfs', ipfs_hash)
                 try:
