@@ -619,7 +619,7 @@ class WalletDB(JsonDB):
             self.data['non_deterministic_txo_scriptpubkey'] = set()
         self.assets_to_watch = self.get('assets_to_watch')  # type: Set[str]
         self.broadcasts_to_watch = self.get('broadcasts_to_watch')  # type: Set[str]
-        self.verified_asset_metadata = self.get_dict('verified_asset_metadata')  # type: Dict[str, Tuple[StrictAssetMetadata, Tuple[TxOutpoint, int], Tuple[TxOutpoint, int] | None, Tuple[TxOutpoint, int] | None]]       
+        self.verified_asset_metadata = self.get_dict('verified_asset_metadata')  # type: Dict[str, Tuple[StrictAssetMetadata, Tuple[TxOutpoint, int], Optional[Tuple[TxOutpoint, int]], Optional[Tuple[TxOutpoint, int]]]]    
         self.non_deterministic_vouts = self.get('non_deterministic_txo_scriptpubkey')  # type: Set[str]
         self.verified_tags_for_qualifiers = self.get_dict('verified_qualifier_tags')
         self.verified_tags_for_h160s = self.get_dict('verified_h160_tags')
@@ -721,7 +721,7 @@ class WalletDB(JsonDB):
         self.assets_to_watch.add(asset)
 
     @modifier
-    def add_verified_asset_metadata(self, asset: str, metadata: StrictAssetMetadata, source_tup: Tuple[TxOutpoint, int], source_divisions_tup: Tuple[TxOutpoint, int] | None, source_associated_data_tup: Tuple[TxOutpoint, int] | None):
+    def add_verified_asset_metadata(self, asset: str, metadata: StrictAssetMetadata, source_tup: Tuple[TxOutpoint, int], source_divisions_tup: Optional[Tuple[TxOutpoint, int]], source_associated_data_tup: Optional[Tuple[TxOutpoint, int]]):
         assert isinstance(asset, str)
         assert isinstance(metadata, StrictAssetMetadata)
         assert isinstance(source_tup, Tuple)

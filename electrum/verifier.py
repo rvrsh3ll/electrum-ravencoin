@@ -414,8 +414,8 @@ class SPV(NetworkJobOnDefaultServer):
             asset: str, 
             metadata: StrictAssetMetadata, 
             source: Tuple[TxOutpoint, int],
-            divisions_source: Tuple[TxOutpoint, int] | None, 
-            associated_data_source: Tuple[TxOutpoint, int] | None,
+            divisions_source: Optional[Tuple[TxOutpoint, int]], 
+            associated_data_source: Optional[Tuple[TxOutpoint, int]],
             *, validate_against_verified=True):
         
         if validate_against_verified:
@@ -537,8 +537,8 @@ class SPV(NetworkJobOnDefaultServer):
             asset: str, 
             metadata: StrictAssetMetadata, 
             source: Tuple[TxOutpoint, int],
-            divisions_source: Tuple[TxOutpoint, int] | None, 
-            associated_data_source: Tuple[TxOutpoint, int] | None,
+            divisions_source: Optional[Tuple[TxOutpoint, int]], 
+            associated_data_source: Optional[Tuple[TxOutpoint, int]],
             verifying_id):
         
         try:
