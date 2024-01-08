@@ -31,7 +31,12 @@ class CheckNextGateway(Exception): pass
 
 _VIEWABLE_MIMES = ('image/*', 'text/plain', 'application/json')
 
+# For some reason some gateways return these no matter what
+_BAD_MIMES = ('text/html', 'application/octet-stream')
+
 _LOOKUP_COOLDOWN_SEC = 60
+_RETRY_COOLDOWN_SEC = 60 * 5
+_IPFS_CONCURS = 2
 
 def is_mime_viewable(mime_type: str) -> bool:
     if not mime_type: return False
@@ -315,22 +320,25 @@ class IPFSDB(JsonDB, EventListener):
             util.trigger_callback('ipfs_download', ipfs_hash)
 
     async def _download_ipfs_information(self, network: Network, ipfs_hash: str):
-        seen_types = set()
+        seen_types = defaultdict(int)
+        seen_sizes = defaultdict(int)
 
         async def on_finish(resp: ClientResponse):
             m = self.get_metadata(ipfs_hash)
             try:
                 resp.raise_for_status()
-                if resp.content_type == 'application/octet-stream' and not resp.content_length:
-                    raise Exception('HEAD response returned default data')
                 
                 self.logger.info(f'downloaded information for ipfs {ipfs_hash}: {resp.content_type} {resp.content_length}')
-                if network.config.ROUND_ROBIN_ALL_KNOWN_IPFS_GATEWAYS and resp.content_type not in seen_types:
-                    seen_types.add(resp.content_type)
+                seen_sizes[resp.content_length] += 1
+                if network.config.ROUND_ROBIN_ALL_KNOWN_IPFS_GATEWAYS and seen_types[resp.content_type] < (_IPFS_CONCURS - 1):
+                    seen_types[resp.content_type] += 1
                     raise CheckNextGateway()
 
                 m.known_mime = resp.content_type
-                m.known_size = resp.content_length
+
+                size, _ = max(((count, size) for count, size in seen_sizes.items() if count is not None), default=(None, None), key=lambda x: x[1])
+
+                m.known_size = size
                 m.info_lookup_successful = True
                                 
                 # Lookup current needs to be cleared here because
@@ -447,11 +455,19 @@ class IPFSDB(JsonDB, EventListener):
         if not network.config.DOWNLOAD_IPFS: return
         with self.lock:
             m = self.get_metadata(ipfs_hash)
+            
+            curr_time = int(time.time())
+            if m.known_mime in _BAD_MIMES and m.last_attemped_info_query and (m.last_attemped_info_query + _RETRY_COOLDOWN_SEC) < curr_time:
+                self.logger.info(f'Retrying info download for {ipfs_hash}')
+                m.known_mime = None
+                m.known_size = None
+                m.info_lookup_successful = False
+                m.over_sized = False
+
             if m.info_lookup_successful:
                 return
             if ipfs_hash in self._ipfs_lookup_current:
                 return
-            curr_time = int(time.time())
             if m.last_attemped_info_query and (m.last_attemped_info_query + _LOOKUP_COOLDOWN_SEC) > curr_time:
                 self.logger.info(f'Not downloading information for {ipfs_hash}: cooling down')
                 return

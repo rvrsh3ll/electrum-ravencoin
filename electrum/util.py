@@ -1000,16 +1000,12 @@ ipfs_explorers = {
                 {'ipfs': 'ipfs/'}),
     'ipfs.chaintek.net': ('https://ipfs.chaintek.net/',
                 {'ipfs': 'ipfs/'}),
-    'hardbin.com': ('https://hardbin.com/',
-                {'ipfs': 'ipfs/'}),
-    'cf-ipfs.com': ('https://cf-ipfs.com/',
-                {'ipfs': 'ipfs/'}),
-    'nftstorage.link': ('https://nftstorage.link/',
-                {'ipfs': 'ipfs/'}),
     'dweb.link': ('https://dweb.link',
                 {'ipfs': 'ipfs/'}),
-    'nftstorage.link': ('https://nftstorage.link',
-                {'ipfs': 'ipfs/'})
+    '4everland.io': ('https://4everland.io',
+                {'ipfs': 'ipfs/'}),
+    'ipfs.runfission.com': ('https://ipfs.runfission.com',
+                {'ipfs': 'ipfs/'}),
 }
 
 _ipfs_explorer_default_api_loc = {'ipfs': 'ipfs/'}
