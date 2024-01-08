@@ -24,7 +24,7 @@ import os
 import threading
 import time
 import struct
-from typing import Optional, Dict, Mapping, Sequence, TYPE_CHECKING
+from typing import Optional, Dict, Mapping, Sequence, TYPE_CHECKING, Tuple
 
 from . import util
 from .bitcoin import hash_encode, int_to_hex, rev_hex
@@ -525,9 +525,9 @@ class Blockchain(Logger):
         self.write(parent_data, 0)
         parent.write(my_data, (forkpoint - parent.forkpoint)*HEADER_SIZE)
         # swap parameters
-        self.parent, parent.parent = parent.parent, self  # type: Optional[Blockchain], Optional[Blockchain]
+        self.parent, parent.parent = parent.parent, self  # type: Tuple[Optional[Blockchain], Optional[Blockchain]]
         self.forkpoint, parent.forkpoint = parent.forkpoint, self.forkpoint
-        self._forkpoint_hash, parent._forkpoint_hash = parent._forkpoint_hash, hash_header(parent_data[:HEADER_SIZE])
+        self._forkpoint_hash, parent._forkpoint_hash = parent._forkpoint_hash, hash_header(deserialize_header(parent_data[:HEADER_SIZE], forkpoint))
         self._prev_hash, parent._prev_hash = parent._prev_hash, self._prev_hash
         # parent's new name
         os.replace(child_old_name, parent.path())
@@ -702,7 +702,7 @@ class Blockchain(Logger):
             last = None
             try:
                 last = chain.get(height)
-            except:
+            except Exception:
                 pass
             if last is None:
                 last = self.read_header(height)
@@ -803,6 +803,7 @@ class Blockchain(Logger):
             # On testnet/regtest, difficulty works somewhat different.
             # It's out of scope to properly implement that.
             return height
+        
         last_retarget = height // 2016 * 2016 - 1
         cached_height = last_retarget
         while _CHAINWORK_CACHE.get(self.get_hash(cached_height)) is None:
@@ -812,14 +813,18 @@ class Blockchain(Logger):
         assert cached_height >= -1, cached_height
         running_total = _CHAINWORK_CACHE[self.get_hash(cached_height)]
         while cached_height < last_retarget:
+            work_in_chunk = 0
+            for i in range(2016):
+                work_in_chunk += self.chainwork_of_header_at_height(cached_height + i + 1)
             cached_height += 2016
-            work_in_single_header = self.chainwork_of_header_at_height(cached_height)
-            work_in_chunk = 2016 * work_in_single_header
             running_total += work_in_chunk
             _CHAINWORK_CACHE[self.get_hash(cached_height)] = running_total
-        cached_height += 2016
-        work_in_single_header = self.chainwork_of_header_at_height(cached_height)
-        work_in_last_partial_chunk = (height % 2016 + 1) * work_in_single_header
+        
+        work_in_last_partial_chunk = 0
+        for i in range(height - cached_height):
+            work_in_last_partial_chunk += self.chainwork_of_header_at_height(cached_height + i + 1)
+        assert cached_height + i + 1 == height
+
         return running_total + work_in_last_partial_chunk
 
     def can_connect(self, header: dict, check_height: bool=True) -> bool:

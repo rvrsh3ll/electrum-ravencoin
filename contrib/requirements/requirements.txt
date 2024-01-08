@@ -17,5 +17,5 @@ x16rv2_hash @ git+https://github.com/RavenCommunity/x16rv2_hash@f8a9ef9a185b4c90
 kawpow==0.9.4.4
 
 ipfs-car-decoder==0.1.1 
-multiformats==0.2.1
+multiformats==0.3.1.post4
 aiofiles>=23.0.0,<24.0.0
