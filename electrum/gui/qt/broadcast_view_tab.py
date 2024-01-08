@@ -216,6 +216,8 @@ class ViewBroadcastTab(QWidget, Logger, MessageBoxMixin):
         QWidget.__init__(self)
         Logger.__init__(self)
 
+        self.has_new = False
+
         self.window = window
         hbox = QHBoxLayout()
         vbox = QVBoxLayout()

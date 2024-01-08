@@ -208,6 +208,9 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         coincontrol_sb = self.create_coincontrol_statusbar()
 
         self.tabs = tabs = QTabWidget(self)
+
+        tabs.tabBarClicked.connect(self.on_tab_clicked)
+
         self.send_tab = self.create_send_tab()
         self.asset_tab = self.create_asset_tab()
         self.receive_tab = self.create_receive_tab()
@@ -445,6 +448,22 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
     def on_event_new_transaction(self, wallet, tx):
         if wallet == self.wallet:
             self.tx_notification_queue.put(tx)
+
+    def on_tab_clicked(self, i):
+        if i >= 0 and i == self.tabs.indexOf(self.broadcast_view_tab):
+            self.broadcast_view_tab.has_new = False
+            self.broadcast_view_tab.tab_icon = read_QIcon('broadcast_recv.png')
+            self.tabs.setTabIcon(i, self.broadcast_view_tab.tab_icon)
+
+    @qt_event_listener
+    def on_event_adb_added_verified_broadcast(self, *args):
+        if self.broadcast_view_tab.has_new:
+            return
+        self.broadcast_view_tab.has_new = True
+        self.broadcast_view_tab.tab_icon = read_QIcon('new_broadcast.png')
+        i = self.tabs.indexOf(self.broadcast_view_tab)
+        if i >= 0:
+            self.tabs.setTabIcon(i, self.broadcast_view_tab.tab_icon)
 
     @qt_event_listener
     def on_event_status(self):
