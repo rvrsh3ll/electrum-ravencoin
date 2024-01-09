@@ -459,9 +459,11 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
     def on_event_adb_added_verified_broadcast(self, *args):
         if self.broadcast_view_tab.has_new:
             return
+        i = self.tabs.indexOf(self.broadcast_view_tab)
+        if i == self.tabs.currentIndex():
+            return
         self.broadcast_view_tab.has_new = True
         self.broadcast_view_tab.tab_icon = read_QIcon('new_broadcast.png')
-        i = self.tabs.indexOf(self.broadcast_view_tab)
         if i >= 0:
             self.tabs.setTabIcon(i, self.broadcast_view_tab.tab_icon)
 
