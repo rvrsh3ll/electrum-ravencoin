@@ -1,6 +1,6 @@
 _(If you've come here looking to simply run Electrum Ravencoin, you may download a prebuilt binary for
-[windows](https://github.com/Electrum-RVN-SIG/electrum-ravencoin/releases/download/v1.2.0/electrum-ravencoin-v1.2.0-setup.exe),
-[linux](https://github.com/Electrum-RVN-SIG/electrum-ravencoin/releases/download/v1.2.0/electrum-ravencoin-v1.2.0-x86_64.AppImage), and
+[windows](https://github.com/Electrum-RVN-SIG/electrum-ravencoin/releases/download/v1.2.1/electrum-ravencoin-v1.2.1-setup.exe),
+[linux](https://github.com/Electrum-RVN-SIG/electrum-ravencoin/releases/download/v1.2.1/electrum-ravencoin-v1.2.1-x86_64.AppImage), and
 [mac](https://github.com/Electrum-RVN-SIG/electrum-ravencoin/releases/download/v1.2.0/electrum-ravencoin-v1.2.0.dmg)
 [or see other options](https://github.com/Electrum-RVN-SIG/electrum-ravencoin/releases/latest).)_
 
@@ -11,7 +11,7 @@ Migrating from versions earlier than v1.0.0? Read the release notes for [that ve
 ```
 Licence: MIT Licence
 Author: Thomas Voegtlin
-Language: Python (>= 3.10)
+Language: Python (>= 3.8)
 Homepage: https://electrum.org/
 ```
 
