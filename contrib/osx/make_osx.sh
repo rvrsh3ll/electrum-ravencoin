@@ -26,7 +26,7 @@ mkdir -p "$CACHEDIR" "$DLL_TARGET_DIR"
 cd "$PROJECT_ROOT"
 
 git -C "$PROJECT_ROOT" rev-parse 2>/dev/null || fail "Building outside a git clone is not supported."
-VERSION=$(git describe --tags --dirty --always)
+
 
 which brew > /dev/null 2>&1 || fail "Please install brew from https://brew.sh/ to continue"
 which xcodebuild > /dev/null 2>&1 || fail "Please install xcode command line tools to continue"
@@ -100,6 +100,10 @@ source $VENV_DIR/bin/activate
 # note: this does not seem sufficient when cython is involved (although it is on linux, just not on mac... weird.)
 #       see additional "strip" pass on built files later in the file.
 export CFLAGS="-g0"
+
+# Do not build universal binaries. The default on macos 11+ and xcode 12+ is "-arch arm64 -arch x86_64"
+# but with that e.g. "hid.cpython-310-darwin.so" is not reproducible as built by clang.
+export ARCHFLAGS="-arch x86_64"
 
 info "Installing build dependencies"
 # note: re pip installing from PyPI,
@@ -233,6 +237,9 @@ python3 -m pip install --no-build-isolation --no-dependencies --no-binary :all: 
 info "Building $PACKAGE..."
 python3 -m pip install --no-build-isolation --no-dependencies \
     --no-warn-script-location . > /dev/null || fail "Could not build $PACKAGE"
+# pyinstaller needs to be able to "import electrum", for which we need libsecp256k1:
+# (or could try "pip install -e" instead)
+cp "$PROJECT_ROOT/electrum"/libsecp256k1.*.dylib "$VENV_DIR/lib/python$PY_VER_MAJOR/site-packages/electrum/"
 
 # strip debug symbols of some compiled libs
 # - hidapi (hid.cpython-39-darwin.so) in particular is not reproducible without this
@@ -242,8 +249,13 @@ find "$VENV_DIR/lib/python$PY_VER_MAJOR/site-packages/" -type f -name '*.so' -pr
 info "Faking timestamps..."
 find . -exec touch -t '200101220000' {} + || true
 
+VERSION=$(git describe --tags --dirty --always)
+
 info "Building binary"
 ELECTRUM_VERSION=$VERSION pyinstaller --noconfirm --ascii --clean contrib/osx/osx.spec || fail "Could not build binary"
+
+info "Finished building unsigned dist/${PACKAGE}.app. This hash should be reproducible:"
+find "dist/${PACKAGE}.app" -type f -print0 | sort -z | xargs -0 shasum -a 256 | shasum -a 256
 
 DoCodeSignMaybe "app bundle" "dist/${PACKAGE}.app"
 
