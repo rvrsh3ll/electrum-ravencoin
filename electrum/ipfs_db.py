@@ -260,6 +260,8 @@ class IPFSDB(JsonDB, EventListener):
     async def _download_ipfs_data(self, network: Network, ipfs_hash: str):
         async def on_finish(resp: ClientResponse):
             m = self.get_metadata(ipfs_hash)
+            if m is None:
+                return
             v1_cid = cidv0_to_base32_cidv1(ipfs_hash)
             car_block = os.path.join(network.config.path, "cache", f"{v1_cid}.car")
             try:
@@ -391,6 +393,8 @@ class IPFSDB(JsonDB, EventListener):
         finally:
             curr_time = int(time.time())
             m = self.get_metadata(ipfs_hash)
+            if m is None:
+                return
             m.last_attemped_data_download = curr_time
             self._modified = True
             self._ipfs_download_current.discard(ipfs_hash)
@@ -402,6 +406,8 @@ class IPFSDB(JsonDB, EventListener):
 
         async def on_finish(resp: ClientResponse):
             m = self.get_metadata(ipfs_hash)
+            if m is None:
+                return
             try:
                 resp.raise_for_status()
 
