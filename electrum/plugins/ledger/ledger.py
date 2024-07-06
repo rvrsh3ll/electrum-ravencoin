@@ -341,10 +341,11 @@ class Ledger_Client(HardwareClientBase, ABC):
 
         transport = ledger_bitcoin.TransportClient("hid", hid=hid_device)
 
-        # RVN is only on legacy
-        # return Ledger_Client_Legacy(hid_device, *args, **kwargs)
         try:
             cl = ledger_bitcoin.createClient(transport, chain=get_chain())
+
+            # This will fail for RVN but not for BTC
+            cl.get_master_fingerprint()
         except (
             ledger_bitcoin.exception.errors.InsNotSupportedError,
             ledger_bitcoin.exception.errors.ClaNotSupportedError,
