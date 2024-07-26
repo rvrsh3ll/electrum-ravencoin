@@ -1197,6 +1197,10 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
     def show_receive_tab(self):
         self.tabs.setCurrentIndex(self.tabs.indexOf(self.receive_tab))
 
+    def show_owned_asset(self, asset: str):
+        self.tabs.setCurrentIndex(self.tabs.indexOf(self.asset_tab))
+        self.asset_tab.display_asset(asset)
+
     def create_send_tab(self):
         from .send_tab import SendTab
         return SendTab(self)
@@ -2753,7 +2757,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
 
             base_inputs = [coin for coin in coins if coin.asset is None]
             base_output = [PartialTxOutput.from_address_and_value(addr, value='!')]
-        
+
             asset_inputs = [coin for coin in coins if coin.asset]  # type: List[PartialTxInput]
             asset_amounts = defaultdict(int)
             for coin in asset_inputs:
@@ -2810,13 +2814,13 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
                             message_use_own_coin = True
                             self.show_message(_('Some of your utxos will be used to handle fees'))
                         additional_inputs.append(my_coins.pop())
-                
+
                 tx.add_inputs(asset_inputs)
                 tx.add_outputs(asset_outputs)
                 tx.locktime = get_locktime_for_new_transaction(self.network)
                 tx.add_info_from_wallet(self.wallet)
                 return tx
-            
+
             conf_dlg = ConfirmTxDialog(window=self, make_tx=make_tx, output_value='!')
             if conf_dlg.not_enough_funds:
                 # note: use confirmed_only=False here, regardless of config setting,
@@ -2833,7 +2837,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
             if is_preview:
                 self.show_transaction(tx)
                 return
-            
+
             def sign_done(success):
                 def sign_done2(success):
                     if success:
@@ -2854,9 +2858,9 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
                 external_keypairs=keypairs,
                 locking_script_overrides=outpoint_to_locking_script)
 
-        
+
         def on_failure(exc_info):
-            self.on_error(exc_info)                                                                                 
+            self.on_error(exc_info)
         msg = _('Preparing sweep transaction...')
         task = lambda: self.network.run_from_another_thread(
             sweep_preparations(privkeys, self.network))

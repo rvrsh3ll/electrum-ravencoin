@@ -3,9 +3,19 @@ from typing import Optional, TYPE_CHECKING, Tuple
 
 from PyQt5.QtGui import QFont, QStandardItemModel, QStandardItem, QFontMetrics
 from PyQt5.QtCore import pyqtSignal, Qt, QItemSelectionModel
-from PyQt5.QtWidgets import (QLabel, QVBoxLayout, QSplitter, QScrollArea,
-                             QHBoxLayout, QWidget, QFrame, QAbstractItemView,
-                             QCheckBox, QMenu, QTabWidget)
+from PyQt5.QtWidgets import (
+    QLabel,
+    QVBoxLayout,
+    QSplitter,
+    QScrollArea,
+    QHBoxLayout,
+    QWidget,
+    QFrame,
+    QAbstractItemView,
+    QCheckBox,
+    QMenu,
+    QTabWidget,
+)
 
 from electrum.asset import StrictAssetMetadata
 from electrum.i18n import _
@@ -23,21 +33,22 @@ if TYPE_CHECKING:
     from .main_window import ElectrumWindow
     from .asset_tab import AssetTab
 
+
 class AssetList(MyTreeView):
     class Columns(MyTreeView.BaseColumnsEnum):
         ASSET = enum.auto()
         BALANCE = enum.auto()
 
     headers = {
-        Columns.ASSET: _('Asset'),
-        Columns.BALANCE: _('Balance'),
+        Columns.ASSET: _("Asset"),
+        Columns.BALANCE: _("Balance"),
     }
     filter_columns = [Columns.ASSET]
 
     ROLE_ASSET_STR = Qt.UserRole + 1000
     key_role = ROLE_ASSET_STR
 
-    def __init__(self, parent: 'ViewAssetPanel'):
+    def __init__(self, parent: "ViewAssetPanel"):
         super().__init__(
             main_window=parent.parent.window,
             stretch_columns=[self.Columns.ASSET],
@@ -57,19 +68,59 @@ class AssetList(MyTreeView):
                 self.parent.update_asset_trigger.emit(None)
                 return
             first_row = min(rows)
-            self.last_selected_asset = asset = self.model().index(first_row, self.Columns.ASSET).data(self.ROLE_ASSET_STR)
+            self.last_selected_asset = asset = (
+                self.model()
+                .index(first_row, self.Columns.ASSET)
+                .data(self.ROLE_ASSET_STR)
+            )
             self.parent.update_asset_trigger.emit(asset)
 
         self.selectionModel().selectionChanged.connect(selectionChange)
-    
+
+    def select_asset(self, asset: str):
+        for i in range(self.model().rowCount()):
+            if asset == self.model().index(i, self.Columns.ASSET).data(
+                self.ROLE_ASSET_STR
+            ):
+                break
+        else:
+            return
+
+        self.selectionModel().select(
+            self.model().createIndex(i, 0),
+            QItemSelectionModel.Rows | QItemSelectionModel.SelectCurrent,
+        )
+
     @profiler(min_threshold=0.05)
     def update(self):
         # not calling maybe_defer_update() as it interferes with coincontrol status bar
-        watching_assets = [asset for asset, balance in self.wallet.get_balance(asset_aware=True).items() if asset and sum(balance) > 0 and not self.wallet.is_asset_in_blacklist(asset)]
-        new_assets = sorted([(asset, (metadata[0].sats_in_circulation, metadata[1]) if ((metadata := self.wallet.adb.get_asset_metadata(asset)) is not None) else None) for asset in watching_assets], key=lambda x: x[0])
+        watching_assets = [
+            asset
+            for asset, balance in self.wallet.get_balance(asset_aware=True).items()
+            if asset
+            and sum(balance) > 0
+            and not self.wallet.is_asset_in_blacklist(asset)
+        ]
+        new_assets = sorted(
+            [
+                (
+                    asset,
+                    (
+                        (metadata[0].sats_in_circulation, metadata[1])
+                        if (
+                            (metadata := self.wallet.adb.get_asset_metadata(asset))
+                            is not None
+                        )
+                        else None
+                    ),
+                )
+                for asset in watching_assets
+            ],
+            key=lambda x: x[0],
+        )
         if self.current_assets == new_assets:
             return
-        self.parent.logger.info('refreshing asset view')
+        self.parent.logger.info("refreshing asset view")
         self.model().clear()
         self.update_headers(self.__class__.headers)
         for idx, (asset, data) in enumerate(new_assets):
@@ -77,10 +128,14 @@ class AssetList(MyTreeView):
             labels[self.Columns.ASSET] = asset
             if self.wallet.do_we_own_this_asset(asset):
                 amount = sum(self.wallet.get_balance(asset_aware=True)[asset])
-                labels[self.Columns.BALANCE] = self.main_window.config.format_amount(amount, whitespaces=True, precision=8)                
+                labels[self.Columns.BALANCE] = self.main_window.config.format_amount(
+                    amount, whitespaces=True, precision=8
+                )
             asset_item = [QStandardItem(x) for x in labels]
             if not self.wallet.do_we_own_this_asset(asset):
-                asset_item[self.Columns.BALANCE] = QStandardItem(read_QIcon('eye1.png'), labels[self.Columns.BALANCE])
+                asset_item[self.Columns.BALANCE] = QStandardItem(
+                    read_QIcon("eye1.png"), labels[self.Columns.BALANCE]
+                )
             self.set_editability(asset_item)
             asset_item[self.Columns.ASSET].setData(asset, self.ROLE_ASSET_STR)
             asset_item[self.Columns.ASSET].setFont(QFont(MONOSPACE_FONT))
@@ -88,29 +143,32 @@ class AssetList(MyTreeView):
             self.model().insertRow(idx, asset_item)
             self.refresh_row(asset, data, idx)
             if asset == self.last_selected_asset:
-                self.selectionModel().select(self.model().createIndex(idx, 0), QItemSelectionModel.Rows | QItemSelectionModel.SelectCurrent)
+                self.selectionModel().select(
+                    self.model().createIndex(idx, 0),
+                    QItemSelectionModel.Rows | QItemSelectionModel.SelectCurrent,
+                )
         self.current_assets = new_assets
         self.filter()
 
     def refresh_row(self, key, data, row):
         assert row is not None
         asset_item = [self.std_model.item(row, col) for col in self.Columns]
-        
+
         color = self._default_bg_brush
 
-        tooltip = ''
+        tooltip = ""
         if data is None:
-            tooltip = _('No asset metadata avaliable')
+            tooltip = _("No asset metadata avaliable")
             color = ColorScheme.RED.as_color(True)
         else:
             total_sats, kind = data
             if kind == METADATA_UNCONFIRMED:
-                tooltip = _('(this metadata is not yet confirmed)')
+                tooltip = _("(this metadata is not yet confirmed)")
             elif kind == METADATA_UNVERIFIED:
-                tooltip = _('(this metadata was not able to be verified)')
+                tooltip = _("(this metadata was not able to be verified)")
 
         if not self.wallet.do_we_own_this_asset(key):
-            tooltip += ' ' + _('(This is a watch-only asset)')            
+            tooltip += " " + _("(This is a watch-only asset)")
 
         for col in asset_item:
             col.setBackground(color)
@@ -122,7 +180,7 @@ class AssetList(MyTreeView):
         if not selected:
             return
         assets = [self.item_from_index(item).text() for item in selected]
-        
+
         def mark_as_junk():
             for asset in assets:
                 self.wallet.add_asset_regex_to_blacklist_for_asset(asset)
@@ -130,11 +188,15 @@ class AssetList(MyTreeView):
             self.main_window.update_tabs()
 
         menu = QMenu()
-        menu.addAction(_('Mark asset{} as junk').format('s' if len(assets) > 1 else ''), mark_as_junk)
+        menu.addAction(
+            _("Mark asset{} as junk").format("s" if len(assets) > 1 else ""),
+            mark_as_junk,
+        )
         menu.exec_(self.viewport().mapToGlobal(position))
-        
+
+
 class MetadataInfo(QWidget):
-    def __init__(self, window: 'ElectrumWindow'):
+    def __init__(self, window: "ElectrumWindow"):
         QWidget.__init__(self)
 
         self.window = window
@@ -143,22 +205,61 @@ class MetadataInfo(QWidget):
 
         self.header = QLabel()
         self.header.setAlignment(Qt.AlignCenter)
-        header_help = HelpButton(_('Note: asset metadata on the blockchain is validated client-side; however, servers may maliciously not send new information or make-up data in the mempool.' +
-                                   ' Additionally, the total created supply cannot be completely validated client-side.'))
+        header_help = HelpButton(
+            _(
+                "Note: asset metadata on the blockchain is validated client-side; however, servers may maliciously not send new information or make-up data in the mempool."
+                + " Additionally, the total created supply cannot be completely validated client-side."
+            )
+        )
 
-        self.metadata_history_button = StatusBarButton(read_QIcon('history.png'), _('View all metadata changes for this asset'), lambda: self.window.show_asset_metadata_history(self.current_asset, parent=self), 0.25)
+        self.metadata_history_button = StatusBarButton(
+            read_QIcon("history.png"),
+            _("View all metadata changes for this asset"),
+            lambda: self.window.show_asset_metadata_history(
+                self.current_asset, parent=self
+            ),
+            0.25,
+        )
         self.metadata_history_button.setMaximumWidth(20)
 
-        self.verifier_history_button = StatusBarButton(read_QIcon('confirmed.png'), _('View all verifier string changes for this asset'), lambda: self.window.show_asset_verifier_history(self.current_asset, parent=self), 0.25)
+        self.verifier_history_button = StatusBarButton(
+            read_QIcon("confirmed.png"),
+            _("View all verifier string changes for this asset"),
+            lambda: self.window.show_asset_verifier_history(
+                self.current_asset, parent=self
+            ),
+            0.25,
+        )
         self.verifier_history_button.setMaximumWidth(20)
 
-        self.freeze_history_button = StatusBarButton(read_QIcon('freeze.png'), _('View all freeze status changes for this asset'), lambda: self.window.show_asset_freeze_history(self.current_asset, parent=self), 0.25)
+        self.freeze_history_button = StatusBarButton(
+            read_QIcon("freeze.png"),
+            _("View all freeze status changes for this asset"),
+            lambda: self.window.show_asset_freeze_history(
+                self.current_asset, parent=self
+            ),
+            0.25,
+        )
         self.freeze_history_button.setMaximumWidth(20)
 
-        self.tag_history_button = StatusBarButton(read_QIcon('tag.png'), _('View address tag changes for this asset'), lambda: self.window.show_asset_tag_history(self.current_asset, parent=self), 0.25)
+        self.tag_history_button = StatusBarButton(
+            read_QIcon("tag.png"),
+            _("View address tag changes for this asset"),
+            lambda: self.window.show_asset_tag_history(self.current_asset, parent=self),
+            0.25,
+        )
         self.tag_history_button.setMaximumWidth(20)
 
-        self.association_history_button = StatusBarButton(read_QIcon('restricted.png'), _('View history of what restricted assets\' verifier strings this asset appeared in'), lambda: self.window.show_asset_association_history(self.current_asset, parent=self), 0.25)
+        self.association_history_button = StatusBarButton(
+            read_QIcon("restricted.png"),
+            _(
+                "View history of what restricted assets' verifier strings this asset appeared in"
+            ),
+            lambda: self.window.show_asset_association_history(
+                self.current_asset, parent=self
+            ),
+            0.25,
+        )
         self.association_history_button.setMaximumWidth(20)
 
         header_layout = QHBoxLayout()
@@ -171,11 +272,11 @@ class MetadataInfo(QWidget):
         header_layout.addStretch()
         header_layout.addWidget(header_help)
 
-        asset_label = QLabel(_('Asset') + ': ')
+        asset_label = QLabel(_("Asset") + ": ")
         self.asset_text = QLabel()
-        type_label = QLabel(_('Type') + ': ')
+        type_label = QLabel(_("Type") + ": ")
         self.type_text = QLabel()
-        
+
         asset_layout = QHBoxLayout()
         type_layout = QHBoxLayout()
         asset_layout.addWidget(asset_label)
@@ -183,15 +284,25 @@ class MetadataInfo(QWidget):
         type_layout.addWidget(type_label)
         type_layout.addWidget(self.type_text, 1, Qt.AlignLeft)
 
-        divisions_message = _('Asset Divisions') + '\n\n' \
-                            + _('Asset divisions are a number from 0 to 8 and denote how many digits past the decimal point can be used. Once an asset is issued, you cannot decrease this number.')
-        divisions_label = HelpLabel(_('Divisions') + ': ', divisions_message)
+        divisions_message = (
+            _("Asset Divisions")
+            + "\n\n"
+            + _(
+                "Asset divisions are a number from 0 to 8 and denote how many digits past the decimal point can be used. Once an asset is issued, you cannot decrease this number."
+            )
+        )
+        divisions_label = HelpLabel(_("Divisions") + ": ", divisions_message)
 
         self.divisions_text = QLabel()
 
-        reissuable_message = _('Reissuability') + '\n\n' \
-                            + _('If an asset is not reissuable, its amount, divisions, and associated data cannot change.')
-        reissuable_label = HelpLabel(_('Reissuable') + ': ', reissuable_message)
+        reissuable_message = (
+            _("Reissuability")
+            + "\n\n"
+            + _(
+                "If an asset is not reissuable, its amount, divisions, and associated data cannot change."
+            )
+        )
+        reissuable_label = HelpLabel(_("Reissuable") + ": ", reissuable_message)
         self.reissuable_text = QLabel()
 
         basic_info_layout = QHBoxLayout()
@@ -202,12 +313,12 @@ class MetadataInfo(QWidget):
         basic_info_layout.setSpacing(5)
 
         circulation_layout = QHBoxLayout()
-        sats_label = QLabel(_('Total Created') + ': ')
+        sats_label = QLabel(_("Total Created") + ": ")
         self.sats_text = QLabel()
         circulation_layout.addWidget(sats_label)
         circulation_layout.addWidget(self.sats_text, 1, Qt.AlignLeft)
 
-        self.verifier_string_label = QLabel(_('Verifier String') + ':')
+        self.verifier_string_label = QLabel(_("Verifier String") + ":")
         self.verifier_string_label.setVisible(False)
         self.verifier_string_text = AutoResizingTextEdit()
         self.verifier_string_text.setReadOnly(True)
@@ -216,7 +327,7 @@ class MetadataInfo(QWidget):
         self.verifier_string_text.setVisible(False)
 
         verifier_freeze_layout = QHBoxLayout()
-        self.global_freeze_label = QLabel(_('Globally Frozen') + ':')
+        self.global_freeze_label = QLabel(_("Globally Frozen") + ":")
         self.global_freeze_label.setVisible(False)
         self.global_freeze_cb = QCheckBox()
         self.global_freeze_cb.setEnabled(False)
@@ -231,28 +342,38 @@ class MetadataInfo(QWidget):
         restricted_verifier_layout.addWidget(self.verifier_string_label)
         restricted_verifier_layout.addWidget(self.verifier_string_text)
         restricted_verifier_layout.addLayout(verifier_freeze_layout)
-        
+
         self.source_seperator = QHSeperationLine()
         self.source_seperator.setVisible(False)
-        
-        self.associated_data_source_label = QLabel(_('Associated Data Last Changed') + ':')
+
+        self.associated_data_source_label = QLabel(
+            _("Associated Data Last Changed") + ":"
+        )
         self.associated_data_source_label.setVisible(False)
         self.associated_data_source_txid = AutoResizingTextEdit()
         self.associated_data_source_txid.setReadOnly(True)
-        self.associated_data_source_txid.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.associated_data_source_txid.setVerticalScrollBarPolicy(
+            Qt.ScrollBarAlwaysOff
+        )
         self.associated_data_source_txid.setAlignment(Qt.AlignVCenter)
         self.associated_data_source_txid.setVisible(False)
-        self.associated_data_source_button = EnterButton(_('View Transaction'), lambda: self._show_source_tx(self.associated_data_source_txid))
+        self.associated_data_source_button = EnterButton(
+            _("View Transaction"),
+            lambda: self._show_source_tx(self.associated_data_source_txid),
+        )
         self.associated_data_source_button.setVisible(False)
 
-        self.divisions_source_label = QLabel(_('Divisions Last Changed') + ':')
+        self.divisions_source_label = QLabel(_("Divisions Last Changed") + ":")
         self.divisions_source_label.setVisible(False)
         self.divisions_source_txid = AutoResizingTextEdit()
         self.divisions_source_txid.setReadOnly(True)
         self.divisions_source_txid.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.divisions_source_txid.setAlignment(Qt.AlignVCenter)
         self.divisions_source_txid.setVisible(False)
-        self.divisions_source_button = EnterButton(_('View Transaction'), lambda: self._show_source_tx(self.divisions_source_txid))
+        self.divisions_source_button = EnterButton(
+            _("View Transaction"),
+            lambda: self._show_source_tx(self.divisions_source_txid),
+        )
         self.divisions_source_button.setVisible(False)
 
         self.main_source_label = QLabel()
@@ -262,27 +383,34 @@ class MetadataInfo(QWidget):
         self.main_source_txid.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.main_source_txid.setAlignment(Qt.AlignVCenter)
         self.main_source_txid.setVisible(False)
-        self.main_source_button = EnterButton(_('View Transaction'), lambda: self._show_source_tx(self.main_source_txid))
+        self.main_source_button = EnterButton(
+            _("View Transaction"), lambda: self._show_source_tx(self.main_source_txid)
+        )
         self.main_source_button.setVisible(False)
 
-        self.verifier_source_label = QLabel(_('Verifier String Last Changed' + ':'))
+        self.verifier_source_label = QLabel(_("Verifier String Last Changed" + ":"))
         self.verifier_source_label.setVisible(False)
         self.verifier_source_txid = AutoResizingTextEdit()
         self.verifier_source_txid.setReadOnly(True)
         self.verifier_source_txid.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.verifier_source_txid.setAlignment(Qt.AlignVCenter)
         self.verifier_source_txid.setVisible(False)
-        self.verifier_source_button = EnterButton(_('View Transaction'), lambda: self._show_source_tx(self.verifier_source_txid))
+        self.verifier_source_button = EnterButton(
+            _("View Transaction"),
+            lambda: self._show_source_tx(self.verifier_source_txid),
+        )
         self.verifier_source_button.setVisible(False)
 
-        self.freeze_source_label = QLabel(_('Frozen Status Last Changed' + ':'))
+        self.freeze_source_label = QLabel(_("Frozen Status Last Changed" + ":"))
         self.freeze_source_label.setVisible(False)
         self.freeze_source_txid = AutoResizingTextEdit()
         self.freeze_source_txid.setReadOnly(True)
         self.freeze_source_txid.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.freeze_source_txid.setAlignment(Qt.AlignVCenter)
         self.freeze_source_txid.setVisible(False)
-        self.freeze_source_button = EnterButton(_('View Transaction'), lambda: self._show_source_tx(self.freeze_source_txid))
+        self.freeze_source_button = EnterButton(
+            _("View Transaction"), lambda: self._show_source_tx(self.freeze_source_txid)
+        )
         self.freeze_source_button.setVisible(False)
 
         source_layout = QVBoxLayout()
@@ -327,9 +455,11 @@ class MetadataInfo(QWidget):
         self.association_list.update()
 
         self.tabs = tabs = QTabWidget(self)
-        tabs.addTab(metadata_widget, read_QIcon("copy.png"), _('Metadata'))
-        tabs.addTab(self.address_list, read_QIcon("tag.png"), _('Tags'))
-        tabs.addTab(self.association_list, read_QIcon("restricted.png"), _('Associations'))
+        tabs.addTab(metadata_widget, read_QIcon("copy.png"), _("Metadata"))
+        tabs.addTab(self.address_list, read_QIcon("tag.png"), _("Tags"))
+        tabs.addTab(
+            self.association_list, read_QIcon("restricted.png"), _("Associations")
+        )
         vbox.addWidget(tabs)
 
         self.clear()
@@ -339,132 +469,197 @@ class MetadataInfo(QWidget):
         txid = txid_widget.toPlainText()
         self.window.do_process_from_txid(txid=txid)
 
-    def update(self, asset: str, type_text: Optional[str], metadata: StrictAssetMetadata,
-               metadata_sources: Optional[Tuple[bytes, Optional[bytes], Optional[bytes]]],
-               verifier_text, verifier_string_data,
-               freeze_text, freeze_data,
-               *, tag_overrides=None, association_overrides=None):
+    def update(
+        self,
+        asset: str,
+        type_text: Optional[str],
+        metadata: StrictAssetMetadata,
+        metadata_sources: Optional[Tuple[bytes, Optional[bytes], Optional[bytes]]],
+        verifier_text,
+        verifier_string_data,
+        freeze_text,
+        freeze_data,
+        *,
+        tag_overrides=None,
+        association_overrides=None,
+    ):
         self.current_asset = asset
         if type_text:
-            header_text = '<h3>{} ({})</h3>'.format(_('Asset Metadata'), type_text)
+            header_text = "<h3>{} ({})</h3>".format(_("Asset Metadata"), type_text)
         else:
-            header_text = '<h3>{}</h3>'.format(_('Asset Metadata'))
+            header_text = "<h3>{}</h3>".format(_("Asset Metadata"))
         self.header.setText(header_text)
         self.asset_text.setText(asset)
-        
-        if asset[-1] == '!':
-            type_text = 'Owner'
-        elif '~' in asset:
-            type_text = 'Message Channel'
-        elif asset[0] == '#':
-            type_text = 'Qualifier'
-        elif asset[0] == '$':
-            type_text = 'Restricted'
-        elif '#' in asset:
-            type_text = 'Unique'
+
+        if asset[-1] == "!":
+            type_text = "Owner"
+        elif "~" in asset:
+            type_text = "Message Channel"
+        elif asset[0] == "#":
+            type_text = "Qualifier"
+        elif asset[0] == "$":
+            type_text = "Restricted"
+        elif "#" in asset:
+            type_text = "Unique"
         else:
-            type_text = 'Standard'
+            type_text = "Standard"
         self.type_text.setText(type_text)
 
         self.divisions_text.setText(str(metadata.divisions))
         self.reissuable_text.setText(str(metadata.reissuable))
-        self.sats_text.setText(self.window.config.format_amount(metadata.sats_in_circulation, add_thousands_sep=True))
+        self.sats_text.setText(
+            self.window.config.format_amount(
+                metadata.sats_in_circulation, add_thousands_sep=True
+            )
+        )
         self.ipfs_viewer.update(asset, metadata.associated_data)
-        
+
         self.metadata_history_button.setVisible(True)
 
         if verifier_string_data:
-            for x in [self.verifier_string_label, self.verifier_string_text, self.verifier_history_button]:
+            for x in [
+                self.verifier_string_label,
+                self.verifier_string_text,
+                self.verifier_history_button,
+            ]:
                 x.setVisible(True)
-            label = _('Verifier String')
+            label = _("Verifier String")
             if verifier_text:
-                label += f' ({verifier_text})'
-            label += ':'
+                label += f" ({verifier_text})"
+            label += ":"
             self.verifier_string_label.setText(label)
-            self.verifier_string_text.setText(verifier_string_data['string'])
+            self.verifier_string_text.setText(verifier_string_data["string"])
         else:
-            for x in [self.verifier_string_label, self.verifier_string_text, self.verifier_history_button]:
+            for x in [
+                self.verifier_string_label,
+                self.verifier_string_text,
+                self.verifier_history_button,
+            ]:
                 x.setVisible(False)
 
         for x in [self.global_freeze_label, self.global_freeze_cb]:
             x.setVisible(bool(freeze_data))
 
-        self.verifier_string_seperator.setVisible(bool(freeze_data) or bool(verifier_string_data))
+        self.verifier_string_seperator.setVisible(
+            bool(freeze_data) or bool(verifier_string_data)
+        )
 
         if freeze_data:
-            label = _('Globally Frozen')
+            label = _("Globally Frozen")
             if freeze_text:
-                label += f' ({freeze_text})'
-            label += ':'
+                label += f" ({freeze_text})"
+            label += ":"
             self.global_freeze_label.setText(label)
-            self.global_freeze_cb.setChecked(freeze_data['frozen'])
+            self.global_freeze_cb.setChecked(freeze_data["frozen"])
 
         if metadata_sources:
-            for x in [self.source_seperator, self.main_source_txid,
-                      self.main_source_label, self.main_source_button]:
+            for x in [
+                self.source_seperator,
+                self.main_source_txid,
+                self.main_source_label,
+                self.main_source_button,
+            ]:
                 x.setVisible(self.window.config.SHOW_METADATA_SOURCE)
             self.main_source_txid.setText(metadata_sources[0].hex())
             if metadata_sources[1] or metadata_sources[2]:
-                source_text = _('Other Data Last Changed')
+                source_text = _("Other Data Last Changed")
             else:
-                source_text = _('Metadata Last Changed')
-            self.main_source_label.setText(source_text + ':')
+                source_text = _("Metadata Last Changed")
+            self.main_source_label.setText(source_text + ":")
 
             if metadata_sources[1]:
-                for x in [self.divisions_source_txid, self.divisions_source_label,
-                          self.divisions_source_button]:
+                for x in [
+                    self.divisions_source_txid,
+                    self.divisions_source_label,
+                    self.divisions_source_button,
+                ]:
                     x.setVisible(self.window.config.SHOW_METADATA_SOURCE)
                 self.divisions_source_txid.setText(metadata_sources[1].hex())
             else:
                 self.divisions_source_txid.clear()
-                for x in [self.divisions_source_txid, self.divisions_source_label,
-                          self.divisions_source_button]:
+                for x in [
+                    self.divisions_source_txid,
+                    self.divisions_source_label,
+                    self.divisions_source_button,
+                ]:
                     x.setVisible(False)
 
             if metadata_sources[2]:
-                for x in [self.associated_data_source_txid, self.associated_data_source_label,
-                          self.associated_data_source_button]:
+                for x in [
+                    self.associated_data_source_txid,
+                    self.associated_data_source_label,
+                    self.associated_data_source_button,
+                ]:
                     x.setVisible(self.window.config.SHOW_METADATA_SOURCE)
                 self.associated_data_source_txid.setText(metadata_sources[2].hex())
             else:
                 self.associated_data_source_txid.clear()
-                for x in [self.associated_data_source_txid, self.associated_data_source_label,
-                          self.associated_data_source_button]:
+                for x in [
+                    self.associated_data_source_txid,
+                    self.associated_data_source_label,
+                    self.associated_data_source_button,
+                ]:
                     x.setVisible(False)
 
             if verifier_string_data:
-                for x in [self.verifier_source_button, self.verifier_source_label,
-                          self.verifier_source_txid]:
+                for x in [
+                    self.verifier_source_button,
+                    self.verifier_source_label,
+                    self.verifier_source_txid,
+                ]:
                     x.setVisible(self.window.config.SHOW_METADATA_SOURCE)
-                self.verifier_source_txid.setText(verifier_string_data['tx_hash'])
+                self.verifier_source_txid.setText(verifier_string_data["tx_hash"])
             else:
-                for x in [self.verifier_source_button, self.verifier_source_label,
-                          self.verifier_source_txid]:
+                for x in [
+                    self.verifier_source_button,
+                    self.verifier_source_label,
+                    self.verifier_source_txid,
+                ]:
                     x.setVisible(False)
 
             if freeze_data:
-                for x in [self.freeze_source_button, self.freeze_source_label,
-                          self.freeze_source_txid]:
+                for x in [
+                    self.freeze_source_button,
+                    self.freeze_source_label,
+                    self.freeze_source_txid,
+                ]:
                     x.setVisible(self.window.config.SHOW_METADATA_SOURCE)
-                self.freeze_source_txid.setText(freeze_data['tx_hash'])
+                self.freeze_source_txid.setText(freeze_data["tx_hash"])
             else:
-                for x in [self.freeze_source_button, self.freeze_source_label,
-                          self.freeze_source_txid]:
+                for x in [
+                    self.freeze_source_button,
+                    self.freeze_source_label,
+                    self.freeze_source_txid,
+                ]:
                     x.setVisible(False)
         else:
-            for x in [self.main_source_txid, self.divisions_source_txid, self.associated_data_source_txid]:
+            for x in [
+                self.main_source_txid,
+                self.divisions_source_txid,
+                self.associated_data_source_txid,
+            ]:
                 x.clear()
-            for x in [self.source_seperator, self.associated_data_source_txid,
-                        self.associated_data_source_label, self.associated_data_source_button,
-                        self.divisions_source_txid, self.divisions_source_label,
-                        self.divisions_source_button, self.main_source_txid,
-                        self.main_source_label, self.main_source_button,
-                        self.verifier_source_txid, self.verifier_source_button,
-                        self.verifier_source_label, self.freeze_source_txid,
-                        self.freeze_source_button, self.freeze_source_label]:
+            for x in [
+                self.source_seperator,
+                self.associated_data_source_txid,
+                self.associated_data_source_label,
+                self.associated_data_source_button,
+                self.divisions_source_txid,
+                self.divisions_source_label,
+                self.divisions_source_button,
+                self.main_source_txid,
+                self.main_source_label,
+                self.main_source_button,
+                self.verifier_source_txid,
+                self.verifier_source_button,
+                self.verifier_source_label,
+                self.freeze_source_txid,
+                self.freeze_source_button,
+                self.freeze_source_label,
+            ]:
                 x.setVisible(False)
 
-        if asset[0] == '#':
+        if asset[0] == "#":
             self.association_list.qualifier = asset
             self.association_list.update(override_associations=association_overrides)
             self.association_history_button.setVisible(True)
@@ -473,7 +668,7 @@ class MetadataInfo(QWidget):
             self.tabs.setTabVisible(2, False)
             self.association_history_button.setVisible(False)
 
-        if asset[0] in ('#', "$"):
+        if asset[0] in ("#", "$"):
             self.address_list.tagger = asset
             self.address_list.update(override_tags=tag_overrides)
             self.tag_history_button.setVisible(True)
@@ -483,38 +678,57 @@ class MetadataInfo(QWidget):
             self.tabs.tabBar().hide()
             self.tag_history_button.setVisible(False)
 
-        if asset[0] == '$':
+        if asset[0] == "$":
             self.freeze_history_button.setVisible(True)
         else:
             self.freeze_history_button.setVisible(False)
 
-
     def clear(self):
-        self.header.setText('<h3>{}</h3>'.format(_('Asset Metadata')))
-        for x in [self.asset_text, self.type_text, self.divisions_text, self.reissuable_text, self.sats_text]:
-            x.setText(_('N/A'))
+        self.header.setText("<h3>{}</h3>".format(_("Asset Metadata")))
+        for x in [
+            self.asset_text,
+            self.type_text,
+            self.divisions_text,
+            self.reissuable_text,
+            self.sats_text,
+        ]:
+            x.setText(_("N/A"))
 
-        for x in [self.verifier_string_label, 
-                  self.verifier_string_seperator, self.verifier_string_text,
-                  self.source_seperator, self.associated_data_source_txid,
-                  self.associated_data_source_label, self.associated_data_source_button,
-                  self.divisions_source_txid, self.divisions_source_label,
-                  self.divisions_source_button, self.main_source_txid,
-                  self.main_source_label, self.main_source_button,
-                  self.verifier_source_label, self.verifier_source_txid,
-                  self.verifier_source_button, self.freeze_source_label,
-                  self.freeze_source_txid, self.freeze_source_button,
-                  self.metadata_history_button, self.verifier_history_button,
-                  self.tag_history_button, self.freeze_history_button,
-                  self.association_history_button]:
+        for x in [
+            self.verifier_string_label,
+            self.verifier_string_seperator,
+            self.verifier_string_text,
+            self.source_seperator,
+            self.associated_data_source_txid,
+            self.associated_data_source_label,
+            self.associated_data_source_button,
+            self.divisions_source_txid,
+            self.divisions_source_label,
+            self.divisions_source_button,
+            self.main_source_txid,
+            self.main_source_label,
+            self.main_source_button,
+            self.verifier_source_label,
+            self.verifier_source_txid,
+            self.verifier_source_button,
+            self.freeze_source_label,
+            self.freeze_source_txid,
+            self.freeze_source_button,
+            self.metadata_history_button,
+            self.verifier_history_button,
+            self.tag_history_button,
+            self.freeze_history_button,
+            self.association_history_button,
+        ]:
             x.setVisible(False)
 
         self.ipfs_viewer.clear()
         self.tabs.setCurrentIndex(0)
         self.tabs.tabBar().hide()
 
+
 class MetadataViewer(QFrame):
-    def __init__(self, parent: 'ViewAssetPanel'):
+    def __init__(self, parent: "ViewAssetPanel"):
         QFrame.__init__(self)
         self.parent = parent
         self.metadata_info = MetadataInfo(parent.parent.window)
@@ -539,66 +753,92 @@ class MetadataViewer(QFrame):
         metadata, metadata_source = metadata_tup
         type_text = None
         if metadata_source == METADATA_UNCONFIRMED:
-            type_text = _('UNCONFIRMED')
+            type_text = _("UNCONFIRMED")
         elif metadata_source == METADATA_UNVERIFIED:
-            type_text = _('NOT VERIFIED!')
-        
+            type_text = _("NOT VERIFIED!")
+
         verifier_string_data = None
         verifier_string_text = None
         freeze_data = None
         freeze_text = None
-        if asset[0] == '$':
-            verifier_string_data_tup = self.parent.parent.wallet.adb.get_restricted_verifier_string(asset)
+        if asset[0] == "$":
+            verifier_string_data_tup = (
+                self.parent.parent.wallet.adb.get_restricted_verifier_string(asset)
+            )
             if verifier_string_data_tup:
                 verifier_string_data, verifier_string_type_id = verifier_string_data_tup
                 if verifier_string_type_id == METADATA_UNCONFIRMED:
-                    verifier_string_text = _('UNCONFIRMED')
+                    verifier_string_text = _("UNCONFIRMED")
                 elif verifier_string_type_id == METADATA_UNVERIFIED:
-                    verifier_string_text = _('NOT VERIFIED!')
+                    verifier_string_text = _("NOT VERIFIED!")
 
             freeze_data_tup = self.parent.parent.wallet.adb.get_restricted_freeze(asset)
             if freeze_data_tup:
                 freeze_data, freeze_type_id = freeze_data_tup
                 if freeze_type_id == METADATA_UNCONFIRMED:
-                    freeze_text = _('UNCONFIRMED')
+                    freeze_text = _("UNCONFIRMED")
                 elif freeze_type_id == METADATA_UNVERIFIED:
-                    freeze_text = _('NOT VERIFIED!')
+                    freeze_text = _("NOT VERIFIED!")
 
-        self.metadata_info.update(asset, type_text, metadata, metadata_sources,
-                                  verifier_string_text, verifier_string_data, 
-                                  freeze_text, freeze_data)
+        self.metadata_info.update(
+            asset,
+            type_text,
+            metadata,
+            metadata_sources,
+            verifier_string_text,
+            verifier_string_data,
+            freeze_text,
+            freeze_data,
+        )
 
     def update_visibility(self):
         self.metadata_info.ipfs_viewer.update_visibility()
         if self.metadata_info.main_source_txid.toPlainText():
-            for x in [self.metadata_info.source_seperator, self.metadata_info.main_source_txid,
-                      self.metadata_info.main_source_label, self.metadata_info.main_source_button]:
+            for x in [
+                self.metadata_info.source_seperator,
+                self.metadata_info.main_source_txid,
+                self.metadata_info.main_source_label,
+                self.metadata_info.main_source_button,
+            ]:
                 x.setVisible(self.parent.parent.window.config.SHOW_METADATA_SOURCE)
             if self.metadata_info.divisions_source_txid.toPlainText():
-                for x in [self.metadata_info.divisions_source_txid, self.metadata_info.divisions_source_label,
-                          self.metadata_info.divisions_source_button]:
+                for x in [
+                    self.metadata_info.divisions_source_txid,
+                    self.metadata_info.divisions_source_label,
+                    self.metadata_info.divisions_source_button,
+                ]:
                     x.setVisible(self.parent.parent.window.config.SHOW_METADATA_SOURCE)
             if self.metadata_info.associated_data_source_txid.toPlainText():
-                for x in [self.metadata_info.associated_data_source_txid, self.metadata_info.associated_data_source_label,
-                          self.metadata_info.associated_data_source_button]:
+                for x in [
+                    self.metadata_info.associated_data_source_txid,
+                    self.metadata_info.associated_data_source_label,
+                    self.metadata_info.associated_data_source_button,
+                ]:
                     x.setVisible(self.parent.parent.window.config.SHOW_METADATA_SOURCE)
         if self.metadata_info.verifier_source_txid.toPlainText():
-            for x in [self.metadata_info.verifier_source_button, self.metadata_info.verifier_source_label,
-                      self.metadata_info.verifier_source_txid]:
+            for x in [
+                self.metadata_info.verifier_source_button,
+                self.metadata_info.verifier_source_label,
+                self.metadata_info.verifier_source_txid,
+            ]:
                 x.setVisible(self.parent.parent.window.config.SHOW_METADATA_SOURCE)
         if self.metadata_info.freeze_source_txid.toPlainText():
-            for x in [self.metadata_info.freeze_source_txid, self.metadata_info.freeze_source_button,
-                      self.metadata_info.freeze_source_label]:
+            for x in [
+                self.metadata_info.freeze_source_txid,
+                self.metadata_info.freeze_source_button,
+                self.metadata_info.freeze_source_label,
+            ]:
                 x.setVisible(self.parent.parent.window.config.SHOW_METADATA_SOURCE)
 
     def update(self):
         self.update_visibility()
         super().update()
 
+
 class ViewAssetPanel(QSplitter, Logger):
     update_asset_trigger = pyqtSignal(str)
 
-    def __init__(self, parent: 'AssetTab'):
+    def __init__(self, parent: "AssetTab"):
         QWidget.__init__(self)
         Logger.__init__(self)
 
@@ -617,7 +857,9 @@ class ViewAssetPanel(QSplitter, Logger):
         self.setStretchFactor(0, 1)
         self.setStretchFactor(1, 0)
 
-        self.update_asset_trigger.connect(lambda asset: self.metadata_viewer.update_info(asset))
+        self.update_asset_trigger.connect(
+            lambda asset: self.metadata_viewer.update_info(asset)
+        )
         self.searchable_list_grouping = SearchableListGrouping(
             self.asset_list,
             self.metadata_viewer.metadata_info.address_list,
