@@ -1198,6 +1198,9 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         self.tabs.setCurrentIndex(self.tabs.indexOf(self.receive_tab))
 
     def show_owned_asset(self, asset: str):
+        if sum(self.wallet.get_balance(asset_aware=True).get(asset, (0,))) == 0:
+            self.show_asset_data(asset)
+            return
         self.tabs.setCurrentIndex(self.tabs.indexOf(self.asset_tab))
         self.asset_tab.display_asset(asset)
 
