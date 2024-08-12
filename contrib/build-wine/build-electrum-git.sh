@@ -2,8 +2,7 @@
 
 NAME_ROOT=electrum-ravencoin
 
-export PYTHONDONTWRITEBYTECODE=1  # don't create __pycache__/ folders with .pyc files
-
+export PYTHONDONTWRITEBYTECODE=1 # don't create __pycache__/ folders with .pyc files
 
 # Let's begin!
 set -e
@@ -26,7 +25,6 @@ rm -rf "$LOCALE"
 find -exec touch -h -d '2000-11-11T11:11:11+00:00' {} +
 popd
 
-
 # opt out of compiling C extensions
 export AIOHTTP_NO_EXTENSIONS=1
 export YARL_NO_EXTENSIONS=1
@@ -46,7 +44,6 @@ $WINE_PYTHON -m pip install --no-build-isolation --no-dependencies --no-warn-scr
     --no-binary :all: --only-binary cffi,cryptography,hidapi \
     --cache-dir "$WINE_PIP_CACHE_DIR" -r "$CONTRIB"/deterministic-build/requirements-hw.txt
 
-
 info "Installing pre-built ravencoin requirements..."
 X16R="x16r_hash-1.0-cp310-cp310-win32.whl"
 X16RV2="x16rv2_hash-1.0-cp310-cp310-win32.whl"
@@ -63,19 +60,17 @@ $WINE_PYTHON -m pip install --no-warn-script-location --cache-dir "$WINE_PIP_CAC
 $WINE_PYTHON -m pip install --no-warn-script-location --cache-dir "$WINE_PIP_CACHE_DIR" "$CACHEDIR/$X16RV2"
 $WINE_PYTHON -m pip install --no-warn-script-location --cache-dir "$WINE_PIP_CACHE_DIR" "$CACHEDIR/$KAWPOW"
 
-
 pushd $WINEPREFIX/drive_c/electrum
 # see https://github.com/pypa/pip/issues/2195 -- pip makes a copy of the entire directory
 info "Pip installing Electrum. This might take a long time if the project folder is large."
 $WINE_PYTHON -m pip install --no-build-isolation --no-dependencies --no-warn-script-location .
 popd
 
-
 rm -rf dist/
 
 # build standalone and portable versions
 info "Running pyinstaller..."
-ELECTRUM_CMDLINE_NAME="$NAME_ROOT-$VERSION" wine "$WINE_PYHOME/scripts/pyinstaller.exe" --noconfirm --ascii --clean deterministic.spec
+ELECTRUM_CMDLINE_NAME="$NAME_ROOT-$VERSION" wine "$WINE_PYHOME/scripts/pyinstaller.exe" --noconfirm --clean deterministic.spec
 
 # set timestamps in dist, in order to make the installer reproducible
 pushd dist
