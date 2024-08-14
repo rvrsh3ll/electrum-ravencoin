@@ -7,18 +7,18 @@ venv_dir=~/.electrum-venv
 contrib=$(dirname "$0")
 
 # note: we should not use a higher version of python than what the binaries bundle
-if [[ ! "$SYSTEM_PYTHON" ]] ; then
+if [[ ! "$SYSTEM_PYTHON" ]]; then
     SYSTEM_PYTHON=$(which python3.8) || printf ""
 else
     SYSTEM_PYTHON=$(which $SYSTEM_PYTHON) || printf ""
 fi
-if [[ ! "$SYSTEM_PYTHON" ]] ; then
+if [[ ! "$SYSTEM_PYTHON" ]]; then
     echo "Please specify which python to use in \$SYSTEM_PYTHON" && exit 1
 fi
 
-which virtualenv > /dev/null 2>&1 || { echo "Please install virtualenv" && exit 1; }
+which virtualenv >/dev/null 2>&1 || { echo "Please install virtualenv" && exit 1; }
 
-${SYSTEM_PYTHON} -m hashin -h > /dev/null 2>&1 || { ${SYSTEM_PYTHON} -m pip install hashin; }
+${SYSTEM_PYTHON} -m hashin -h >/dev/null 2>&1 || { ${SYSTEM_PYTHON} -m pip install hashin; }
 
 for suffix in '' '-hw' '-binaries' '-binaries-mac' '-build-wine' '-build-mac' '-build-base' '-build-appimage' '-build-android'; do
     reqfile="requirements${suffix}.txt"
@@ -42,10 +42,15 @@ for suffix in '' '-hw' '-binaries' '-binaries-mac' '-build-wine' '-build-mac' '-
 
     requirements=$(pip freeze --all)
 
-    restricted=$(echo $requirements | ${SYSTEM_PYTHON} $contrib/deterministic-build/find_restricted_dependencies.py)
+    git_requirements=$(grep -F "git+http" <<<"$requirements")
+    pip_requirements=$(grep -v -F "git+http" <<<"$requirements")
+
+    restricted=$(echo "$pip_requirements" | ${SYSTEM_PYTHON} $contrib/deterministic-build/find_restricted_dependencies.py)
     if [ ! -z "$restricted" ]; then
         python -m pip install $restricted
         requirements=$(pip freeze --all)
+        git_requirements=$(grep -F "git+http" <<<"$requirements")
+        pip_requirements=$(grep -v -F "git+http" <<<"$requirements")
     fi
 
     echo "Generating package hashes... (${reqfile})"
@@ -55,20 +60,22 @@ for suffix in '' '-hw' '-binaries' '-binaries-mac' '-build-wine' '-build-mac' '-
     # restrict ourselves to source-only packages.
     # TODO expand this to all reqfiles...
     HASHIN_FLAGS=""
-    if [[
+    if [[ 
         "${suffix}" == "" ||
         "${suffix}" == "-build-wine" ||
         "${suffix}" == "-build-mac" ||
         "${suffix}" == "-build-appimage" ||
         "${suffix}" == "-build-android" ||
-        "0" == "1"
-        ]] ;
-    then
+        "0" == "1" ]] \
+        ; then
         HASHIN_FLAGS="--python-version source"
     fi
 
     echo -e "\r  Hashing requirements for $reqfile..."
-    ${SYSTEM_PYTHON} -m hashin $HASHIN_FLAGS -r "$contrib/deterministic-build/${reqfile}" $requirements
+    ${SYSTEM_PYTHON} -m hashin $HASHIN_FLAGS -r "$contrib/deterministic-build/${reqfile}" $pip_requirements
+
+    #echo "" >>"$contrib/deterministic-build/${reqfile}"
+    #echo "$git_requirements" >>"$contrib/deterministic-build/${reqfile}"
 
     echo "OK."
 done
