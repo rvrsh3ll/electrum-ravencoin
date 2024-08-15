@@ -14,14 +14,14 @@
 # sudo apt-get install gcc-multilib g++-multilib
 # $ AUTOCONF_FLAGS="--host=i686-linux-gnu CFLAGS=-m32 CXXFLAGS=-m32 LDFLAGS=-m32" ./contrib/make_libsecp256k1.sh
 
-LIBSECP_VERSION="acf5c55ae6a94e5ca847e07def40427547876101"
-# ^ tag "v0.3.2"
+LIBSECP_VERSION="e3a885d42a7800c1ccebad94ad1e2b82c4df5c65"
+# ^ tag "v0.5.0"
 
 set -e
 
 . $(dirname "$0")/build_tools_util.sh || (echo "Could not source build_tools_util.sh" && exit 1)
 
-here="$(dirname "$(realpath "$0" 2> /dev/null || grealpath "$0")")"
+here="$(dirname "$(realpath "$0" 2>/dev/null || grealpath "$0")")"
 CONTRIB="$here"
 PROJECT_ROOT="$CONTRIB/.."
 
@@ -34,7 +34,7 @@ info "Building $pkgname..."
         git clone https://github.com/bitcoin-core/secp256k1.git
     fi
     cd secp256k1
-    if ! $(git cat-file -e ${LIBSECP_VERSION}) ; then
+    if ! $(git cat-file -e ${LIBSECP_VERSION}); then
         info "Could not find requested version $LIBSECP_VERSION in local clone; fetching..."
         git fetch --all
     fi
@@ -42,11 +42,11 @@ info "Building $pkgname..."
     git clean -dfxq
     git checkout "${LIBSECP_VERSION}^{commit}"
 
-    if ! [ -x configure ] ; then
-        echo "LDFLAGS = -no-undefined" >> Makefile.am
+    if ! [ -x configure ]; then
+        echo "LDFLAGS = -no-undefined" >>Makefile.am
         ./autogen.sh || fail "Could not run autogen for $pkgname. Please make sure you have automake and libtool installed, and try again."
     fi
-    if ! [ -r config.status ] ; then
+    if ! [ -r config.status ]; then
         ./configure \
             $AUTOCONF_FLAGS \
             --prefix="$here/$pkgname/dist" \
@@ -65,7 +65,7 @@ info "Building $pkgname..."
     host_strip "$here/$pkgname/dist/lib/$dlname"
     cp -fpv "$here/$pkgname/dist/lib/$dlname" "$PROJECT_ROOT/electrum" || fail "Could not copy the $pkgname binary to its destination"
     info "$dlname has been placed in the inner 'electrum' folder."
-    if [ -n "$DLL_TARGET_DIR" ] ; then
+    if [ -n "$DLL_TARGET_DIR" ]; then
         cp -fpv "$here/$pkgname/dist/lib/$dlname" "$DLL_TARGET_DIR/" || fail "Could not copy the $pkgname binary to DLL_TARGET_DIR"
     fi
 )
