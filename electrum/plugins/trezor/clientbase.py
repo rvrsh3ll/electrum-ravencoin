@@ -19,12 +19,7 @@ from trezorlib.messages import WordRequestType, FailureType, ButtonRequestType
 import trezorlib.btc
 import trezorlib.device
 
-try:
-    # trezor >= 0.13.9
-    from trezorlib.messages import RecoveryDeviceInputMethod
-except ImportError:
-    # Backward compatibility for trezor < 0.13.9
-    from trezorlib.messages import RecoveryDeviceType as RecoveryDeviceInputMethod
+from trezorlib.messages import RecoveryDeviceInputMethod
 
 
 MESSAGES = {
