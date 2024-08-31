@@ -44,6 +44,7 @@ from .trezor import (
     PASSPHRASE_ON_DEVICE,
     Capability,
     BackupType,
+    RecoveryDeviceType,
 )
 
 from electrum.gui.qt.util import (WindowModalDialog, WWLabel, Buttons, CancelButton,
