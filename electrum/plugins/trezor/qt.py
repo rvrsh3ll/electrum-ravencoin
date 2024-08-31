@@ -44,9 +44,13 @@ from .trezor import (
     PASSPHRASE_ON_DEVICE,
     Capability,
     BackupType,
-    RecoveryDeviceType,
 )
 
+from electrum.gui.qt.util import (WindowModalDialog, WWLabel, Buttons, CancelButton,
+                                  OkButton, CloseButton, PasswordLineEdit, getOpenFileName)
+
+from .trezor import (TrezorPlugin, TIM_NEW, TIM_RECOVER, TrezorInitSettings,
+                     PASSPHRASE_ON_DEVICE, Capability, BackupType, RecoveryDeviceInputMethod)
 
 PASSPHRASE_HELP_SHORT = _(
     "Passphrases allow you to access new wallets, each "
@@ -447,16 +451,16 @@ class QtPlugin(QtPluginBase):
             bg_rectype = QButtonGroup()
 
             rb1 = QRadioButton(gb_rectype)
-            rb1.setText(_("Scrambled words"))
-            bg_rectype.addButton(rb1)
-            bg_rectype.setId(rb1, RecoveryDeviceType.ScrambledWords)
+            rb1.setText(_('Scrambled words'))
+            self.bg_rectype.addButton(rb1)
+            self.bg_rectype.setId(rb1, RecoveryDeviceInputMethod.ScrambledWords)
             hbox_rectype.addWidget(rb1)
             rb1.setChecked(True)
 
             rb2 = QRadioButton(gb_rectype)
-            rb2.setText(_("Matrix"))
-            bg_rectype.addButton(rb2)
-            bg_rectype.setId(rb2, RecoveryDeviceType.Matrix)
+            rb2.setText(_('Matrix'))
+            self.bg_rectype.addButton(rb2)
+            self.bg_rectype.setId(rb2, RecoveryDeviceInputMethod.Matrix)
             hbox_rectype.addWidget(rb2)
 
         # no backup
