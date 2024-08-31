@@ -47,14 +47,10 @@ from .trezor import (
 )
 
 from electrum.gui.qt.util import (WindowModalDialog, WWLabel, Buttons, CancelButton,
-                                  OkButton, CloseButton, PasswordLineEdit, getOpenFileName, ChoiceWidget)
-from electrum.gui.qt.wizard.wallet import WCScriptAndDerivation, WCHWUnlock, WCHWXPub, WalletWizardComponent
+                                  OkButton, CloseButton, PasswordLineEdit, getOpenFileName)
 
 from .trezor import (TrezorPlugin, TIM_NEW, TIM_RECOVER, TrezorInitSettings,
                      PASSPHRASE_ON_DEVICE, Capability, BackupType, RecoveryDeviceInputMethod)
-
-if TYPE_CHECKING:
-    from electrum.gui.qt.wizard.wallet import QENewWalletWizard
 
 PASSPHRASE_HELP_SHORT = _(
     "Passphrases allow you to access new wallets, each "
