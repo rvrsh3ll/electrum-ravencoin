@@ -1582,6 +1582,7 @@ class LedgerPlugin(HW_PluginBase):
         0x40: "Ledger Nano X",
         0x50: "Ledger Nano S Plus",
         0x60: "Ledger Stax",
+        0x70: "Ledger Flex",
     }
 
     SUPPORTED_XTYPES = ("standard",)  #'p2wpkh-p2sh', 'p2wpkh', 'p2wsh-p2sh', 'p2wsh')
